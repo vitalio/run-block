@@ -17,3 +17,9 @@
 - In `src/config.py`, resolving default `Workdir` via `git rev-parse --show-toplevel` jumps to the monorepo root (e.g. `/home/vitaly/chrome`) even when `agents_bundle | run_block` is invoked inside a self-contained subproject directory (`/home/vitaly/chrome/canary`) that has its own `.agents_bundle`, `AGENTS.md`, and `TODO.md`.
 - This causes a mismatch between bundle command outputs in `0.txt` (which run in `pwd`) and subsequent `run_block` steps (which run in the top-level Git root).
 - Keep the current working directory when it contains `.agents_bundle` / `AGENTS.md` (or preserve `pwd` at session init) instead of unconditionally climbing to `--show-toplevel`.
+
+# ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
+
+- Depends on: vitalio/agents_bundle#F7
+- Move src/rules/ and src/bundles/ to agents/ once agents_bundle supports the root agents/ directory, updating AGENTS.md and tests.
+- Tighten Rule 1 in bash.md and pwsh.md so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
