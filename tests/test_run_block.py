@@ -882,6 +882,17 @@ class TestRunBlock(unittest.TestCase):
         self.assertIsNone(split_err)
         self.assertEqual(rebuilt, "echo before_fence\necho after_fence\n")
 
+        headerless_split = (
+            f"echo line_one\n"
+            f"{F3}\n"
+            f"{F3}python\n"
+            f"echo line_two\n"
+        )
+        self.assertEqual(
+            self.mod._reassemble_split_payload(headerless_split),
+            ("echo line_one\necho line_two\n", None),
+        )
+
         with contextlib.redirect_stdout(io.StringIO()):
             rc_split = self.mod.cmd_normal("s4/1", split_paste, auto_yes=True)
         self.assertEqual(rc_split, 0)

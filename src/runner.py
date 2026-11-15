@@ -492,8 +492,13 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     header_line = lines[first_nonempty]
     m = SPLIT_HEADER_RE.match(header_line)
     if not m:
-        cleaned = TRAILING_FENCE_RE.sub("", payload)
-        out = (cleaned + "\n") if cleaned and not cleaned.endswith("\n") else cleaned
+        cleaned = TRAILING_FENCE_RE.sub("", norm)
+        c_lines = cleaned.split("\n")
+        # Also strip orphan Markdown fence lines when the local shell consumed the outer
+        # `run_block ... <<'RUN_BLOCK'` header before passing stdin.
+        stripped_orphan = [ln for ln in c_lines if not FENCE_LINE_RE.match(ln)]
+        joined_orphan = "\n".join(stripped_orphan)
+        out = (joined_orphan + "\n") if joined_orphan and not joined_orphan.endswith("\n") else joined_orphan
         return out, None
 
     delim = m.group(1)
