@@ -5,6 +5,13 @@
 - Recognize absolute external paths under `$HOME` (e.g. `/home/<user>/<repo>/...`) and `*_CWD=/path` environment prefixes in `_infer_op_dir` so commands operating on sibling repositories are grouped under their target directory.
 - In `_analyze_python_ast` and `_emit_py_op`, track loop target variables (`for x in (...):`), surface `Path.unlink()` / `Path.rmdir()` deletions (including `fs-destructive` risk warnings), and group or summarize Python file operations across all target directories without silently dropping paths past 12 items.
 
+# 🎯 [NEXT] F19: Store sessions in persistent state directory (~/.local/state/run_block) and add size/prune controls
+
+- Change default session storage in `src/config.py` from `/tmp/run_block` to `$XDG_STATE_HOME/run_block` (fallback `~/.local/state/run_block` on Linux/macOS) and `%LOCALAPPDATA%\\run_block\\state` (fallback `~/AppData/Local/run_block/state`) on Windows while keeping `RUN_BLOCK_DIR` as highest-priority override.
+- Ensure sandbox rules in `src/safety.py` and `src/bundle.py` treat the persistent `BASE_DIR` appropriately without conflating it with `/tmp`.
+- Display per-session and total storage sizes in `src/runner.py` (`--list` / `--clean`), extend `--clean` to support `--older-than <days>`, `--max-size <MB>`, and deleting specific session names, and emit a warning when total state size exceeds `RUN_BLOCK_MAX_STATE_MB` (default `100`).
+- Update usage text, agent block rules, README, and unit tests in `src/header.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, and `tests/test_run_block.py`.
+
 # 🎯 [NEXT] B5: Resolve Python <stdin> traceback lines on failure and enrich END/NOT RUN TUI cards
 
 - When a block exits with non-zero status and its output contains `File "<stdin>", line <N>` from an embedded `python3` heredoc in `src/runner.py`, extract line `<N>` from the heredoc body and append `[<label>] <stdin> line <N>: <source_line>` to the output before `[<label>] END (exit <rc>)` so the failing statement is visible in clipboard output.
@@ -37,3 +44,11 @@
 # ⚪ [NEW] F17: Limit --fix to small targeted patches rather than full-block replacements
 
 - Update run_block rules/instructions to specify that run_block --fix should only be used for small, targeted patches; if a fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh <session>/<step+1> block directly instead.
+
+# ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
+
+- Depends on: F19
+- Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `0.txt`, block count, size, timestamp, and last step status.
+- Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers from `0.txt`, storage path, total size, and full block list with statuses and action summaries.
+- Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
+- Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_run_block.py`.
