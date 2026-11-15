@@ -613,7 +613,11 @@ def count_tokens(data: bytes) -> dict[str, int | bool]:
 def _human_size(num_bytes: int) -> str:
     if num_bytes < 1024:
         return f"{num_bytes} B"
-    return f"{num_bytes / 1024:.1f} KB"
+    if num_bytes < 1024 * 1024:
+        return f"{num_bytes / 1024:.1f} KB"
+    if num_bytes < 1024 * 1024 * 1024:
+        return f"{num_bytes / (1024 * 1024):.1f} MB"
+    return f"{num_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
 def _human_tok(n: int) -> str:

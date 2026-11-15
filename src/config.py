@@ -10,8 +10,14 @@ def prog_name() -> str:
 def _os_default_base_dir(prog: str | None = None) -> Path:
     name = prog or prog_name()
     if os.name == "nt":
-        return Path(tempfile.gettempdir()) / name
-    return Path("/tmp") / name
+        local_app = os.environ.get("LOCALAPPDATA", "").strip()
+        if local_app:
+            return Path(local_app).expanduser() / name / "state"
+        return Path.home() / "AppData" / "Local" / name / "state"
+    xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
+    if xdg_state:
+        return Path(xdg_state).expanduser() / name
+    return Path.home() / ".local" / "state" / name
 
 
 def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
@@ -67,6 +73,16 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
             except ValueError:
                 pass
         return "2", "default"
+    if key == "max_state_mb":
+        raw = os.environ.get("RUN_BLOCK_MAX_STATE_MB", "").strip()
+        if raw:
+            try:
+                val_mb = float(raw)
+                if val_mb >= 0:
+                    return str(val_mb), "env"
+            except ValueError:
+                pass
+        return "100", "default"
     if key == "update_url":
         if os.environ.get("RUN_BLOCK_UPDATE_URL"):
             return os.environ["RUN_BLOCK_UPDATE_URL"].strip(), "env"

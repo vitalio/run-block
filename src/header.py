@@ -9,7 +9,7 @@
   {prog} --list | -l [session]       List sessions or blocks in a session
   {prog} --show [session/step]       Show script and output of a block (or <session>/0 bundle)
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
-  {prog} --clean [--keep N | --all]  Prune old session directories in {base_dir} (default: --keep 5)
+  {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
   {prog} --start [opts]              Start session with explicit options (--session NAME, --sandbox MODE, --force)
   {prog} --update [--force]          Self-update {prog} from GitHub (vitalio/run_block)
   {prog} --check-update              Check if a newer version is available

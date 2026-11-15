@@ -21,6 +21,7 @@ def next_session_name(base: Path) -> str:
 
 def start_session(name: str | None = None, force: bool = False, sandbox_mode: str | None = None) -> Path:
     base = ensure_base()
+    _warn_if_state_oversized(base)
     if not name:
         name = next_session_name(base)
     if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
@@ -545,7 +546,9 @@ def cmd_normal(
     step_num = int(step)
     if step_num < 1:
         raise SystemExit(f"{prog_name()}: step number must be >= 1")
-    sdir = ensure_base() / session
+    base = ensure_base()
+    _warn_if_state_oversized(base)
+    sdir = base / session
     sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
     ensure_session_bundle(sdir, sandbox_mode=sandbox_override)
     label = f"{session}/{step}"
@@ -802,29 +805,34 @@ def _find_latest_step(session: str | None = None) -> tuple[str, str]:
 
 def cmd_list(session: str | None = None) -> int:
     base = ensure_base()
+    _warn_if_state_oversized(base)
     if not session:
-        sdirs = sorted([p for p in base.iterdir() if p.is_dir()], key=lambda p: p.stat().st_mtime)
+        sdirs = sorted([p for p in base.iterdir() if p.is_dir()], key=lambda p: (_session_mtime(p), p.name))
         if not sdirs:
-            sys.stdout.write(f"No sessions in {base}\n")
+            sys.stdout.write(f"No sessions in {base} (0 B)\n")
             return 0
         sys.stdout.write(f"Sessions in {base}:\n")
+        total_bytes = 0
         for sdir in sdirs:
             scripts = [p.stem for p in _iter_session_scripts(sdir)]
             has_bundle = (sdir / "0.txt").is_file()
+            sz = _dir_size_bytes(sdir)
+            total_bytes += sz
             if scripts:
                 last = f"{sdir.name}/{scripts[-1]} ({_step_status(sdir, scripts[-1])})"
             elif has_bundle:
                 last = f"{sdir.name}/0 (BUNDLE)"
             else:
                 last = "empty"
-            sys.stdout.write(f"  {sdir.name:<8}  {len(scripts):>3} block(s)   last: {last}\n")
+            sys.stdout.write(f"  {sdir.name:<8}  {len(scripts):>3} block(s)  {_human_size(sz):>9}   last: {last}\n")
+        sys.stdout.write(f"Total storage: {_human_size(total_bytes)} ({len(sdirs)} session(s))\n")
         session = sdirs[-1].name
         sys.stdout.write(f"\nRecent blocks in {session}:\n")
     else:
         sdir = base / session
         if not sdir.is_dir():
             raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
-        sys.stdout.write(f"Blocks in {session}:\n")
+        sys.stdout.write(f"Blocks in {session} ({_human_size(_dir_size_bytes(sdir))}):\n")
     sdir = base / session
     if (sdir / "0.txt").is_file():
         ref0 = f"{session}/0"
@@ -956,17 +964,72 @@ def _dir_size_bytes(path: Path) -> int:
     return total
 
 
+def _session_mtime(sdir: Path) -> float:
+    latest = 0.0
+    try:
+        latest = sdir.stat().st_mtime
+        for p in sdir.iterdir():
+            try:
+                latest = max(latest, p.stat().st_mtime)
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return latest
+
+
+_STATE_WARNED_DIRS: set[str] = set()
+
+
+def _warn_if_state_oversized(base: Path) -> None:
+    key = str(base)
+    if key in _STATE_WARNED_DIRS:
+        return
+    raw_limit, _ = get_setting("max_state_mb")
+    try:
+        limit_mb = float(raw_limit)
+    except ValueError:
+        limit_mb = 100.0
+    if limit_mb <= 0:
+        return
+    total_bytes = _dir_size_bytes(base)
+    if total_bytes > limit_mb * 1024 * 1024:
+        _STATE_WARNED_DIRS.add(key)
+        prog = prog_name()
+        sys.stderr.write(
+            f"{prog}: warning: state directory {base} uses {_human_size(total_bytes)} "
+            f"(exceeds {limit_mb:g} MB limit; run '{prog} --clean' to prune old sessions)\n"
+        )
+        sys.stderr.flush()
+
+
+def _parse_nonneg_float(raw: str, flag_name: str) -> float:
+    prog = prog_name()
+    try:
+        val = float(raw)
+    except ValueError:
+        raise SystemExit(f"{prog}: invalid {flag_name} value: {raw!r}")
+    if math.isnan(val) or math.isinf(val) or val < 0:
+        raise SystemExit(f"{prog}: {flag_name} must be >= 0")
+    return val
+
+
 def cmd_clean(argv: list[str]) -> int:
     prog = prog_name()
-    keep = 5
+    usage_msg = (
+        f"{prog}: usage: {prog} --clean [--keep N | --older-than DAYS | --max-size MB | --all] [--yes] [session...]"
+    )
+    keep: int | None = None
+    older_than_days: float | None = None
+    max_size_mb: float | None = None
     clean_all = False
     yes = False
+    target_names: list[str] = []
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--all":
             clean_all = True
-            keep = 0
             i += 1
         elif a in ("-y", "--yes", "--force"):
             yes = True
@@ -990,34 +1053,95 @@ def cmd_clean(argv: list[str]) -> int:
             if keep < 0:
                 raise SystemExit(f"{prog}: --keep must be >= 0")
             i += 1
+        elif a == "--older-than":
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: --older-than requires a non-negative number of days")
+            older_than_days = _parse_nonneg_float(argv[i + 1], "--older-than")
+            i += 2
+        elif a.startswith("--older-than="):
+            older_than_days = _parse_nonneg_float(a.split("=", 1)[1], "--older-than")
+            i += 1
+        elif a == "--max-size":
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: --max-size requires a non-negative size in MB")
+            max_size_mb = _parse_nonneg_float(argv[i + 1], "--max-size")
+            i += 2
+        elif a.startswith("--max-size="):
+            max_size_mb = _parse_nonneg_float(a.split("=", 1)[1], "--max-size")
+            i += 1
+        elif a.startswith("-"):
+            raise SystemExit(usage_msg)
         else:
-            raise SystemExit(f"{prog}: usage: {prog} --clean [--keep N | --all] [--yes]")
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", a):
+                raise SystemExit(f"{prog}: invalid session name: {a!r}")
+            if a not in target_names:
+                target_names.append(a)
+            i += 1
+
+    has_policy_flag = clean_all or keep is not None or older_than_days is not None or max_size_mb is not None
+    if target_names and has_policy_flag:
+        raise SystemExit(f"{prog}: cannot combine explicit session names with --keep/--older-than/--max-size/--all")
 
     base = ensure_base()
     sdirs = sorted(
         [p for p in base.iterdir() if p.is_dir()],
-        key=lambda p: (p.stat().st_mtime, p.name),
+        key=lambda p: (_session_mtime(p), p.name),
     )
-    if clean_all or keep == 0:
-        to_remove = sdirs
-    elif len(sdirs) > keep:
-        to_remove = sdirs[: len(sdirs) - keep]
+    sizes_by_dir: dict[Path, int] = {d: _dir_size_bytes(d) for d in sdirs}
+    total_before = sum(sizes_by_dir.values())
+
+    if target_names:
+        by_name = {d.name: d for d in sdirs}
+        to_remove: list[Path] = []
+        for name in target_names:
+            if name not in by_name:
+                raise SystemExit(f"{prog}: session {name!r} not found in {base}")
+            to_remove.append(by_name[name])
+    elif clean_all:
+        to_remove = list(sdirs)
     else:
-        to_remove = []
+        if not has_policy_flag:
+            keep = 5
+        remove_set: set[Path] = set()
+        if older_than_days is not None:
+            cutoff = time.time() - older_than_days * 86400.0
+            for d in sdirs:
+                if _session_mtime(d) < cutoff:
+                    remove_set.add(d)
+        if keep is not None:
+            remaining = [d for d in sdirs if d not in remove_set]
+            if keep == 0:
+                remove_set.update(remaining)
+            elif len(remaining) > keep:
+                remove_set.update(remaining[: len(remaining) - keep])
+        if max_size_mb is not None:
+            max_bytes = int(max_size_mb * 1024 * 1024)
+            remaining = [d for d in sdirs if d not in remove_set]
+            rem_total = sum(sizes_by_dir[d] for d in remaining)
+            for d in remaining:
+                if rem_total <= max_bytes:
+                    break
+                remove_set.add(d)
+                rem_total -= sizes_by_dir[d]
+        to_remove = [d for d in sdirs if d in remove_set]
 
     if not to_remove:
-        sys.stdout.write(f"Nothing to clean in {base} ({len(sdirs)} session(s) kept).\n")
+        sys.stdout.write(
+            f"Nothing to clean in {base} ({len(sdirs)} session(s), {_human_size(total_before)} total).\n"
+        )
         return 0
 
-    freed_bytes = sum(_dir_size_bytes(d) for d in to_remove)
-    names = ", ".join(d.name for d in to_remove)
+    freed_bytes = sum(sizes_by_dir[d] for d in to_remove)
+    remaining_bytes = max(0, total_before - freed_bytes)
+    details = ", ".join(f"{d.name} ({_human_size(sizes_by_dir[d])})" for d in to_remove)
     if not yes and sys.stdin.isatty() and sys.stdout.isatty() and not no_clipboard():
         ok = prompt_yes_no_box(
             "CLEAN SESSIONS",
             [
                 f"Directory: {base}",
-                f"Remove: {len(to_remove)} session(s) ({names})",
-                f"Free: {freed_bytes:,} bytes",
+                f"Total size: {_human_size(total_before)}",
+                f"Remove: {len(to_remove)} session(s) ({details})",
+                f"Free: {_human_size(freed_bytes)} ({freed_bytes:,} bytes)",
             ],
             f"Delete {len(to_remove)} session(s)?",
             default_yes=False,
@@ -1031,6 +1155,7 @@ def cmd_clean(argv: list[str]) -> int:
         shutil.rmtree(d, ignore_errors=True)
     kept = len(sdirs) - len(to_remove)
     sys.stdout.write(
-        f"Cleaned {len(to_remove)} session(s) ({names}; {freed_bytes:,} bytes freed) from {base}; {kept} kept.\n"
+        f"Cleaned {len(to_remove)} session(s) ({details}; {_human_size(freed_bytes)} / {freed_bytes:,} bytes freed) "
+        f"from {base}; {kept} kept ({_human_size(remaining_bytes)} remaining).\n"
     )
     return 0

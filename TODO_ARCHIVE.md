@@ -1,3 +1,10 @@
+# ✅ [DONE] F19: Store sessions in persistent state directory (~/.local/state/run_block) and add size/prune controls — *2026-11-15, Store sessions in XDG/LocalAppData state directory and add size/prune controls*
+
+- Change default session storage in `src/config.py` from `/tmp/run_block` to `$XDG_STATE_HOME/run_block` (fallback `~/.local/state/run_block` on Linux/macOS) and `%LOCALAPPDATA%\\run_block\\state` (fallback `~/AppData/Local/run_block/state`) on Windows while keeping `RUN_BLOCK_DIR` as highest-priority override.
+- Ensure sandbox rules in `src/safety.py` and `src/bundle.py` treat the persistent `BASE_DIR` appropriately without conflating it with `/tmp`.
+- Display per-session and total storage sizes in `src/runner.py` (`--list` / `--clean`), extend `--clean` to support `--older-than <days>`, `--max-size <MB>`, and deleting specific session names, and emit a warning when total state size exceeds `RUN_BLOCK_MAX_STATE_MB` (default `100`).
+- Update usage text, agent block rules, README, and unit tests in `src/header.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, and `tests/test_run_block.py`.
+
 # ✅ [DONE] B2: Fix BLOCK PLAN analyzer for backslash continuations, external paths, quoted echo, and multi-dir Python AST — *2026-11-15, Handled shell line continuations, quoted redirects in echo/printf, external paths and *_CWD prefixes, and multi-directory Python AST loop/deletion grouping*
 
 - Join shell line continuations (trailing `\`) outside heredoc and Python blocks before classifying commands and scanning risks.

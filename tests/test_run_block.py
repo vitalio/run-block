@@ -679,6 +679,8 @@ class TestRunBlock(unittest.TestCase):
             rc = self.mod.cmd_clean(["--keep", "2", "--yes"])
         self.assertEqual(rc, 0)
         self.assertIn("Cleaned 2 session(s)", buf.getvalue())
+        self.assertIn("s1 (", buf.getvalue())
+        self.assertIn("remaining).", buf.getvalue())
         remaining = sorted(p.name for p in self.tmp.iterdir() if p.is_dir())
         self.assertEqual(remaining, ["s3", "s4"])
 
@@ -687,6 +689,136 @@ class TestRunBlock(unittest.TestCase):
             rc_all = self.mod.cmd_clean(["--all", "--yes"])
         self.assertEqual(rc_all, 0)
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.is_dir()], [])
+
+    def test_persistent_state_dir_and_prune_controls(self):
+        # 1. Default base_dir resolution across POSIX XDG, POSIX fallback, Windows, and RUN_BLOCK_DIR
+        saved_xdg = os.environ.get("XDG_STATE_HOME")
+        saved_local = os.environ.get("LOCALAPPDATA")
+        try:
+            os.environ.pop("RUN_BLOCK_DIR", None)
+            os.environ["XDG_STATE_HOME"] = str(self.tmp / "xdg_state")
+            with unittest.mock.patch.object(self.mod.os, "name", "posix"):
+                self.assertEqual(
+                    self.mod.default_base_dir("run_block"),
+                    self.tmp / "xdg_state" / "run_block",
+                )
+                os.environ.pop("XDG_STATE_HOME", None)
+                self.assertEqual(
+                    self.mod.default_base_dir("run_block"),
+                    Path.home() / ".local" / "state" / "run_block",
+                )
+
+            from pathlib import PureWindowsPath as _PWP
+
+            class PureWindowsPath(_PWP):
+                def expanduser(self):
+                    return self
+
+                @classmethod
+                def home(cls):
+                    return cls("C:/Users/alice")
+
+            win_local = PureWindowsPath("C:/Users/alice/AppData/Local")
+            win_home = PureWindowsPath.home()
+            with unittest.mock.patch.object(self.mod.os, "name", "nt"), unittest.mock.patch.object(self.mod, "Path", PureWindowsPath):
+                os.environ["LOCALAPPDATA"] = str(win_local)
+                self.assertEqual(
+                    self.mod.get_setting("base_dir", "run_block"),
+                    (str(win_local / "run_block" / "state"), "default"),
+                )
+                os.environ.pop("LOCALAPPDATA", None)
+                self.assertEqual(
+                    self.mod.get_setting("base_dir", "run_block"),
+                    (str(win_home / "AppData" / "Local" / "run_block" / "state"), "default"),
+                )
+
+            os.environ["RUN_BLOCK_DIR"] = str(self.tmp / "explicit_override")
+            self.assertEqual(self.mod.default_base_dir("run_block"), self.tmp / "explicit_override")
+        finally:
+            os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
+            if saved_xdg is None:
+                os.environ.pop("XDG_STATE_HOME", None)
+            else:
+                os.environ["XDG_STATE_HOME"] = saved_xdg
+            if saved_local is None:
+                os.environ.pop("LOCALAPPDATA", None)
+            else:
+                os.environ["LOCALAPPDATA"] = saved_local
+
+        # 2. Sandbox rules keep persistent BASE_DIR read-only even when Workdir is HOME
+        home_dir = Path.home().resolve()
+        persistent_bdir = home_dir / ".local" / "state" / "run_block"
+        with unittest.mock.patch.object(self.mod.sys, "platform", "darwin"), unittest.mock.patch.object(self.mod.Path, "is_file", return_value=True):
+            sb_cmd = self.mod.build_sandbox_exec(["bash", "1.sh"], home_dir, persistent_bdir, "strict")
+            self.assertEqual(sb_cmd[0], "/usr/bin/sandbox-exec")
+            profile = sb_cmd[2]
+            allow_idx = profile.index(f'(allow file-write* (subpath "{home_dir}"))')
+            deny_idx = profile.index(f'(deny file-write* (subpath "{persistent_bdir}"))')
+            self.assertLess(allow_idx, deny_idx)
+
+        # 3. Create sessions with known sizes and timestamps for --list, --clean, and size warning
+        import time as _time
+        now = _time.time()
+        specs = [
+            ("s1", 600, now - 10 * 86400),
+            ("s2", 1400, now - 5 * 86400),
+            ("s3", 2200, now - 2 * 86400),
+            ("s4", 800, now - 60),
+        ]
+        for name, payload_sz, ts in specs:
+            sdir = self.tmp / name
+            sdir.mkdir()
+            f_out = sdir / "1.txt"
+            f_out.write_bytes(b"x" * payload_sz)
+            os.utime(f_out, (ts, ts))
+            os.utime(sdir, (ts, ts))
+
+        # --list displays per-session and total storage sizes
+        list_buf = io.StringIO()
+        with contextlib.redirect_stdout(list_buf):
+            self.assertEqual(self.mod.cmd_list(), 0)
+        list_out = list_buf.getvalue()
+        self.assertIn("600 B", list_out)
+        self.assertIn("1.4 KB", list_out)
+        self.assertIn("2.1 KB", list_out)
+        self.assertIn("Total storage: 4.9 KB (4 session(s))", list_out)
+
+        # Oversized state directory emits warning on stderr when exceeding RUN_BLOCK_MAX_STATE_MB
+        saved_max_mb = os.environ.get("RUN_BLOCK_MAX_STATE_MB")
+        try:
+            self.mod._STATE_WARNED_DIRS.clear()
+            os.environ["RUN_BLOCK_MAX_STATE_MB"] = "0.002"
+            err_buf = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err_buf):
+                self.assertEqual(self.mod.cmd_list(), 0)
+            self.assertIn("warning: state directory", err_buf.getvalue())
+            self.assertIn("exceeds 0.002 MB limit", err_buf.getvalue())
+        finally:
+            if saved_max_mb is None:
+                os.environ.pop("RUN_BLOCK_MAX_STATE_MB", None)
+            else:
+                os.environ["RUN_BLOCK_MAX_STATE_MB"] = saved_max_mb
+
+        # --clean --older-than 7 removes s1 (10 days old)
+        c1_buf = io.StringIO()
+        with contextlib.redirect_stdout(c1_buf):
+            self.assertEqual(self.mod.cmd_clean(["--older-than", "7", "--yes"]), 0)
+        self.assertIn("Cleaned 1 session(s) (s1 (600 B)", c1_buf.getvalue())
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir() if p.is_dir()), ["s2", "s3", "s4"])
+
+        # --clean --max-size 0.003 removes oldest remaining (s2: 1400 B) so remaining (s3+s4 = 3000 B) <= 3145 B
+        c2_buf = io.StringIO()
+        with contextlib.redirect_stdout(c2_buf):
+            self.assertEqual(self.mod.cmd_clean(["--max-size", "0.003", "--yes"]), 0)
+        self.assertIn("Cleaned 1 session(s) (s2 (1.4 KB)", c2_buf.getvalue())
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir() if p.is_dir()), ["s3", "s4"])
+
+        # --clean <session> removes specific session by name
+        c3_buf = io.StringIO()
+        with contextlib.redirect_stdout(c3_buf):
+            self.assertEqual(self.mod.cmd_clean(["s3", "--yes"]), 0)
+        self.assertIn("Cleaned 1 session(s) (s3 (2.1 KB)", c3_buf.getvalue())
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir() if p.is_dir()), ["s4"])
 
 
     def test_heredoc_collapsed_in_block_plan(self):

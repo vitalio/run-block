@@ -1180,13 +1180,13 @@ def build_sandbox_exec(
             sp = home / rel
             if sp.is_dir():
                 cmd.extend(["--tmpfs", str(sp)])
-        if bdir.exists():
-            cmd.extend(["--ro-bind", str(bdir), str(bdir)])
         if wdir.exists():
             cmd.extend(["--bind", str(wdir), str(wdir)])
             git_hooks = wdir / ".git" / "hooks"
             if git_hooks.is_dir():
                 cmd.extend(["--ro-bind", str(git_hooks), str(git_hooks)])
+        if bdir.exists():
+            cmd.extend(["--ro-bind", str(bdir), str(bdir)])
         if norm == "nonet":
             cmd.append("--unshare-net")
         cmd.extend(["--", *exec_cmd])
@@ -1198,10 +1198,10 @@ def build_sandbox_exec(
             "(version 1)",
             "(allow default)",
             '(deny file-write* (subpath "/"))',
-            f'(allow file-write* (subpath "{wdir}"))',
             f'(allow file-write* (subpath "{tmp_real}"))',
             '(allow file-write* (subpath "/private/tmp"))',
             '(allow file-write* (subpath "/dev"))',
+            f'(allow file-write* (subpath "{wdir}"))',
             f'(deny file-write* (subpath "{bdir}"))',
         ]
         git_hooks = wdir / ".git" / "hooks"
