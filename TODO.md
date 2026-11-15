@@ -1,3 +1,10 @@
+# 🎯 [NEXT] F26: Refine TUI block borders, key-value alignment, and TTY status colors
+
+- Update `src/ui.py` (`_format_top_rule`, `_format_bottom_rule`, `_prefix_block_line`, `_render_block`, and key-value formatting in `format_session_header_lines` and `build_box_body_lines`) to replace `#` borders with thin open-right box-drawing borders (`╭─ [TITLE] ───`, `│ `, `╰───`) of compact width, with an ASCII fallback (`+-`, `| `) when `stdout` is not UTF-8.
+- Align contiguous `Key: value` metadata lines in columns (`Session:`, `Next-Block:`, `Workdir:`, `Sandbox:`, `Role:`, `Task:`, `Bundle:`, `Output:`, `Stats:`, etc.) for cleaner scanning.
+- Add TTY-aware ANSI colors (disabled when not a TTY or `NO_COLOR` is set): dimmed/tinted borders, bold status-colored `[TITLE]` (`START BUNDLE`, `BLOCK PLAN`, `END`, `SYNTAX ERROR`, `NOT RUN`), and dimmed keys.
+- Update `tests/test_run_block.py` to verify the new border style, ASCII fallback, key-value alignment, and `NO_COLOR`/non-TTY behavior.
+
 # 🎯 [NEXT] F23: Format session bundle Date header in UTC (YYYY-MM-DD HH:MM UTC)
 
 - Format the `Date:` header in `src/bundle.py` using UTC (`datetime.now(timezone.utc)` or `now.astimezone(timezone.utc)`) formatted as `YYYY-MM-DD HH:MM UTC` to match bundle rules.
