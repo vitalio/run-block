@@ -868,7 +868,51 @@ class TestRunBlock(unittest.TestCase):
         dc_risks = self.mod.scan_script_risks(dc_risk_script)
         self.assertTrue(any(r["category"] == "fs-destructive" for r in dc_risks))
         F3 = chr(96) * 3
-        self.assertEqual(self.mod._strip_trailing_fence(f"echo ok\nRUN_BLOCK{F3}\n"), "echo ok\n")
+        self.assertEqual(self.mod._reassemble_split_payload(f"echo ok\nRUN_BLOCK{F3}\n"), ("echo ok\n", None))
+        split_paste = (
+            f"run_block s4/1 <<'RUN_BLOCK'\n"
+            f"echo before_fence\n"
+            f"{F3}\n"
+            f"{F3}text\n"
+            f"echo after_fence\n"
+            f"RUN_BLOCK\n"
+            f"{F3}\n"
+        )
+        rebuilt, split_err = self.mod._reassemble_split_payload(split_paste)
+        self.assertIsNone(split_err)
+        self.assertEqual(rebuilt, "echo before_fence\necho after_fence\n")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_split = self.mod.cmd_normal("s4/1", split_paste, auto_yes=True)
+        self.assertEqual(rc_split, 0)
+        out_split = (self.tmp / "s4/1.txt").read_text(encoding="utf-8")
+        self.assertIn("before_fence\nafter_fence", out_split)
+
+        unclosed_paste = (
+            f"run_block s4/2 <<'RUN_BLOCK'\n"
+            f"echo missing_end\n"
+            f"{F3}\n"
+        )
+        buf_unclosed = io.StringIO()
+        with contextlib.redirect_stdout(buf_unclosed):
+            rc_unclosed = self.mod.cmd_normal("s4/2", unclosed_paste, auto_yes=True)
+        self.assertEqual(rc_unclosed, 2)
+        self.assertIn("unclosed RUN_BLOCK heredoc", buf_unclosed.getvalue())
+
+        split_fix_paste = (
+            f"run_block --fix s4/1 <<'RUN_FIX'\n"
+            f"text = text.replace('before_fence', 'fixed_before')\n"
+            f"{F3}\n"
+            f"{F3}python\n"
+            f"text = text.replace('after_fence', 'fixed_after')\n"
+            f"RUN_FIX\n"
+            f"{F3}\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_sfix = self.mod.cmd_fix("s4/1", split_fix_paste, auto_yes=True)
+        self.assertEqual(rc_sfix, 0)
+        out_sfix = (self.tmp / "s4/1_1.txt").read_text(encoding="utf-8")
+        self.assertIn("fixed_before\nfixed_after", out_sfix)
         loop_sum = self.mod.summarize_script_actions(loop_subshell_script, Path("/tmp/work"))
         self.assertEqual(loop_sum["cd_dirs"], ["$HOME/proj_a", "$HOME/proj_b"])
         loop_groups = loop_sum["operation_groups"]

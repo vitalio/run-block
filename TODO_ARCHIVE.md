@@ -1,3 +1,8 @@
+# ✅ [DONE] F18: Reassemble split run_block payloads caused by inner triple backticks on paste/stdin — *2026-11-15, Implemented _reassemble_split_payload in src/runner.py and added unit tests*
+
+- When a model emits literal triple backticks inside a `run_block` heredoc (for example when editing `README.md` code fences), chat Markdown renderers split the single block into multiple fenced snippets separated by ```text` or ```python` fences, leaving the outer heredoc unclosed until the final `RUN_BLOCK` terminator.
+- Detect an unclosed `run_block ... <<'RUN_BLOCK'` (or `RUN_FIX`) header in pasted/piped input before the closing terminator and reconstruct the original payload by stripping intermediate Markdown fence lines that split the block, or emit a clear diagnostic if the terminator is missing.
+
 # ✅ [DONE] B4: Add --fix diagnostics, non-overwriting fix slots, and max-attempts loop guard — *2026-11-15, Implemented rich --fix exception diagnostics, non-overwriting fix slot allocation with chain fallback, RUN_BLOCK_MAX_FIX_ATTEMPTS loop guard, and updated bash/pwsh block rules.*
 
 - In `cmd_fix` (`src/runner.py`), format rich failure diagnostics when `RUN_FIX` raises an exception: include the failing line number and statement from `fix_code`, and for `AssertionError` on `assert <compare>` evaluate and print the actual left/right values (e.g. `at line 14: assert text.count(old_3) == 2 (actual: 0 == 2)`).

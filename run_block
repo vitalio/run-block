@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.18.2"
+VERSION = "0.18.3"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -2521,17 +2521,71 @@ def run_script(
 
 
 TRAILING_FENCE_RE = re.compile(r"(?:\r?\n)+(?:RUN_(?:BLOCK|FIX)\s*)?`{3,}\s*$")
+SPLIT_HEADER_RE = re.compile(
+    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*\n)?\s*(?:[A-Za-z0-9_./-]+\s+)?run_block\b[^\n]*<<\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
+)
+FENCE_LINE_RE = re.compile(r"^`{3,}[A-Za-z0-9_-]*\s*$")
 
 
-def _strip_trailing_fence(payload: str) -> str:
-    cleaned = TRAILING_FENCE_RE.sub("", payload)
-    return (cleaned + "\n") if cleaned and not cleaned.endswith("\n") else cleaned
+def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
+    """Reconstruct payloads split by chat Markdown fences when inner triple backticks appear."""
+    norm = payload.replace("\r\n", "\n")
+    lines = norm.split("\n")
+
+    first_nonempty = -1
+    for idx, line in enumerate(lines):
+        if line.strip():
+            first_nonempty = idx
+            break
+    if first_nonempty == -1:
+        return payload, None
+
+    header_line = lines[first_nonempty]
+    m = SPLIT_HEADER_RE.match(header_line)
+    if not m:
+        cleaned = TRAILING_FENCE_RE.sub("", payload)
+        out = (cleaned + "\n") if cleaned and not cleaned.endswith("\n") else cleaned
+        return out, None
+
+    delim = m.group(1)
+    body_lines = lines[first_nonempty + 1 :]
+    end_idx = -1
+    for idx in range(len(body_lines) - 1, -1, -1):
+        stripped = body_lines[idx].strip()
+        if stripped == delim or re.fullmatch(rf"{re.escape(delim)}\s*`{{3,}}", stripped):
+            end_idx = idx
+            break
+
+    if end_idx == -1:
+        return (
+            payload,
+            f"unclosed {delim} heredoc on stdin (missing closing '{delim}' terminator — check for split Markdown fences)",
+        )
+
+    inner = body_lines[:end_idx]
+    rebuilt: list[str] = []
+    i = 0
+    while i < len(inner):
+        cur = inner[i]
+        # A split caused by inner triple backticks turns a single line or fence boundary into:
+        #   <prefix>        (or standalone closing ```)
+        #   ```<lang>       (chat UI reopening the next code block)
+        # Strip standalone Markdown fence lines introduced by chat renderer splitting.
+        if FENCE_LINE_RE.match(cur):
+            i += 1
+            continue
+        rebuilt.append(cur)
+        i += 1
+
+    joined = "\n".join(rebuilt)
+    out = (joined + "\n") if joined and not joined.endswith("\n") else joined
+    return out, None
 
 
 def cmd_normal(
     ref: str, payload: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
-    payload = _strip_trailing_fence(payload)
+    payload, split_err = _reassemble_split_payload(payload)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, step = parse_ref(ref, allow_fix_step=False)
     step_num = int(step)
@@ -2543,6 +2597,8 @@ def cmd_normal(
     label = f"{session}/{step}"
     script_path = _find_step_script(sdir, step)
     out_path = sdir / f"{step}.txt"
+    if split_err:
+        return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
 
     aborted_marker = script_path.with_suffix(".aborted")
     overwrite = aborted_marker.exists()
@@ -2618,7 +2674,7 @@ def cmd_normal(
 def cmd_fix(
     ref: str, fix_code: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
-    fix_code = _strip_trailing_fence(fix_code)
+    fix_code, split_err = _reassemble_split_payload(fix_code)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, target = parse_ref(ref, allow_fix_step=True)
     base_step = target.split("_", 1)[0]
@@ -2628,6 +2684,8 @@ def cmd_fix(
     label = f"{session}/{new_step}"
     fix_path = sdir / f"{new_step}.fix"
     out_path = sdir / f"{new_step}.txt"
+    if split_err:
+        return not_run_exit(label, sdir, new_step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
 
     chain = _find_fix_chain_scripts(sdir, base_step)
     if not chain:
