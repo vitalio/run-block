@@ -877,7 +877,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("  /tmp:", box_cd)
         stripped_lines = [l.strip() for l in box_cd.splitlines()]
         idx_var = stripped_lines.index("#   /var:")
-        self.assertEqual(stripped_lines[idx_var - 1], "#")
+        self.assertEqual(stripped_lines[idx_var - 1], "#     [read]  ls -la")
 
 
     def test_fix_ast_validation_and_bundle_tamper_revert(self):

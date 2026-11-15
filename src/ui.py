@@ -183,9 +183,7 @@ def format_safety_box(
                 detail_lines.append("")
             detail_lines.append("Operations:")
             if has_subdirs and op_groups:
-                for idx, (g_dir, g_items) in enumerate(op_groups):
-                    if idx > 0:
-                        detail_lines.append("")
+                for g_dir, g_items in op_groups:
                     dir_hdr = g_dir if g_dir else (wdir or ".")
                     detail_lines.append(f"  {dir_hdr}:")
                     detail_lines.extend(_wrap_labeled_items(g_items, max_row_len, indent="    "))

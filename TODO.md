@@ -1,8 +1,3 @@
-# 🎯 [NEXT] F24: Remove blank lines between directory groups in BLOCK PLAN Operations
-
-- Remove blank separator lines between directory groups inside `Operations:` in `src/ui.py` so grouped directory entries render compactly without vertical gaps.
-- Update `BLOCK PLAN` formatting assertions in `tests/test_run_block.py` to verify compact directory group rendering.
-
 # 🎯 [NEXT] F23: Format session bundle Date header in UTC (YYYY-MM-DD HH:MM UTC)
 
 - Format the `Date:` header in `src/bundle.py` using UTC (`datetime.now(timezone.utc)` or `now.astimezone(timezone.utc)`) formatted as `YYYY-MM-DD HH:MM UTC` to match bundle rules.

@@ -1,3 +1,8 @@
+# ✅ [DONE] F24: Remove blank lines between directory groups in BLOCK PLAN Operations — *2026-11-16*
+
+- Remove blank separator lines between directory groups inside `Operations:` in `src/ui.py` so grouped directory entries render compactly without vertical gaps.
+- Update `BLOCK PLAN` formatting assertions in `tests/test_run_block.py` to verify compact directory group rendering.
+
 # ✅ [DONE] F25: Add # prefix and compact # borders around TUI blocks — *2026-11-16, Rendered all TUI blocks with compact # borders and # line prefixes*
 
 - Render all TUI section blocks (`BLOCK PLAN`, `START BUNDLE`, `END`, `NOT RUN`, `SYNTAX ERROR`, and prompt boxes) in `src/ui.py` using a shared helper with compact `#` top and bottom borders (e.g. `min(term_cols, 48)`, padded to fit the title).

@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.20.4"
+VERSION = "0.20.5"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -1766,9 +1766,7 @@ def format_safety_box(
                 detail_lines.append("")
             detail_lines.append("Operations:")
             if has_subdirs and op_groups:
-                for idx, (g_dir, g_items) in enumerate(op_groups):
-                    if idx > 0:
-                        detail_lines.append("")
+                for g_dir, g_items in op_groups:
                     dir_hdr = g_dir if g_dir else (wdir or ".")
                     detail_lines.append(f"  {dir_hdr}:")
                     detail_lines.extend(_wrap_labeled_items(g_items, max_row_len, indent="    "))
