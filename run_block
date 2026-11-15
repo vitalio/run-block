@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.20.5"
+VERSION = "0.20.6"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -1708,23 +1708,26 @@ def format_session_header_lines(
     else:
         wdir_str = str(get_work_dir(resolved_sdir).resolve())
     wline = f"Workdir: {wdir_str}" + (f"  (cd -> {', '.join(cd_dirs)})" if cd_dirs else "")
-    if max_width is not None:
-        lines.extend(textwrap.wrap(wline, width=max_width) or [wline])
-    else:
-        lines.append(wline)
+    lines.append(wline)
 
     sb_val = sandbox_mode if (sandbox_mode is not None and str(sandbox_mode)) else get_sandbox_mode(resolved_sdir)
     sb_line = f"Sandbox: {format_sandbox_header(sb_val)}"
-    if max_width is not None:
-        lines.extend(textwrap.wrap(sb_line, width=max_width) or [sb_line])
-    else:
-        lines.append(sb_line)
+    lines.append(sb_line)
 
     for raw_k, val in hdr_items:
         if raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or not val:
             continue
         lines.append(f"{raw_k}: {val}")
-    return lines
+    aligned = _align_kv_lines(lines)
+    if max_width is None:
+        return aligned
+    wrapped: list[str] = []
+    for line in aligned:
+        if display_width(line) > max_width:
+            wrapped.extend(textwrap.wrap(line, width=max_width, subsequent_indent="  ") or [line])
+        else:
+            wrapped.append(line)
+    return wrapped
 
 
 def format_safety_box(
@@ -2234,26 +2237,114 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
         return False
 
 
+_KV_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*:)\s+(.*\S.*)$")
+_TITLE_COLORS = {
+    "START BUNDLE": "\x1b[1;36m",
+    "BLOCK PLAN": "\x1b[1;33m",
+    "END": "\x1b[1;32m",
+    "SYNTAX ERROR": "\x1b[1;31m",
+    "NOT RUN": "\x1b[1;31m",
+    "MISSING PREVIOUS STEP": "\x1b[1;33m",
+    "STEP ALREADY EXISTS": "\x1b[1;33m",
+}
+_BORDER_COLOR = "\x1b[2;36m"
+_KEY_COLOR = "\x1b[2m"
+_ANSI_RESET = "\x1b[0m"
+
+
+def _supports_utf8(stream=None) -> bool:
+    target = stream if stream is not None else sys.stdout
+    enc = getattr(target, "encoding", None)
+    if not enc:
+        enc = sys.getdefaultencoding()
+    return "utf" in str(enc).lower()
+
+
+def _use_color(stream=None) -> bool:
+    if os.environ.get("NO_COLOR", "") != "":
+        return False
+    if os.environ.get("TERM", "") == "dumb":
+        return False
+    target = stream if stream is not None else sys.stdout
+    try:
+        return bool(target.isatty())
+    except Exception:
+        return False
+
+
+def _align_kv_lines(lines: list[str]) -> list[str]:
+    out = list(lines)
+    i = 0
+    n = len(out)
+    while i < n:
+        m = _KV_LINE_RE.match(out[i])
+        if not m:
+            i += 1
+            continue
+        j = i
+        parsed: list[tuple[str, str]] = []
+        while j < n:
+            mj = _KV_LINE_RE.match(out[j])
+            if not mj:
+                break
+            parsed.append((mj.group(1), mj.group(2).lstrip()))
+            j += 1
+        if len(parsed) >= 2:
+            key_w = max(len(k) for k, _ in parsed)
+            for idx, (k, v) in enumerate(parsed):
+                out[i + idx] = f"{k.ljust(key_w)} {v}"
+        i = j
+    return out
+
+
+def _colorize_kv_line(line: str) -> str:
+    if not _use_color():
+        return line
+    m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*:)(\s+)(.*)$", line)
+    if m:
+        return f"{_KEY_COLOR}{m.group(1)}{_ANSI_RESET}{m.group(2)}{m.group(3)}"
+    return line
+
+
 def display_width(text: str) -> int:
-    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+    clean = ANSI_RE.sub("", text)
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in clean)
 
 
 def _hr_width() -> int:
     return max(40, shutil.get_terminal_size((80, 24)).columns)
 
 
-def _format_top_rule(title: str, width: int) -> str:
-    hdr = f"[{title.strip()}]"
-    right_hashes = max(4, width - 6 - display_width(hdr))
-    return f"#### {hdr} {'#' * right_hashes}"
+def _format_top_rule(title: str, width: int, title_color: str | None = None) -> str:
+    clean_title = title.strip()
+    hdr = f"[{clean_title}]"
+    right_len = max(4, width - 4 - display_width(hdr))
+    if _supports_utf8():
+        left = "╭─ "
+        fill = "─" * right_len
+    else:
+        left = "+- "
+        fill = "-" * right_len
+    if _use_color():
+        t_col = title_color or _TITLE_COLORS.get(clean_title, "\x1b[1;36m")
+        return f"{_BORDER_COLOR}{left}{_ANSI_RESET}{t_col}{hdr}{_ANSI_RESET} {_BORDER_COLOR}{fill}{_ANSI_RESET}"
+    return f"{left}{hdr} {fill}"
 
 
 def _format_bottom_rule(width: int) -> str:
-    return "#" * width
+    dash_len = max(3, width - 1)
+    rule = f"╰{'─' * dash_len}" if _supports_utf8() else f"+{'-' * dash_len}"
+    if _use_color():
+        return f"{_BORDER_COLOR}{rule}{_ANSI_RESET}"
+    return rule
 
 
 def _prefix_block_line(line: str) -> str:
-    return f"# {line}" if line else "#"
+    bar = "│" if _supports_utf8() else "|"
+    if _use_color():
+        bar_str = f"{_BORDER_COLOR}{bar}{_ANSI_RESET}"
+        return f"{bar_str} {line}" if line else bar_str
+    return f"{bar} {line}" if line else bar
 
 
 def _render_block(
@@ -2261,17 +2352,22 @@ def _render_block(
     content_lines: list[str],
     prompt_line: str | None = None,
 ) -> tuple[str, int, int]:
-    hdr = f"[{title.strip()}]"
-    width = max(min(_hr_width(), 48), display_width(hdr) + 10)
-    top = _format_top_rule(title, width)
+    clean_title = title.strip()
+    hdr = f"[{clean_title}]"
+    width = max(min(_hr_width(), 48), display_width(hdr) + 8)
+    aligned_lines = _align_kv_lines(content_lines)
+    title_color = None
+    if clean_title == "END" and any(l.startswith("Exit:") for l in aligned_lines):
+        title_color = "\x1b[1;31m"
+    top = _format_top_rule(title, width, title_color=title_color)
     bottom = _format_bottom_rule(width)
-    rows = [_prefix_block_line(line) for line in content_lines]
+    rows = [_prefix_block_line(_colorize_kv_line(line)) for line in aligned_lines]
     if not rows and prompt_line is None:
-        rows = ["#"]
+        rows = [_prefix_block_line("")]
     cursor_col_offset = 0
     if prompt_line is not None:
-        if content_lines:
-            rows.append("#")
+        if aligned_lines:
+            rows.append(_prefix_block_line(""))
         prefixed_prompt = _prefix_block_line(prompt_line)
         rows.append(prefixed_prompt)
         cursor_col_offset = display_width(prefixed_prompt)
@@ -2359,10 +2455,10 @@ def build_box_body_lines(
         detail_lines.append(f"Stats: {stats}")
     has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
-        return detail_lines
+        return _align_kv_lines(detail_lines)
     hdr_lines = format_session_header_lines(label=label, sdir=resolved_sdir)
     if detail_lines:
-        return [*hdr_lines, "", *detail_lines]
+        return _align_kv_lines([*hdr_lines, "", *detail_lines])
     return hdr_lines
 
 

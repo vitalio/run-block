@@ -1,3 +1,10 @@
+# ✅ [DONE] F26: Refine TUI block borders, key-value alignment, and TTY status colors — *2026-11-16*
+
+- Update `src/ui.py` (`_format_top_rule`, `_format_bottom_rule`, `_prefix_block_line`, `_render_block`, and key-value formatting in `format_session_header_lines` and `build_box_body_lines`) to replace `#` borders with thin open-right box-drawing borders (`╭─ [TITLE] ───`, `│ `, `╰───`) of compact width, with an ASCII fallback (`+-`, `| `) when `stdout` is not UTF-8.
+- Align contiguous `Key: value` metadata lines in columns (`Session:`, `Next-Block:`, `Workdir:`, `Sandbox:`, `Role:`, `Task:`, `Bundle:`, `Output:`, `Stats:`, etc.) for cleaner scanning.
+- Add TTY-aware ANSI colors (disabled when not a TTY or `NO_COLOR` is set): dimmed/tinted borders, bold status-colored `[TITLE]` (`START BUNDLE`, `BLOCK PLAN`, `END`, `SYNTAX ERROR`, `NOT RUN`), and dimmed keys.
+- Update `tests/test_run_block.py` to verify the new border style, ASCII fallback, key-value alignment, and `NO_COLOR`/non-TTY behavior.
+
 # ✅ [DONE] F24: Remove blank lines between directory groups in BLOCK PLAN Operations — *2026-11-16*
 
 - Remove blank separator lines between directory groups inside `Operations:` in `src/ui.py` so grouped directory entries render compactly without vertical gaps.

@@ -48,9 +48,11 @@ class TestRunBlock(unittest.TestCase):
                 "RUN_BLOCK_HEADLESS",
                 "RUN_BLOCK_SANDBOX",
                 "RUN_BLOCK_MAX_FIX_ATTEMPTS",
+                "NO_COLOR",
             )
         }
         os.environ["RUN_BLOCK_NO_CLIPBOARD"] = "1"
+        os.environ["NO_COLOR"] = "1"
         os.environ.pop("IN_RUN_BLOCK", None)
         self.tmp = Path(tempfile.mkdtemp(prefix="rb_test_"))
         os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
@@ -166,15 +168,13 @@ class TestRunBlock(unittest.TestCase):
             box, rule_w, cursor_off = self.mod.format_safety_box("s1/2", findings, summary=summary)
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
-        self.assertEqual(box_lines[0], "#### [BLOCK PLAN] " + "#" * 30)
-        self.assertEqual(box_lines[-2], "# -> Execute this block? [y/n/v(iew)]:")
-        self.assertEqual(box_lines[-1], "#" * 48)
-        self.assertNotIn("┌─", box)
-        self.assertNotIn("└─", box)
-        self.assertNotIn("│", box)
-        self.assertIn("# Block: s1/2", box)
-        self.assertIn("# Sandbox: off", box)
-        self.assertEqual(cursor_off, len("# -> Execute this block? [y/n/v(iew)]:"))
+        self.assertEqual(box_lines[0], "╭─ [BLOCK PLAN] " + "─" * 32)
+        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/v(iew)]:")
+        self.assertEqual(box_lines[-1], "╰" + "─" * 47)
+        self.assertNotIn("####", box)
+        self.assertIn("│ Block:   s1/2", box)
+        self.assertIn("│ Sandbox: off", box)
+        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/v(iew)]:"))
         self.assertNotIn("BLOCK PLAN (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
@@ -214,9 +214,9 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("[s1/1] START\n", out1)
         self.assertIn("[s1/1] END\n", out1)
         self.assertIn("[END]", buf.getvalue())
-        self.assertIn("Block: s1/1", buf.getvalue())
+        self.assertIn("Block:   s1/1", buf.getvalue())
         self.assertIn("[NOT RUN]", buf.getvalue())
-        self.assertIn("Block: s1/3", buf.getvalue())
+        self.assertIn("Block:   s1/3", buf.getvalue())
 
     def test_failed_execution_and_chained_fixes(self):
         buf = io.StringIO()
@@ -263,17 +263,17 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("END (syntax error", out)
         rendered = buf.getvalue()
         self.assertIn("[SYNTAX ERROR]", rendered)
-        self.assertIn("Block: s1/1", rendered)
+        self.assertIn("Block:   s1/1", rendered)
         self.assertNotIn("SYNTAX ERROR (", rendered)
         self.assertIn("Exit: ", rendered)
         self.assertIn("Script: ", rendered)
         self.assertIn("Output: ", rendered)
         self.assertIn("Error: ", rendered)
         box_lines = rendered.strip().splitlines()
-        self.assertTrue(box_lines[0].startswith("#### [SYNTAX ERROR] ####"))
-        self.assertEqual(box_lines[-1], "#" * len(box_lines[0]))
-        self.assertNotIn("─", rendered)
-        self.assertNotIn("│", rendered)
+        self.assertTrue(box_lines[0].startswith("╭─ [SYNTAX ERROR] ────"))
+        self.assertEqual(box_lines[-1], "╰" + "─" * (len(box_lines[0]) - 1))
+        self.assertIn("│ Exit:   ", rendered)
+        self.assertIn("│ Output: ", rendered)
 
     def test_stats_and_clipboard_box(self):
         f = self.tmp / "x.txt"
@@ -283,31 +283,29 @@ class TestRunBlock(unittest.TestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
-        self.assertEqual(c_off, len("# -> Copy to clipboard? [Enter/v(iew)/Esc]:"))
-        self.assertIn("#### [END] ####", box)
-        self.assertIn("# Block: s2/1", box)
-        self.assertIn("# Workdir: ", box)
-        self.assertIn("# Sandbox: off", box)
+        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Enter/v(iew)/Esc]:"))
+        self.assertIn("╭─ [END] ────", box)
+        self.assertIn("│ Block:   s2/1", box)
+        self.assertIn("│ Workdir: ", box)
+        self.assertIn("│ Sandbox: off", box)
         self.assertNotIn("END (", box)
-        self.assertIn(f"# Output: {f}", box)
-        self.assertIn("# Stats: 1 line · 6 B · ~2 tokens", box)
-        self.assertIn("# -> Copy to clipboard? [Enter/v(iew)/Esc]:", box)
+        self.assertIn(f"│ Output: {f}", box)
+        self.assertIn("│ Stats:  1 line · 6 B · ~2 tokens", box)
+        self.assertIn("│ -> Copy to clipboard? [Enter/v(iew)/Esc]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 10)
         self.assertEqual(len(lines[0]), 48)
-        self.assertTrue(lines[0].startswith("#### [END] ####"))
-        self.assertEqual(lines[-2], "# -> Copy to clipboard? [Enter/v(iew)/Esc]:")
-        self.assertEqual(lines[-1], "#" * 48)
-        self.assertNotIn("─", box)
-        self.assertNotIn("│", box)
+        self.assertTrue(lines[0].startswith("╭─ [END] ────"))
+        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Enter/v(iew)/Esc]:")
+        self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
         box_err, _, _ = self.mod.format_clipboard_box("s2/2", f, ok=False, rc=2, stats=s)
         self.assertIn("[END]", box_err)
-        self.assertIn("Block: s2/2", box_err)
-        self.assertIn("Exit: 2", box_err)
+        self.assertIn("Block:   s2/2", box_err)
+        self.assertIn("Exit:   2", box_err)
         self.assertIn(f"Output: {f}", box_err)
-        self.assertIn("Stats: 1 line · 6 B · ~2 tokens", box_err)
+        self.assertIn("Stats:  1 line · 6 B · ~2 tokens", box_err)
 
     def test_self_update_and_check_update(self):
         installed = self.tmp / "my_block"
@@ -396,11 +394,11 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
         self.assertIn("[START BUNDLE]", r_pipe.stdout)
-        self.assertIn("Session: s1", r_pipe.stdout)
+        self.assertIn("Session:    s1", r_pipe.stdout)
         self.assertIn("Next-Block: s1/1", r_pipe.stdout)
-        self.assertIn("Sandbox: off", r_pipe.stdout)
-        self.assertIn("Role: execute", r_pipe.stdout)
-        self.assertIn("Task: F14", r_pipe.stdout)
+        self.assertIn("Sandbox:    off", r_pipe.stdout)
+        self.assertIn("Role:       execute", r_pipe.stdout)
+        self.assertIn("Task:       F14", r_pipe.stdout)
         self.assertNotIn("Date:", r_pipe.stdout)
         self.assertNotIn("Bundle-Command:", r_pipe.stdout)
         self.assertNotIn("Chat-Lang:", r_pipe.stdout)
@@ -424,9 +422,9 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_step1.returncode, 0, r_step1.stderr)
         self.assertIn("[END]", r_step1.stdout)
-        self.assertIn("Block: s1/1", r_step1.stdout)
-        self.assertIn("Role: execute", r_step1.stdout)
-        self.assertIn("Task: F14", r_step1.stdout)
+        self.assertIn("Block:   s1/1", r_step1.stdout)
+        self.assertIn("Role:    execute", r_step1.stdout)
+        self.assertIn("Task:    F14", r_step1.stdout)
         self.assertIn("ran_s1_step1", r_step1.stdout)
 
         r_start = subprocess.run(
@@ -440,7 +438,7 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         self.assertIn("[START BUNDLE]", r_start.stdout)
-        self.assertIn("Session: s2", r_start.stdout)
+        self.assertIn("Session:    s2", r_start.stdout)
 
         r_show0 = subprocess.run(
             [str(SCRIPT), "--show", "s2/0"],
@@ -507,13 +505,11 @@ class TestRunBlock(unittest.TestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
             info_box = self.mod.format_info_box("START BUNDLE", ["Session: s1", "Next-Block: s1/1"])
         info_lines = info_box.splitlines()
-        self.assertTrue(info_lines[0].startswith("#### [START BUNDLE] ####"))
+        self.assertTrue(info_lines[0].startswith("╭─ [START BUNDLE] ────"))
         self.assertEqual(len(info_lines[0]), 48)
-        self.assertEqual(info_lines[1], "# Session: s1")
-        self.assertEqual(info_lines[2], "# Next-Block: s1/1")
-        self.assertEqual(info_lines[-1], "#" * 48)
-        self.assertNotIn("─", info_box)
-        self.assertNotIn("│", info_box)
+        self.assertEqual(info_lines[1], "│ Session:    s1")
+        self.assertEqual(info_lines[2], "│ Next-Block: s1/1")
+        self.assertEqual(info_lines[-1], "╰" + "─" * 47)
 
         yes_st = "✓ Proceeding with s1/2 (skipped previous step s1/1)."
         no_st = "✗ Canceled s1/2 (run s1/1 first)."
@@ -525,16 +521,15 @@ class TestRunBlock(unittest.TestCase):
                 status_lines=(yes_st, no_st),
             )
         self.assertEqual(p_width, 48)
-        self.assertEqual(p_off, len("# -> Run s1/2 anyway? [y/N]:"))
+        self.assertEqual(p_off, len("│ -> Run s1/2 anyway? [y/N]:"))
         p_lines = p_box.splitlines()
-        self.assertTrue(p_lines[0].startswith("#### [MISSING PREVIOUS STEP] ####"))
-        self.assertEqual(p_lines[1], "# Block: s1/2")
-        self.assertEqual(p_lines[2], "#")
-        self.assertEqual(p_lines[3], "# Missing: s1/1")
-        self.assertEqual(p_lines[4], "#")
-        self.assertEqual(p_lines[-2], "# -> Run s1/2 anyway? [y/N]:")
-        self.assertEqual(p_lines[-1], "#" * 48)
-        self.assertNotIn("─", p_box)
+        self.assertTrue(p_lines[0].startswith("╭─ [MISSING PREVIOUS STEP] ────"))
+        self.assertEqual(p_lines[1], "│ Block: s1/2")
+        self.assertEqual(p_lines[2], "│")
+        self.assertEqual(p_lines[3], "│ Missing: s1/1")
+        self.assertEqual(p_lines[4], "│")
+        self.assertEqual(p_lines[-2], "│ -> Run s1/2 anyway? [y/N]:")
+        self.assertEqual(p_lines[-1], "╰" + "─" * 47)
 
         tty_w = io.StringIO()
         tty_r = io.StringIO("y\n")
@@ -546,8 +541,8 @@ class TestRunBlock(unittest.TestCase):
             tty_streams=(tty_w, tty_r),
         )
         self.assertTrue(ok)
-        self.assertIn("#### [MISSING PREVIOUS STEP] ####", tty_w.getvalue())
-        self.assertIn("\r\033[K# ✓ Confirmed by user.\n", tty_w.getvalue())
+        self.assertIn("╭─ [MISSING PREVIOUS STEP] ────", tty_w.getvalue())
+        self.assertIn("\r\033[K│ ✓ Confirmed by user.\n", tty_w.getvalue())
 
         # Verify interactive declines do not emit duplicate NOT RUN / END boxes
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
@@ -559,7 +554,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc_skip_dec, 2)
             self.assertEqual(buf_dec.getvalue(), "")
             self.assertEqual(mock_prompt.call_args[0][0], "MISSING PREVIOUS STEP")
-            self.assertIn("Block: s9/2", mock_prompt.call_args[0][1])
+            self.assertIn("Block:   s9/2", mock_prompt.call_args[0][1])
             self.assertIn("Missing: s9/1", mock_prompt.call_args[0][1])
 
             with contextlib.redirect_stdout(io.StringIO()):
@@ -571,7 +566,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc_dup_dec, 2)
             self.assertEqual(buf_dup_dec.getvalue(), "")
             self.assertEqual(mock_prompt.call_args[0][0], "STEP ALREADY EXISTS")
-            self.assertIn("Block: s9/1", mock_prompt.call_args[0][1])
+            self.assertIn("Block:   s9/1", mock_prompt.call_args[0][1])
 
         with unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(False, "USER_ABORTED")):
             buf_abort = io.StringIO()
@@ -873,11 +868,11 @@ class TestRunBlock(unittest.TestCase):
         sum_cd = rb_mod.summarize_script_actions(multi_cd, Path("/home"))
         box_cd, _, _ = rb_mod.format_safety_box("s1/4", [], default_yes=True, summary=sum_cd)
         self.assertIn("[BLOCK PLAN]", box_cd)
-        self.assertIn("Block: s1/4", box_cd)
+        self.assertIn("Block:   s1/4", box_cd)
         self.assertIn("  /tmp:", box_cd)
         stripped_lines = [l.strip() for l in box_cd.splitlines()]
-        idx_var = stripped_lines.index("#   /var:")
-        self.assertEqual(stripped_lines[idx_var - 1], "#     [read]  ls -la")
+        idx_var = stripped_lines.index("│   /var:")
+        self.assertEqual(stripped_lines[idx_var - 1], "│     [read]  ls -la")
 
 
     def test_fix_ast_validation_and_bundle_tamper_revert(self):
@@ -1201,9 +1196,9 @@ class TestRunBlock(unittest.TestCase):
         # END box displays Error: <last_error_line> and Fix: status line
         end_rendered = buf_end.getvalue()
         self.assertIn("[END]", end_rendered)
-        self.assertIn("Exit: 1", end_rendered)
-        self.assertIn("Error: IndexError: list index out of range", end_rendered)
-        self.assertIn(f"Fix: {self.mod.prog_name()} --fix s1/1 (0/2 failed attempts)", end_rendered)
+        self.assertIn("Exit:   1", end_rendered)
+        self.assertIn("Error:  IndexError: list index out of range", end_rendered)
+        self.assertIn(f"Fix:    {self.mod.prog_name()} --fix s1/1 (0/2 failed attempts)", end_rendered)
 
         # 2. Failed --fix NOT RUN box shows Target: <session>/<target> -> <label> and clean Guard: line
         buf_fix1 = io.StringIO()
@@ -1224,7 +1219,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(rc_f2, 2)
         f2_rendered = buf_fix2.getvalue()
         self.assertIn("Target: s1/1_1 -> s1/1_2", f2_rendered)
-        self.assertIn("Guard: reached 2/2 failed --fix attempts for s1/1; switch to a fresh s1/2 block instead.", f2_rendered)
+        self.assertIn("Guard:  reached 2/2 failed --fix attempts for s1/1; switch to a fresh s1/2 block instead.", f2_rendered)
         self.assertNotIn("[s1/1_2] STOP --fix:", f2_rendered)
         f2_clip = (self.tmp / "s1/1_2/out").read_text(encoding="utf-8")
         self.assertIn("[s1/1_2] STOP --fix: reached 2/2 failed --fix attempts for s1/1", f2_clip)
@@ -1238,8 +1233,8 @@ class TestRunBlock(unittest.TestCase):
             rc_f2_run = self.mod.cmd_fix("s1/2_1", "text = text.replace('exit 6', 'exit 7')\n")
         self.assertEqual(rc_f2_run, 7)
         end_stop_rendered = buf_end_stop.getvalue()
-        self.assertIn("Error: boom", end_stop_rendered)
-        self.assertIn("Fix: STOP --fix (2/2 failed attempts; emit a fresh s1/3 block instead)", end_stop_rendered)
+        self.assertIn("Error:  boom", end_stop_rendered)
+        self.assertIn("Fix:    STOP --fix (2/2 failed attempts; emit a fresh s1/3 block instead)", end_stop_rendered)
 
     def test_b3_subproject_workdir_resolution_and_overrides(self):
         repo = self.tmp / "monorepo"
@@ -1349,6 +1344,48 @@ class TestRunBlock(unittest.TestCase):
         s5_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s5")
         self.assertEqual(Path(s5_hdrs["workdir"]).resolve(), explicit_dir.resolve())
 
+
+
+    def test_f26_ascii_fallback_kv_alignment_and_tty_colors(self):
+        # 1. ASCII fallback when stdout encoding is not UTF-8
+        with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
+                ascii_box = self.mod.format_info_box("START BUNDLE", ["Session: s1", "Next-Block: s1/1"])
+        a_lines = ascii_box.splitlines()
+        self.assertTrue(a_lines[0].startswith("+- [START BUNDLE] ----"))
+        self.assertEqual(len(a_lines[0]), 48)
+        self.assertEqual(a_lines[1], "| Session:    s1")
+        self.assertEqual(a_lines[2], "| Next-Block: s1/1")
+        self.assertEqual(a_lines[-1], "+" + "-" * 47)
+
+        # 2. TTY-aware ANSI colors enabled on TTY without NO_COLOR, disabled with NO_COLOR or non-TTY
+        tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+        saved_no_color = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
+                colored_box, _, c_off = self.mod.format_prompt_box(
+                    "BLOCK PLAN",
+                    ["Block: s1/1", "Workdir: /tmp/proj"],
+                    "-> Execute? [Y/n]:",
+                )
+            self.assertIn("\x1b[2;36m╭─ ", colored_box)
+            self.assertIn("\x1b[1;33m[BLOCK PLAN]\x1b[0m", colored_box)
+            self.assertIn("\x1b[2mBlock:\x1b[0m   s1/1", colored_box)
+            self.assertIn("\x1b[2mWorkdir:\x1b[0m /tmp/proj", colored_box)
+            self.assertEqual(c_off, len("│ -> Execute? [Y/n]:"))
+
+            os.environ["NO_COLOR"] = "1"
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
+                no_color_box = self.mod.format_info_box("NOT RUN", ["Reason: blocked"])
+            self.assertNotIn("\x1b[", no_color_box)
+            self.assertIn("╭─ [NOT RUN] ────", no_color_box)
+        finally:
+            if saved_no_color is None:
+                os.environ.pop("NO_COLOR", None)
+            else:
+                os.environ["NO_COLOR"] = saved_no_color
 
 if __name__ == "__main__":
     unittest.main()
