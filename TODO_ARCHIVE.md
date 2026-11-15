@@ -1,3 +1,11 @@
+# ✅ [DONE] F25: Add # prefix and compact # borders around TUI blocks — *2026-11-16, Rendered all TUI blocks with compact # borders and # line prefixes*
+
+- Render all TUI section blocks (`BLOCK PLAN`, `START BUNDLE`, `END`, `NOT RUN`, `SYNTAX ERROR`, and prompt boxes) in `src/ui.py` using a shared helper with compact `#` top and bottom borders (e.g. `min(term_cols, 48)`, padded to fit the title).
+- Format the top border with the embedded `[TITLE]` (e.g. `#### [TITLE] ####...`) and close every block with a matching `#` rule of the same width.
+- Prefix every content and prompt line with `# ` (and render blank separator lines as `#` without trailing whitespace), accounting for the 2-character prefix when wrapping text.
+- Keep interactive prompt lines (`-> ...?`) inside the block immediately above the bottom `#` border, adjusting `cursor_col_offset` and cursor positioning/redraws accordingly.
+- Update TUI box assertions in `tests/test_run_block.py` and keep `AGENTS.md` / `README.md` descriptions in sync if needed.
+
 # ✅ [DONE] F22: Replace box-drawing horizontal rules with plain [TITLE] section headers — *2026-11-15, Replaced box-drawing horizontal rules with plain [TITLE] section headers and simplified in-place prompt redraws.*
 
 - Replace box-drawing horizontal rules (`── <TITLE> ───...` and bottom `───...`) in `src/ui.py` with plain bracketed section headers (`[<TITLE>]`) and no trailing bottom rule so TUI sections never wrap or misalign when the terminal is resized.

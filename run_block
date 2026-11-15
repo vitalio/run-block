@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.20.3"
+VERSION = "0.20.4"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -1740,7 +1740,7 @@ def format_safety_box(
     prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     term_cols = _hr_width()
-    max_row_len = term_cols
+    max_row_len = max(24, term_cols - 2)
 
     sdir = _resolve_session_dir(label, script_path)
     wdir = str(summary.get("work_dir") or "") if summary else ""
@@ -1796,21 +1796,12 @@ def format_safety_box(
                 or [f"  {nline}"]
             )
 
-    rule_width = _hr_width()
-    top = _format_section_header(title)
-    rows = list(content_lines)
-    if content_lines:
-        rows.append("")
-    rows.append(prompt_line)
-    box = "\n".join([top, *rows])
-    cursor_col_offset = display_width(prompt_line)
-    return box, rule_width, cursor_col_offset
+    return _render_block(title, content_lines, prompt_line=prompt_line)
 
 
 def format_info_box(title: str, content_lines: list[str]) -> str:
-    top = _format_section_header(title)
-    rows = list(content_lines) or [""]
-    return "\n".join([top, *rows])
+    box, _, _ = _render_block(title, content_lines)
+    return box
 
 
 def format_prompt_box(
@@ -1820,15 +1811,7 @@ def format_prompt_box(
     status_lines: list[str] | tuple[str, ...] = (),
 ) -> tuple[str, int, int]:
     _ = status_lines
-    rule_width = _hr_width()
-    top = _format_section_header(title)
-    rows = list(content_lines)
-    if content_lines:
-        rows.append("")
-    rows.append(prompt_line)
-    box = "\n".join([top, *rows])
-    cursor_col_offset = display_width(prompt_line)
-    return box, rule_width, cursor_col_offset
+    return _render_block(title, content_lines, prompt_line=prompt_line)
 
 
 def _build_prompt_yes_no_suffix(
@@ -1893,9 +1876,11 @@ def prompt_yes_no_box(
     if can_copy:
         extra_keys["c"] = "copy"
         extra_keys["copy"] = "copy"
-    box, _, _ = format_prompt_box(
+    box, rule_width, cursor_offset = format_prompt_box(
         title, content_lines, prompt_line, status_lines=status_list
     )
+    bottom = _format_bottom_rule(rule_width)
+    prefixed_prompt = _prefix_block_line(prompt_line)
     try:
         if tty_streams is not None:
             tty_w, tty_r = tty_streams
@@ -1904,7 +1889,7 @@ def prompt_yes_no_box(
             tty_w, tty_r = open_tty()
             close_after = True
         try:
-            tty_w.write(box)
+            tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
             status_line: str | None = None
             while True:
@@ -1916,19 +1901,19 @@ def prompt_yes_no_box(
                 )
                 if action == "script" and has_script and script_path is not None:
                     open_script_in_editor(script_path, tty_r, tty_w)
-                    tty_w.write(f"\r\033[K{prompt_line}")
+                    tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
                     continue
                 if action == "output" and has_output and out_path is not None:
                     open_script_in_editor(out_path, tty_r, tty_w)
-                    tty_w.write(f"\r\033[K{prompt_line}")
+                    tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
                     continue
                 if action == "view" and (has_output or has_script):
                     view_target = out_path if (has_output and out_path is not None) else script_path
                     if view_target is not None:
                         open_script_in_editor(view_target, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{prompt_line}")
+                        tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if action == "copy" and can_copy and clip_target is not None:
@@ -1948,7 +1933,8 @@ def prompt_yes_no_box(
                     break
             if status_line is None:
                 status_line = yes_status if approved else no_status
-            tty_w.write(f"\r\033[K{status_line}\n")
+            prefixed_status = _prefix_block_line(status_line)
+            tty_w.write(f"\r\033[K{prefixed_status}\n\r\033[K{bottom}\n")
             tty_w.flush()
             return approved
         finally:
@@ -2090,7 +2076,7 @@ def confirm_execution(
             sys.stdout.flush()
         return True, note
     default_yes = (len(findings) == 0 and approve_decision != "prompt")
-    box, _, _ = format_safety_box(
+    box, rule_width, cursor_offset = format_safety_box(
         label,
         findings,
         default_yes=default_yes,
@@ -2098,19 +2084,20 @@ def confirm_execution(
         note=note,
         script_path=script_path,
     )
+    bottom = _format_bottom_rule(rule_width)
     prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
-    prompt_line = f"-> Execute this block? {prompt_suffix}"
+    prefixed_prompt = _prefix_block_line(f"-> Execute this block? {prompt_suffix}")
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
-            tty_w.write(box)
+            tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
             while True:
                 action = read_confirm_key(tty_r, default_yes=default_yes)
                 if action == "view":
                     if script_path is not None and script_path.is_file():
                         open_script_in_editor(script_path, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{prompt_line}")
+                        tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if action == "yes":
@@ -2121,7 +2108,8 @@ def confirm_execution(
                     break
             run_target = str(script_path) if script_path is not None else label
             status_line = f"✓ Running {run_target} ..." if approved else f"✗ Aborted (--retry {label})"
-            tty_w.write(f"\r\033[K{status_line}\n")
+            prefixed_status = _prefix_block_line(status_line)
+            tty_w.write(f"\r\033[K{prefixed_status}\n\r\033[K{bottom}\n")
             tty_w.flush()
             return approved, ("" if approved else "USER_ABORTED")
     except OSError:
@@ -2256,8 +2244,41 @@ def _hr_width() -> int:
     return max(40, shutil.get_terminal_size((80, 24)).columns)
 
 
-def _format_section_header(title: str) -> str:
-    return f"[{title.strip()}]"
+def _format_top_rule(title: str, width: int) -> str:
+    hdr = f"[{title.strip()}]"
+    right_hashes = max(4, width - 6 - display_width(hdr))
+    return f"#### {hdr} {'#' * right_hashes}"
+
+
+def _format_bottom_rule(width: int) -> str:
+    return "#" * width
+
+
+def _prefix_block_line(line: str) -> str:
+    return f"# {line}" if line else "#"
+
+
+def _render_block(
+    title: str,
+    content_lines: list[str],
+    prompt_line: str | None = None,
+) -> tuple[str, int, int]:
+    hdr = f"[{title.strip()}]"
+    width = max(min(_hr_width(), 48), display_width(hdr) + 10)
+    top = _format_top_rule(title, width)
+    bottom = _format_bottom_rule(width)
+    rows = [_prefix_block_line(line) for line in content_lines]
+    if not rows and prompt_line is None:
+        rows = ["#"]
+    cursor_col_offset = 0
+    if prompt_line is not None:
+        if content_lines:
+            rows.append("#")
+        prefixed_prompt = _prefix_block_line(prompt_line)
+        rows.append(prefixed_prompt)
+        cursor_col_offset = display_width(prefixed_prompt)
+    box = "\n".join([top, *rows, bottom])
+    return box, width, cursor_col_offset
 
 
 def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
@@ -2358,15 +2379,9 @@ def format_clipboard_box(
     cmd_str: str | None = None,
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
-    title = f" {title_kind} "
     body_lines = build_box_body_lines(out_path, rc=rc, stats=stats, extra_lines=extra_lines, label=label)
     prompt_line = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
-    rule_width = _hr_width()
-    top = _format_section_header(title)
-    rows = [*body_lines, "", prompt_line]
-    box = "\n".join([top, *rows])
-    cursor_col_offset = display_width(prompt_line)
-    return box, rule_width, cursor_col_offset
+    return _render_block(title_kind, body_lines, prompt_line=prompt_line)
 
 
 def offer_clipboard_copy(
@@ -2397,7 +2412,7 @@ def offer_clipboard_copy(
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
         sys.stdout.flush()
         return
-    box, _, _ = format_clipboard_box(
+    box, rule_width, cursor_offset = format_clipboard_box(
         label,
         out_path,
         ok=ok,
@@ -2407,18 +2422,19 @@ def offer_clipboard_copy(
         extra_lines=extra_lines,
         cmd_str=cmd_str,
     )
-    line2 = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
+    bottom = _format_bottom_rule(rule_width)
+    prefixed_line2 = _prefix_block_line("-> Copy to clipboard? [Enter/v(iew)/Esc]:")
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
-            tty_w.write(f"\n{box}")
+            tty_w.write(f"\n{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
             while True:
                 action = read_clipboard_key(tty_r)
                 if action == "view":
                     if out_path.is_file():
                         open_script_in_editor(out_path, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{line2}")
+                        tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if action == "copy":
@@ -2429,7 +2445,8 @@ def offer_clipboard_copy(
                 else:
                     status_line = "Skipped clipboard copy."
                 break
-            tty_w.write(f"\r\033[K{status_line}\n")
+            prefixed_status = _prefix_block_line(status_line)
+            tty_w.write(f"\r\033[K{prefixed_status}\n\r\033[K{bottom}\n")
             tty_w.flush()
     except OSError:
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
