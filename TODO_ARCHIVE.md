@@ -1,3 +1,11 @@
+# ✅ [DONE] F21: Replace bordered TUI boxes with full-width horizontal rule separators — *2026-11-15, Replaced full-perimeter TUI box borders with full-width horizontal rule separators in v0.19.2*
+
+Replace full-perimeter box-drawing borders (`┌─ ... ─┐`, `│ ... │`, `└─ ... ─┘`) in `src/ui.py` with terminal-width horizontal rule separators (`── <TITLE> ───...` and `───...`) so long lines (paths, errors, `--fix` reasons) wrap naturally without breaking box alignment.
+
+- Update `format_safety_box`, `format_info_box`, `format_prompt_box`, `format_clipboard_box`, `prompt_yes_no_box`, `confirm_execution`, and `offer_clipboard_copy` in `src/ui.py` to render top/bottom horizontal rules sized to terminal width (`shutil.get_terminal_size`) without side `│` borders or right-padding.
+- Use `\r\033[K` when rewriting interactive prompt lines and final status lines (`✓ Running ...`, `✓ Copied ...`, `✗ Aborted ...`) so shorter status text clears previous prompt text cleanly.
+- Update `resolve_clipboard_target` in `src/ui.py`, unit tests in `tests/test_run_block.py`, and TUI documentation in `AGENTS.md` and `README.md`.
+
 # ✅ [DONE] B5: Resolve Python <stdin> traceback lines on failure and enrich END/NOT RUN TUI cards — *2026-11-15, Resolve Python <stdin> traceback lines on failure and enrich END/NOT RUN TUI cards*
 
 - When a block exits with non-zero status and its output contains `File "<stdin>", line <N>` from an embedded `python3` heredoc in `src/runner.py`, extract line `<N>` from the heredoc body and append `[<label>] <stdin> line <N>: <source_line>` to the output before `[<label>] END (exit <rc>)` so the failing statement is visible in clipboard output.

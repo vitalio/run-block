@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.19.1"
+VERSION = "0.19.2"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -1711,8 +1711,8 @@ def format_safety_box(
     title = " BLOCK PLAN "
     prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
     prompt_line = f"-> Execute this block? {prompt_suffix}"
-    term_cols = shutil.get_terminal_size((100, 24)).columns
-    max_row_len = max(64, term_cols - 6)
+    term_cols = _hr_width()
+    max_row_len = term_cols
 
     sdir = _resolve_session_dir(label, script_path)
     wdir = str(summary.get("work_dir") or "") if summary else ""
@@ -1768,39 +1768,23 @@ def format_safety_box(
                 or [f"  {nline}"]
             )
 
-    run_target = str(script_path) if script_path is not None else label
-    status_lines = (
-        f"✓ Running {run_target} ...",
-        f"✗ Aborted (--retry {label})",
-    )
-    inner_width = max(
-        display_width(title),
-        display_width(prompt_line),
-        *(display_width(s) for s in status_lines),
-        *(display_width(b) for b in content_lines),
-    )
-    dashes = max(1, inner_width + 2 - display_width(title) - 1)
-    top = f"┌─{title}{'─' * dashes}┐"
-    bottom = f"└─{'─' * inner_width}─┘"
-    rows = [pad_box_line(b, inner_width) for b in content_lines]
+    rule_width = _hr_width()
+    top = _format_top_rule(title, rule_width)
+    bottom = _format_bottom_rule(rule_width)
+    rows = list(content_lines)
     if content_lines:
-        rows.append(pad_box_line("", inner_width))
-    rows.append(pad_box_line(prompt_line, inner_width))
+        rows.append("")
+    rows.append(prompt_line)
     box = "\n".join([top, *rows, bottom])
-    cursor_col_offset = 2 + display_width(prompt_line)
-    return box, inner_width, cursor_col_offset
+    cursor_col_offset = display_width(prompt_line)
+    return box, rule_width, cursor_col_offset
 
 
 def format_info_box(title: str, content_lines: list[str]) -> str:
-    hdr = title if title.startswith(" ") else f" {title} "
-    inner_width = max(
-        display_width(hdr),
-        *(display_width(b) for b in content_lines),
-    )
-    dashes = max(1, inner_width + 2 - display_width(hdr) - 1)
-    top = f"┌─{hdr}{'─' * dashes}┐"
-    bottom = f"└─{'─' * inner_width}─┘"
-    rows = [pad_box_line(b, inner_width) for b in content_lines] or [pad_box_line("", inner_width)]
+    rule_width = _hr_width()
+    top = _format_top_rule(title, rule_width)
+    bottom = _format_bottom_rule(rule_width)
+    rows = list(content_lines) or [""]
     return "\n".join([top, *rows, bottom])
 
 
@@ -1810,23 +1794,17 @@ def format_prompt_box(
     prompt_line: str,
     status_lines: list[str] | tuple[str, ...] = (),
 ) -> tuple[str, int, int]:
-    hdr = title if title.startswith(" ") else f" {title} "
-    inner_width = max(
-        display_width(hdr),
-        display_width(prompt_line),
-        *(display_width(s) for s in status_lines),
-        *(display_width(b) for b in content_lines),
-    )
-    dashes = max(1, inner_width + 2 - display_width(hdr) - 1)
-    top = f"┌─{hdr}{'─' * dashes}┐"
-    bottom = f"└─{'─' * inner_width}─┘"
-    rows = [pad_box_line(b, inner_width) for b in content_lines]
+    _ = status_lines
+    rule_width = _hr_width()
+    top = _format_top_rule(title, rule_width)
+    bottom = _format_bottom_rule(rule_width)
+    rows = list(content_lines)
     if content_lines:
-        rows.append(pad_box_line("", inner_width))
-    rows.append(pad_box_line(prompt_line, inner_width))
+        rows.append("")
+    rows.append(prompt_line)
     box = "\n".join([top, *rows, bottom])
-    cursor_col_offset = 2 + display_width(prompt_line)
-    return box, inner_width, cursor_col_offset
+    cursor_col_offset = display_width(prompt_line)
+    return box, rule_width, cursor_col_offset
 
 
 def _build_prompt_yes_no_suffix(
@@ -1891,10 +1869,10 @@ def prompt_yes_no_box(
     if can_copy:
         extra_keys["c"] = "copy"
         extra_keys["copy"] = "copy"
-    box, inner_width, cursor_offset = format_prompt_box(
+    box, rule_width, cursor_offset = format_prompt_box(
         title, content_lines, prompt_line, status_lines=status_list
     )
-    bottom = f"└─{'─' * inner_width}─┘"
+    bottom = _format_bottom_rule(rule_width)
     try:
         if tty_streams is not None:
             tty_w, tty_r = tty_streams
@@ -1915,19 +1893,19 @@ def prompt_yes_no_box(
                 )
                 if action == "script" and has_script and script_path is not None:
                     open_script_in_editor(script_path, tty_r, tty_w)
-                    tty_w.write(f"\r{pad_box_line(prompt_line, inner_width)}\n{bottom}\r\033[1A\033[{cursor_offset}C")
+                    tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
                     continue
                 if action == "output" and has_output and out_path is not None:
                     open_script_in_editor(out_path, tty_r, tty_w)
-                    tty_w.write(f"\r{pad_box_line(prompt_line, inner_width)}\n{bottom}\r\033[1A\033[{cursor_offset}C")
+                    tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
                     continue
                 if action == "view" and (has_output or has_script):
                     view_target = out_path if (has_output and out_path is not None) else script_path
                     if view_target is not None:
                         open_script_in_editor(view_target, tty_r, tty_w)
-                        tty_w.write(f"\r{pad_box_line(prompt_line, inner_width)}\n{bottom}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if action == "copy" and can_copy and clip_target is not None:
@@ -1947,7 +1925,7 @@ def prompt_yes_no_box(
                     break
             if status_line is None:
                 status_line = yes_status if approved else no_status
-            tty_w.write(f"\r{pad_box_line(status_line, inner_width)}\n{bottom}\n")
+            tty_w.write(f"\r\033[K{status_line}\n\r\033[K{bottom}\n")
             tty_w.flush()
             return approved
         finally:
@@ -2089,7 +2067,7 @@ def confirm_execution(
             sys.stdout.flush()
         return True, note
     default_yes = (len(findings) == 0 and approve_decision != "prompt")
-    box, inner_width, cursor_offset = format_safety_box(
+    box, rule_width, cursor_offset = format_safety_box(
         label,
         findings,
         default_yes=default_yes,
@@ -2097,7 +2075,7 @@ def confirm_execution(
         note=note,
         script_path=script_path,
     )
-    bottom = f"└─{'─' * inner_width}─┘"
+    bottom = _format_bottom_rule(rule_width)
     prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     try:
@@ -2110,8 +2088,8 @@ def confirm_execution(
                 if action == "view":
                     if script_path is not None and script_path.is_file():
                         open_script_in_editor(script_path, tty_r, tty_w)
-                        p_offset = 2 + display_width(prompt_line)
-                        tty_w.write(f"\r{pad_box_line(prompt_line, inner_width)}\n{bottom}\r\033[1A\033[{p_offset}C")
+                        p_offset = display_width(prompt_line)
+                        tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{p_offset}C")
                         tty_w.flush()
                     continue
                 if action == "yes":
@@ -2122,7 +2100,7 @@ def confirm_execution(
                     break
             run_target = str(script_path) if script_path is not None else label
             status_line = f"✓ Running {run_target} ..." if approved else f"✗ Aborted (--retry {label})"
-            tty_w.write(f"\r{pad_box_line(status_line, inner_width)}\n{bottom}\n")
+            tty_w.write(f"\r\033[K{status_line}\n\r\033[K{bottom}\n")
             tty_w.flush()
             return approved, ("" if approved else "USER_ABORTED")
     except OSError:
@@ -2208,7 +2186,7 @@ CR_LINE_RE = re.compile(r"[^\n]*\r(?!\n)")
 
 def resolve_clipboard_target(out_path: Path, full_output: str) -> Path:
     matches = re.findall(
-        r"^(?:\[[A-Za-z0-9._-]+\] Attach:|│?\s*Bundle:)\s*(\S+?)\s*(?:│)?$",
+        r"^(?:\[[A-Za-z0-9._-]+\] Attach:|\s*Bundle:)\s*(\S+)\s*$",
         full_output,
         flags=re.MULTILINE,
     )
@@ -2253,9 +2231,18 @@ def display_width(text: str) -> int:
     return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
 
 
-def pad_box_line(text: str, inner_width: int) -> str:
-    pad = max(0, inner_width - display_width(text))
-    return f"│ {text}{' ' * pad} │"
+def _hr_width() -> int:
+    return max(40, shutil.get_terminal_size((80, 24)).columns)
+
+
+def _format_top_rule(title: str, width: int) -> str:
+    hdr = title if title.startswith(" ") else f" {title} "
+    dashes = max(2, width - 2 - display_width(hdr))
+    return f"──{hdr}{'─' * dashes}"
+
+
+def _format_bottom_rule(width: int) -> str:
+    return "─" * width
 
 
 def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
@@ -2275,8 +2262,8 @@ def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
             f"[{label}] patched ",
             f"[{label}] SECURITY WARNING:",
         )
-    term_cols = shutil.get_terminal_size((100, 24)).columns
-    max_len = max(60, term_cols - 16)
+    term_cols = _hr_width()
+    max_len = max(60, term_cols - 8)
     for line in reversed(raw.splitlines()):
         s = line.strip()
         if not s:
@@ -2355,30 +2342,17 @@ def format_clipboard_box(
     extra_lines: list[str] | None = None,
     cmd_str: str | None = None,
 ) -> tuple[str, int, int]:
+    _ = ok, cmd_str
     title = f" {title_kind} "
     body_lines = build_box_body_lines(out_path, rc=rc, stats=stats, extra_lines=extra_lines, label=label)
     prompt_line = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
-    status_lines = [
-        f"✓ Copied {out_path} to clipboard.",
-        "Skipped clipboard copy.",
-    ]
-    if cmd_str:
-        status_lines.append(f"✗ Clipboard copy failed; run: {cmd_str}")
-    inner_width = max(
-        display_width(title),
-        display_width(prompt_line),
-        *(display_width(s) for s in status_lines),
-        *(display_width(b) for b in body_lines),
-    )
-    dashes = max(1, inner_width + 2 - display_width(title) - 1)
-    top = f"┌─{title}{'─' * dashes}┐"
-    bottom = f"└─{'─' * inner_width}─┘"
-    rows = [pad_box_line(b, inner_width) for b in body_lines]
-    rows.append(pad_box_line("", inner_width))
-    rows.append(pad_box_line(prompt_line, inner_width))
+    rule_width = _hr_width()
+    top = _format_top_rule(title, rule_width)
+    bottom = _format_bottom_rule(rule_width)
+    rows = [*body_lines, "", prompt_line]
     box = "\n".join([top, *rows, bottom])
-    cursor_col_offset = 2 + display_width(prompt_line)
-    return box, inner_width, cursor_col_offset
+    cursor_col_offset = display_width(prompt_line)
+    return box, rule_width, cursor_col_offset
 
 
 def offer_clipboard_copy(
@@ -2409,7 +2383,7 @@ def offer_clipboard_copy(
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
         sys.stdout.flush()
         return
-    box, inner_width, cursor_offset = format_clipboard_box(
+    box, rule_width, cursor_offset = format_clipboard_box(
         label,
         out_path,
         ok=ok,
@@ -2419,7 +2393,7 @@ def offer_clipboard_copy(
         extra_lines=extra_lines,
         cmd_str=cmd_str,
     )
-    bottom = f"└─{'─' * inner_width}─┘"
+    bottom = _format_bottom_rule(rule_width)
     line2 = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
     try:
         tty_w, tty_r = open_tty()
@@ -2431,7 +2405,7 @@ def offer_clipboard_copy(
                 if action == "view":
                     if out_path.is_file():
                         open_script_in_editor(out_path, tty_r, tty_w)
-                        tty_w.write(f"\r{pad_box_line(line2, inner_width)}\n{bottom}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.write(f"\r\033[K{line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if action == "copy":
@@ -2442,7 +2416,7 @@ def offer_clipboard_copy(
                 else:
                     status_line = "Skipped clipboard copy."
                 break
-            tty_w.write(f"\r{pad_box_line(status_line, inner_width)}\n{bottom}\n")
+            tty_w.write(f"\r\033[K{status_line}\n\r\033[K{bottom}\n")
             tty_w.flush()
     except OSError:
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
