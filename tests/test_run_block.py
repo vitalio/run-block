@@ -47,6 +47,7 @@ class TestRunBlock(unittest.TestCase):
                 "RUN_BLOCK_APPROVE_CMD",
                 "RUN_BLOCK_HEADLESS",
                 "RUN_BLOCK_SANDBOX",
+                "RUN_BLOCK_MAX_FIX_ATTEMPTS",
             )
         }
         os.environ["RUN_BLOCK_NO_CLIPBOARD"] = "1"
@@ -221,15 +222,34 @@ class TestRunBlock(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = self.mod.cmd_normal("s1/1", "echo bad_cmd\nexit 3\n")
             self.assertEqual(rc, 3)
-            bad_fix = "assert False\n"
+            # 1st failed fix on s1/1: rich AssertionError diagnostics in s1/1_1.txt
+            bad_fix = "old_3 = 'missing'\nassert text.count(old_3) == 2\n"
             self.assertEqual(self.mod.cmd_fix("s1/1", bad_fix), 2)
+            # 2nd fix targets s1/1_1 (which was NOT RUN and had no script): falls back to 1.sh,
+            # allocates s1/1_2 without overwriting s1/1_1.txt, and fails with exit 4 (reaching limit=2)
             fix1 = "text = text.replace('exit 3', 'exit 4')\n"
-            self.assertEqual(self.mod.cmd_fix("s1/1", fix1), 4)
+            self.assertEqual(self.mod.cmd_fix("s1/1_1", fix1), 4)
+            # 3rd fix on s1/1 is rejected by the max-attempts loop guard
             self.assertEqual(self.mod.cmd_fix("s1/1", fix1), 2)
-            fix2 = "text = text.replace('exit 4', 'echo fixed_ok')\n"
-            self.assertEqual(self.mod.cmd_fix("s1/1_1", fix2), 0)
+
+            # On s1/2: test chained fix and automatic latest-vs-base anchor resolution
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo bad2\nexit 3\n"), 3)
+            self.assertEqual(self.mod.cmd_fix("s1/2", fix1), 4)
+            fix2 = "assert text.count('exit 4') == 1\ntext = text.replace('exit 4', 'echo fixed_ok')\n"
+            # Even when targeting base s1/2, anchor from 2_1.sh resolves against 2_1.sh -> 2_2.sh
+            self.assertEqual(self.mod.cmd_fix("s1/2", fix2), 0)
+
+        out_f1 = (self.tmp / "s1/1_1.txt").read_text(encoding="utf-8")
+        self.assertIn("at line 2: assert text.count(old_3) == 2 (actual: 0 == 2)", out_f1)
         out_f2 = (self.tmp / "s1/1_2.txt").read_text(encoding="utf-8")
-        self.assertIn("fixed_ok", out_f2)
+        self.assertIn("STOP --fix", out_f2)
+        self.assertIn("s1/2", out_f2)
+        out_f3 = (self.tmp / "s1/1_3.txt").read_text(encoding="utf-8")
+        self.assertIn("NOT RUN: STOP --fix", out_f3)
+        self.assertIn("emit a fresh s1/2 block instead", out_f3)
+        out_s2_f2 = (self.tmp / "s1/2_2.txt").read_text(encoding="utf-8")
+        self.assertIn("patched 2_1.sh -> 2_2.sh", out_s2_f2)
+        self.assertIn("fixed_ok", out_s2_f2)
 
     def test_syntax_error_does_not_run(self):
         buf = io.StringIO()

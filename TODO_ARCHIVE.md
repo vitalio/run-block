@@ -1,3 +1,10 @@
+# ✅ [DONE] B4: Add --fix diagnostics, non-overwriting fix slots, and max-attempts loop guard — *2026-11-15, Implemented rich --fix exception diagnostics, non-overwriting fix slot allocation with chain fallback, RUN_BLOCK_MAX_FIX_ATTEMPTS loop guard, and updated bash/pwsh block rules.*
+
+- In `cmd_fix` (`src/runner.py`), format rich failure diagnostics when `RUN_FIX` raises an exception: include the failing line number and statement from `fix_code`, and for `AssertionError` on `assert <compare>` evaluate and print the actual left/right values (e.g. `at line 14: assert text.count(old_3) == 2 (actual: 0 == 2)`).
+- Never overwrite prior `NOT RUN` fix outputs or fail with `fix step already exists`: allocate the next free fix slot (`<step>_1`, `<step>_2`, ...) on every `--fix` call, fall back to the latest existing script in the chain if a targeted fix step had no script (`NOT RUN`), and automatically try the latest fix revision vs base script when an anchor assertion fails.
+- Enforce a hard loop guard (`RUN_BLOCK_MAX_FIX_ATTEMPTS`, default `2`) on consecutive failed `--fix` attempts per base step: append a `STOP --fix` directive when the limit is reached and reject further `--fix` calls on that step with an instruction to emit `<session>/<step+1>` instead.
+- Update `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` to document fix chaining and the rule to switch to a fresh `<session>/<step+1>` block after at most 2 failed `--fix` attempts.
+
 # ✅ [DONE] F1: Native PowerShell (`pwsh`) block execution mode on Windows — *15f24a8*
 
 Allow `shell = pwsh` in `~/.config/run_block/config` so Windows users in PowerShell 7

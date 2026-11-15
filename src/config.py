@@ -59,6 +59,14 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
         if os.environ.get("RUN_BLOCK_APPROVE_CMD"):
             return os.environ["RUN_BLOCK_APPROVE_CMD"].strip(), "env"
         return "", "default"
+    if key == "max_fix_attempts":
+        raw = os.environ.get("RUN_BLOCK_MAX_FIX_ATTEMPTS", "").strip()
+        if raw:
+            try:
+                return str(max(1, int(raw))), "env"
+            except ValueError:
+                pass
+        return "2", "default"
     if key == "update_url":
         if os.environ.get("RUN_BLOCK_UPDATE_URL"):
             return os.environ["RUN_BLOCK_UPDATE_URL"].strip(), "env"
