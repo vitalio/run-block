@@ -1,3 +1,8 @@
+# ✅ [DONE] F23: Format session bundle Date header in UTC (YYYY-MM-DD HH:MM UTC) — *2026-11-16*
+
+- Format the `Date:` header in `src/bundle.py` using UTC (`datetime.now(timezone.utc)` or `now.astimezone(timezone.utc)`) formatted as `YYYY-MM-DD HH:MM UTC` to match bundle rules.
+- Update `tests/test_run_block.py` to verify the `YYYY-MM-DD HH:MM UTC` format in both `<session>/0` bundle headers and session initialization summary output.
+
 # ✅ [DONE] F26: Refine TUI block borders, key-value alignment, and TTY status colors — *2026-11-16*
 
 - Update `src/ui.py` (`_format_top_rule`, `_format_bottom_rule`, `_prefix_block_line`, `_render_block`, and key-value formatting in `format_session_header_lines` and `build_box_body_lines`) to replace `#` borders with thin open-right box-drawing borders (`╭─ [TITLE] ───`, `│ `, `╰───`) of compact width, with an ASCII fallback (`+-`, `| `) when `stdout` is not UTF-8.

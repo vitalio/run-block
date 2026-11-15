@@ -37,7 +37,7 @@ import textwrap
 import time
 import unicodedata
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:
@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.20.6"
+VERSION = "0.20.7"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -3855,7 +3855,8 @@ def format_start_bundle(
     wdir = (work_dir if work_dir is not None else get_work_dir()).resolve()
     sb_mode = get_sandbox_mode(override=sandbox_mode)
     sb_hdr = format_sandbox_header(sb_mode)
-    ts = (now or datetime.now().astimezone()).strftime("%Y-%m-%d %H:%M %Z").strip()
+    dt_utc = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
+    ts = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
     clean_body = stdin_body.strip()
     bundle_header_lines = [
         f"Session: {session_name}",

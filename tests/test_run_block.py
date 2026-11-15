@@ -404,7 +404,12 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("Chat-Lang:", r_pipe.stdout)
         bundle1 = (self.tmp / "sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
-        self.assertIn("\nDate: ", bundle1)
+        self.assertRegex(bundle1, r"(?m)^Date: \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$")
+        from datetime import datetime, timedelta, timezone
+        sample_now = datetime(2026, 11, 16, 1, 13, tzinfo=timezone(timedelta(hours=3)))
+        fmt_res = self.mod.format_start_bundle("s9", stdin_body="Body", work_dir=proj, now=sample_now)
+        self.assertIn("Date: 2026-11-15 22:13 UTC", fmt_res["console_lines"])
+        self.assertIn("\nDate: 2026-11-15 22:13 UTC\n", fmt_res["full"])
         self.assertIn("===== File: AGENTS.md =====", bundle1)
         self.assertIn("Work on task F1", bundle1)
         s1_hdrs = self.mod.parse_bundle_headers(self.tmp / "sessions/s1")
@@ -486,7 +491,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(hdrs.get("session"), "s3")
         self.assertEqual(hdrs.get("next-block"), "s3/1")
         self.assertEqual(Path(hdrs["workdir"]).resolve(), proj.resolve())
-        self.assertTrue(hdrs.get("date"))
+        self.assertRegex(hdrs.get("date", ""), r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$")
 
         # Subsequent step s3/2 run from other_dir also uses s3/0 Workdir
         r_imp2 = subprocess.run(

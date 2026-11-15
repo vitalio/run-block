@@ -37,7 +37,7 @@ import textwrap
 import time
 import unicodedata
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 try:

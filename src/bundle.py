@@ -19,7 +19,8 @@ def format_start_bundle(
     wdir = (work_dir if work_dir is not None else get_work_dir()).resolve()
     sb_mode = get_sandbox_mode(override=sandbox_mode)
     sb_hdr = format_sandbox_header(sb_mode)
-    ts = (now or datetime.now().astimezone()).strftime("%Y-%m-%d %H:%M %Z").strip()
+    dt_utc = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
+    ts = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
     clean_body = stdin_body.strip()
     bundle_header_lines = [
         f"Session: {session_name}",
