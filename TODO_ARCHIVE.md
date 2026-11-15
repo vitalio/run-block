@@ -1,3 +1,12 @@
+# ✅ [DONE] F27: Improve BLOCK PLAN and TUI block visual hierarchy and colors — *2026-11-16, Removed brackets around block titles, matched dim border colors to titles, and added BLOCK PLAN color hierarchy for Workdir, Sandbox, Operations, and Safety warnings.*
+
+- Update `src/ui.py` to remove `[...]` brackets around block titles in `_format_top_rule` (e.g. `╭─ BLOCK PLAN ───`).
+- Match block border color (`╭─`, `│`, `╰─`) to the block title color in dim ANSI style, keeping plain output unchanged when `NO_COLOR` or non-TTY.
+- Highlight `Safety warnings (N):`, risk category tags, and the `-> Execute this block?` prompt when safety warnings are present.
+- Color-code `Operations:` in `BLOCK PLAN`: dim read-only / `reads:` parts, and highlight `writes:` targets and mutating / `[git]` tags.
+- Dim `Workdir` in `BLOCK PLAN` when it matches `os.getcwd()` and highlight it when it differs; dim routine header fields such as `Sandbox: off`.
+- Update and add unit tests in `tests/test_run_block.py` for the updated title format, border colors, warning/operation highlighting, and `Workdir` emphasis.
+
 # ✅ [DONE] F23: Format session bundle Date header in UTC (YYYY-MM-DD HH:MM UTC) — *2026-11-16*
 
 - Format the `Date:` header in `src/bundle.py` using UTC (`datetime.now(timezone.utc)` or `now.astimezone(timezone.utc)`) formatted as `YYYY-MM-DD HH:MM UTC` to match bundle rules.
