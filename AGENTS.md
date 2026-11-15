@@ -16,7 +16,7 @@ rules are loaded via `.agents_bundle`.
   rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
   `run_block --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
-- `src/ui.py` — full-width horizontal-rule TUI sections (`BLOCK PLAN`,
+- `src/ui.py` — plain bracketed `[TITLE]` TUI sections (`BLOCK PLAN`,
   `START BUNDLE`, `END`, `NOT RUN`, `SYNTAX ERROR`), token statistics, and
   clipboard integration.
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),

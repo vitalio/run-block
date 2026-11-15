@@ -1,3 +1,9 @@
+# ✅ [DONE] F22: Replace box-drawing horizontal rules with plain [TITLE] section headers — *2026-11-15, Replaced box-drawing horizontal rules with plain [TITLE] section headers and simplified in-place prompt redraws.*
+
+- Replace box-drawing horizontal rules (`── <TITLE> ───...` and bottom `───...`) in `src/ui.py` with plain bracketed section headers (`[<TITLE>]`) and no trailing bottom rule so TUI sections never wrap or misalign when the terminal is resized.
+- Simplify interactive prompt redraws in `prompt_yes_no_box`, `confirm_execution`, and `offer_clipboard_copy` in `src/ui.py` to update the prompt line in place without redrawing a bottom separator line.
+- Update `AGENTS.md` and TUI formatting assertions in `tests/test_run_block.py` to match the plain `[<TITLE>]` section format.
+
 # ✅ [DONE] F17: Limit --fix to small targeted patches rather than full-block replacements — *2026-11-15*
 
 - Update `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (plus `README.md` if applicable) to specify that `run_block --fix` should only be used for small, targeted patches; if a fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead.

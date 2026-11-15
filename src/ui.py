@@ -214,23 +214,20 @@ def format_safety_box(
             )
 
     rule_width = _hr_width()
-    top = _format_top_rule(title, rule_width)
-    bottom = _format_bottom_rule(rule_width)
+    top = _format_section_header(title)
     rows = list(content_lines)
     if content_lines:
         rows.append("")
     rows.append(prompt_line)
-    box = "\n".join([top, *rows, bottom])
+    box = "\n".join([top, *rows])
     cursor_col_offset = display_width(prompt_line)
     return box, rule_width, cursor_col_offset
 
 
 def format_info_box(title: str, content_lines: list[str]) -> str:
-    rule_width = _hr_width()
-    top = _format_top_rule(title, rule_width)
-    bottom = _format_bottom_rule(rule_width)
+    top = _format_section_header(title)
     rows = list(content_lines) or [""]
-    return "\n".join([top, *rows, bottom])
+    return "\n".join([top, *rows])
 
 
 def format_prompt_box(
@@ -241,13 +238,12 @@ def format_prompt_box(
 ) -> tuple[str, int, int]:
     _ = status_lines
     rule_width = _hr_width()
-    top = _format_top_rule(title, rule_width)
-    bottom = _format_bottom_rule(rule_width)
+    top = _format_section_header(title)
     rows = list(content_lines)
     if content_lines:
         rows.append("")
     rows.append(prompt_line)
-    box = "\n".join([top, *rows, bottom])
+    box = "\n".join([top, *rows])
     cursor_col_offset = display_width(prompt_line)
     return box, rule_width, cursor_col_offset
 
@@ -314,10 +310,9 @@ def prompt_yes_no_box(
     if can_copy:
         extra_keys["c"] = "copy"
         extra_keys["copy"] = "copy"
-    box, rule_width, cursor_offset = format_prompt_box(
+    box, _, _ = format_prompt_box(
         title, content_lines, prompt_line, status_lines=status_list
     )
-    bottom = _format_bottom_rule(rule_width)
     try:
         if tty_streams is not None:
             tty_w, tty_r = tty_streams
@@ -326,7 +321,7 @@ def prompt_yes_no_box(
             tty_w, tty_r = open_tty()
             close_after = True
         try:
-            tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
+            tty_w.write(box)
             tty_w.flush()
             status_line: str | None = None
             while True:
@@ -338,19 +333,19 @@ def prompt_yes_no_box(
                 )
                 if action == "script" and has_script and script_path is not None:
                     open_script_in_editor(script_path, tty_r, tty_w)
-                    tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                    tty_w.write(f"\r\033[K{prompt_line}")
                     tty_w.flush()
                     continue
                 if action == "output" and has_output and out_path is not None:
                     open_script_in_editor(out_path, tty_r, tty_w)
-                    tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                    tty_w.write(f"\r\033[K{prompt_line}")
                     tty_w.flush()
                     continue
                 if action == "view" and (has_output or has_script):
                     view_target = out_path if (has_output and out_path is not None) else script_path
                     if view_target is not None:
                         open_script_in_editor(view_target, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.write(f"\r\033[K{prompt_line}")
                         tty_w.flush()
                     continue
                 if action == "copy" and can_copy and clip_target is not None:
@@ -370,7 +365,7 @@ def prompt_yes_no_box(
                     break
             if status_line is None:
                 status_line = yes_status if approved else no_status
-            tty_w.write(f"\r\033[K{status_line}\n\r\033[K{bottom}\n")
+            tty_w.write(f"\r\033[K{status_line}\n")
             tty_w.flush()
             return approved
         finally:
@@ -512,7 +507,7 @@ def confirm_execution(
             sys.stdout.flush()
         return True, note
     default_yes = (len(findings) == 0 and approve_decision != "prompt")
-    box, rule_width, cursor_offset = format_safety_box(
+    box, _, _ = format_safety_box(
         label,
         findings,
         default_yes=default_yes,
@@ -520,21 +515,19 @@ def confirm_execution(
         note=note,
         script_path=script_path,
     )
-    bottom = _format_bottom_rule(rule_width)
     prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
-            tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
+            tty_w.write(box)
             tty_w.flush()
             while True:
                 action = read_confirm_key(tty_r, default_yes=default_yes)
                 if action == "view":
                     if script_path is not None and script_path.is_file():
                         open_script_in_editor(script_path, tty_r, tty_w)
-                        p_offset = display_width(prompt_line)
-                        tty_w.write(f"\r\033[K{prompt_line}\n\r\033[K{bottom}\r\033[1A\033[{p_offset}C")
+                        tty_w.write(f"\r\033[K{prompt_line}")
                         tty_w.flush()
                     continue
                 if action == "yes":
@@ -545,7 +538,7 @@ def confirm_execution(
                     break
             run_target = str(script_path) if script_path is not None else label
             status_line = f"✓ Running {run_target} ..." if approved else f"✗ Aborted (--retry {label})"
-            tty_w.write(f"\r\033[K{status_line}\n\r\033[K{bottom}\n")
+            tty_w.write(f"\r\033[K{status_line}\n")
             tty_w.flush()
             return approved, ("" if approved else "USER_ABORTED")
     except OSError:
@@ -680,14 +673,8 @@ def _hr_width() -> int:
     return max(40, shutil.get_terminal_size((80, 24)).columns)
 
 
-def _format_top_rule(title: str, width: int) -> str:
-    hdr = title if title.startswith(" ") else f" {title} "
-    dashes = max(2, width - 2 - display_width(hdr))
-    return f"──{hdr}{'─' * dashes}"
-
-
-def _format_bottom_rule(width: int) -> str:
-    return "─" * width
+def _format_section_header(title: str) -> str:
+    return f"[{title.strip()}]"
 
 
 def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
@@ -792,10 +779,9 @@ def format_clipboard_box(
     body_lines = build_box_body_lines(out_path, rc=rc, stats=stats, extra_lines=extra_lines, label=label)
     prompt_line = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
     rule_width = _hr_width()
-    top = _format_top_rule(title, rule_width)
-    bottom = _format_bottom_rule(rule_width)
+    top = _format_section_header(title)
     rows = [*body_lines, "", prompt_line]
-    box = "\n".join([top, *rows, bottom])
+    box = "\n".join([top, *rows])
     cursor_col_offset = display_width(prompt_line)
     return box, rule_width, cursor_col_offset
 
@@ -828,7 +814,7 @@ def offer_clipboard_copy(
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
         sys.stdout.flush()
         return
-    box, rule_width, cursor_offset = format_clipboard_box(
+    box, _, _ = format_clipboard_box(
         label,
         out_path,
         ok=ok,
@@ -838,19 +824,18 @@ def offer_clipboard_copy(
         extra_lines=extra_lines,
         cmd_str=cmd_str,
     )
-    bottom = _format_bottom_rule(rule_width)
     line2 = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
-            tty_w.write(f"\n{box}\r\033[1A\033[{cursor_offset}C")
+            tty_w.write(f"\n{box}")
             tty_w.flush()
             while True:
                 action = read_clipboard_key(tty_r)
                 if action == "view":
                     if out_path.is_file():
                         open_script_in_editor(out_path, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.write(f"\r\033[K{line2}")
                         tty_w.flush()
                     continue
                 if action == "copy":
@@ -861,7 +846,7 @@ def offer_clipboard_copy(
                 else:
                     status_line = "Skipped clipboard copy."
                 break
-            tty_w.write(f"\r\033[K{status_line}\n\r\033[K{bottom}\n")
+            tty_w.write(f"\r\033[K{status_line}\n")
             tty_w.flush()
     except OSError:
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
