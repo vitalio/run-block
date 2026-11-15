@@ -217,8 +217,91 @@ def write_private(path: Path, content: str, overwrite: bool = False) -> None:
         f.write(content)
 
 
+_EMBEDDED_PY_HEREDOC_RE = re.compile(r"\bpython3?(?:\s+[^\n]*?)?<<-?\s*['\"]?([A-Za-z0-9_]+)['\"]?")
+_STDIN_TB_LINE_RE = re.compile(r'File "<stdin>", line (\d+)(?:, in ([^\n]+))?')
+
+
+def _extract_python_heredoc_bodies(script_text: str) -> list[list[str]]:
+    bodies: list[list[str]] = []
+    eof_token: str | None = None
+    strip_tabs = False
+    cur_lines: list[str] = []
+    for raw in script_text.splitlines():
+        if eof_token is not None:
+            cmp_line = raw.lstrip("\t") if strip_tabs else raw
+            if cmp_line.strip() == eof_token:
+                bodies.append(cur_lines)
+                eof_token = None
+                strip_tabs = False
+                cur_lines = []
+            else:
+                cur_lines.append(cmp_line if strip_tabs else raw)
+            continue
+        m = _EMBEDDED_PY_HEREDOC_RE.search(raw)
+        if m:
+            eof_token = m.group(1)
+            strip_tabs = "<<-" in raw
+            cur_lines = []
+    if eof_token is not None and cur_lines:
+        bodies.append(cur_lines)
+    return bodies
+
+
+def _resolve_python_stdin_tracebacks(label: str, script_text: str, output_text: str) -> list[str]:
+    matches = _STDIN_TB_LINE_RE.findall(output_text)
+    if not matches:
+        return []
+    heredocs = _extract_python_heredoc_bodies(script_text)
+    if not heredocs:
+        return []
+    resolved: list[str] = []
+    seen: set[tuple[int, str]] = set()
+    for raw_ln, raw_func in matches:
+        try:
+            lineno = int(raw_ln)
+        except ValueError:
+            continue
+        if lineno < 1:
+            continue
+        func_name = (raw_func or "").strip()
+        chosen_body: list[str] | None = None
+        if len(heredocs) == 1:
+            if lineno <= len(heredocs[0]):
+                chosen_body = heredocs[0]
+        else:
+            if func_name and func_name != "<module>":
+                def_pat = re.compile(rf"^\s*(?:async\s+)?def\s+{re.escape(func_name)}\b")
+                for body in reversed(heredocs):
+                    if lineno <= len(body) and any(def_pat.match(ln) for ln in body):
+                        chosen_body = body
+                        break
+            if chosen_body is None:
+                for body in reversed(heredocs):
+                    if lineno <= len(body):
+                        chosen_body = body
+                        break
+        if chosen_body is None:
+            continue
+        src_line = chosen_body[lineno - 1].strip()
+        if not src_line:
+            continue
+        key = (lineno, src_line)
+        if key in seen:
+            continue
+        seen.add(key)
+        resolved.append(f"[{label}] <stdin> line {lineno}: {src_line}")
+    return resolved
+
+
 def not_run_exit(
-    label: str, sdir: Path, step_name: str, out_path: Path, msg: str, rc: int = 2, headless: bool = False
+    label: str,
+    sdir: Path,
+    step_name: str,
+    out_path: Path,
+    msg: str,
+    rc: int = 2,
+    headless: bool = False,
+    fix_target: str | None = None,
 ) -> int:
     sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
     line = msg if msg.endswith("\n") else msg + "\n"
@@ -236,11 +319,18 @@ def not_run_exit(
         sys.stdout.write(line)
         sys.stdout.flush()
         return rc
-    body_lines = [
-        f"Reason: {detail_lines[0]}",
-        *(f"  {dline}" for dline in detail_lines[1:]),
-        f"Output: {err_target}",
-    ]
+    body_lines: list[str] = []
+    if fix_target:
+        body_lines.append(f"Target: {fix_target} -> {label}")
+    body_lines.append(f"Reason: {detail_lines[0]}")
+    stop_pat = re.compile(rf"^(?:\[{re.escape(label)}\]\s*)?STOP --fix:\s*(.*)$")
+    for dline in detail_lines[1:]:
+        m_stop = stop_pat.match(dline.strip())
+        if m_stop:
+            body_lines.append(f"Guard: {m_stop.group(1).strip()}")
+        else:
+            body_lines.append(f"  {dline}")
+    body_lines.append(f"Output: {err_target}")
     can_prompt_clip = (
         not in_run_block()
         and sys.stdout.isatty()
@@ -450,6 +540,12 @@ def run_script(
     if log_chunks and not log_chunks[-1].endswith("\n"):
         log_chunks.append("\n")
         sys.stdout.write("\n")
+    stdin_diag_lines: list[str] = []
+    if rc != 0:
+        clean_so_far = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(log_chunks[1:]))).replace("\r\n", "\n")
+        stdin_diag_lines = _resolve_python_stdin_tracebacks(label, script_text, clean_so_far)
+        for diag in stdin_diag_lines:
+            log_chunks.append(diag + "\n")
     exit_str = f" (exit {rc})" if rc != 0 else ""
     end_line = f"\n[{label}] END{exit_str}\n"
     if rc != 0 and footer_on_fail:
@@ -459,6 +555,8 @@ def run_script(
     write_private(out_path, full_output)
     clip_target = resolve_clipboard_target(out_path, full_output)
     if headless:
+        if stdin_diag_lines:
+            sys.stdout.write("".join(d + "\n" for d in stdin_diag_lines))
         sys.stdout.write(end_line)
         sys.stdout.flush()
     elif in_run_block() or not sys.stdout.isatty() or clipboard_mode() != "prompt" or clipboard_command(clip_target) is None:
@@ -634,6 +732,7 @@ def cmd_fix(
     fix_code, split_err = _reassemble_split_payload(fix_code)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, target = parse_ref(ref, allow_fix_step=True)
+    target_ref = f"{session}/{target}"
     base_step = target.split("_", 1)[0]
     next_seq_ref = f"{session}/{int(base_step) + 1}"
     sdir = ensure_base() / session
@@ -642,18 +741,21 @@ def cmd_fix(
     fix_path = sdir / f"{new_step}.fix"
     out_path = sdir / f"{new_step}.txt"
     if split_err:
-        return not_run_exit(label, sdir, new_step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
+        return not_run_exit(
+            label, sdir, new_step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless, fix_target=target_ref
+        )
 
     chain = _find_fix_chain_scripts(sdir, base_step)
     if not chain:
         missing_script = _find_step_script(sdir, target)
         return not_run_exit(
-            f"{session}/{target}",
+            label,
             sdir,
             new_step,
             out_path,
-            f"[{session}/{target}] NOT RUN: target script {missing_script} does not exist",
+            f"[{label}] NOT RUN: target script {missing_script} does not exist",
             headless=headless,
+            fix_target=target_ref,
         )
 
     max_attempts = int(get_setting("max_fix_attempts")[0])
@@ -670,6 +772,7 @@ def cmd_fix(
                 f"emit a fresh {next_seq_ref} block instead"
             ),
             headless=headless,
+            fix_target=target_ref,
         )
 
     reach_limit = (prior_failures + 1) >= max_attempts
@@ -682,7 +785,7 @@ def cmd_fix(
         msg = f"[{label}] NOT RUN: {reason}"
         if reach_limit:
             msg += f"\n{stop_directive}"
-        return not_run_exit(label, sdir, new_step, out_path, msg, headless=headless)
+        return not_run_exit(label, sdir, new_step, out_path, msg, headless=headless, fix_target=target_ref)
 
     if not fix_code.strip():
         return _fail_not_run("empty fix on stdin")

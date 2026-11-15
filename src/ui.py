@@ -703,6 +703,59 @@ def pad_box_line(text: str, inner_width: int) -> str:
     return f"│ {text}{' ' * pad} │"
 
 
+def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
+    try:
+        if not out_path.is_file():
+            return ""
+        raw = out_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
+    skip_prefixes: tuple[str, ...] = ()
+    if label:
+        skip_prefixes = (
+            f"[{label}] START",
+            f"[{label}] END",
+            f"[{label}] STOP --fix",
+            f"[{label}] <stdin> line ",
+            f"[{label}] patched ",
+            f"[{label}] SECURITY WARNING:",
+        )
+    term_cols = shutil.get_terminal_size((100, 24)).columns
+    max_len = max(60, term_cols - 16)
+    for line in reversed(raw.splitlines()):
+        s = line.strip()
+        if not s:
+            continue
+        if skip_prefixes and any(s.startswith(p) for p in skip_prefixes):
+            continue
+        if len(s) > max_len:
+            return s[: max_len - 3] + "..."
+        return s
+    return ""
+
+
+def _format_end_fix_status(label: str, resolved_sdir: Path | None) -> str:
+    if "/" not in label:
+        return ""
+    sess, step = label.split("/", 1)
+    base_step = step.split("_", 1)[0]
+    try:
+        max_attempts = int(get_setting("max_fix_attempts")[0])
+    except Exception:
+        max_attempts = 2
+    used = 0
+    fn_failed = globals().get("_consecutive_failed_fixes")
+    if callable(fn_failed) and resolved_sdir is not None:
+        try:
+            used = int(fn_failed(resolved_sdir, base_step))
+        except Exception:
+            used = 0
+    if used >= max_attempts:
+        next_hint = f"; emit a fresh {sess}/{int(base_step) + 1} block instead" if base_step.isdigit() else ""
+        return f"STOP --fix ({used}/{max_attempts} failed attempts{next_hint})"
+    return f"{prog_name()} --fix {label} ({used}/{max_attempts} failed attempts)"
+
+
 def build_box_body_lines(
     out_path: Path,
     rc: int | None = None,
@@ -711,19 +764,26 @@ def build_box_body_lines(
     label: str | None = None,
     sdir: Path | None = None,
 ) -> list[str]:
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path)
     if extra_lines is not None:
         detail_lines = list(extra_lines)
     else:
         detail_lines = []
         if rc is not None and rc != 0:
             detail_lines.append(f"Exit: {rc}")
+            last_err = _extract_last_error_line(out_path, label=label)
+            if last_err:
+                detail_lines.append(f"Error: {last_err}")
+            if label:
+                fix_status = _format_end_fix_status(label, resolved_sdir)
+                if fix_status:
+                    detail_lines.append(f"Fix: {fix_status}")
         detail_lines.append(f"Output: {out_path}")
     if stats and not any(line.startswith("Stats:") for line in detail_lines):
         detail_lines.append(f"Stats: {stats}")
     has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
         return detail_lines
-    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path)
     hdr_lines = format_session_header_lines(label=label, sdir=resolved_sdir)
     if detail_lines:
         return [*hdr_lines, "", *detail_lines]

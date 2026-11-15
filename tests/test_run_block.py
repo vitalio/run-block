@@ -1147,5 +1147,67 @@ class TestRunBlock(unittest.TestCase):
         self.assertGreaterEqual(len(fs_risks), 2)
 
 
+    def test_b5_python_stdin_traceback_and_enriched_end_not_run_boxes(self):
+        # 1. Embedded python3 heredoc failure resolves File "<stdin>", line <N> into output before END
+        py_fail_script = (
+            "python3 - <<'PY'\n"
+            "def compute():\n"
+            "    items = [10, 20]\n"
+            "    return items[5]\n"
+            "compute()\n"
+            "PY\n"
+        )
+        buf_end = io.StringIO()
+        with contextlib.redirect_stdout(buf_end):
+            rc = self.mod.cmd_normal("s1/1", py_fail_script)
+        self.assertEqual(rc, 1)
+        out_txt = (self.tmp / "s1/1.txt").read_text(encoding="utf-8")
+        self.assertIn("[s1/1] <stdin> line 4: compute()", out_txt)
+        self.assertIn("[s1/1] <stdin> line 3: return items[5]", out_txt)
+        self.assertLess(out_txt.index("[s1/1] <stdin> line 3: return items[5]"), out_txt.index("[s1/1] END (exit 1)"))
+
+        # END box displays Error: <last_error_line> and Fix: status line
+        end_rendered = buf_end.getvalue()
+        self.assertIn("┌─ END ─", end_rendered)
+        self.assertIn("Exit: 1", end_rendered)
+        self.assertIn("Error: IndexError: list index out of range", end_rendered)
+        self.assertIn(f"Fix: {self.mod.prog_name()} --fix s1/1 (0/2 failed attempts)", end_rendered)
+
+        # 2. Failed --fix NOT RUN box shows Target: <session>/<target> -> <label> and clean Guard: line
+        buf_fix1 = io.StringIO()
+        with contextlib.redirect_stdout(buf_fix1):
+            rc_f1 = self.mod.cmd_fix("s1/1", "assert text.count('nonexistent') == 1\n")
+        self.assertEqual(rc_f1, 2)
+        f1_rendered = buf_fix1.getvalue()
+        self.assertIn("┌─ NOT RUN ─", f1_rendered)
+        self.assertIn("Target: s1/1 -> s1/1_1", f1_rendered)
+        self.assertIn("Reason: fix raised AssertionError at line 1:", f1_rendered)
+        self.assertNotIn("Guard:", f1_rendered)
+
+        # 3. Second failed --fix reaches max attempts (2/2): Guard: line has no duplicate [s1/1_2] prefix in box,
+        # while clipboard file retains full [s1/1_2] STOP --fix directive
+        buf_fix2 = io.StringIO()
+        with contextlib.redirect_stdout(buf_fix2):
+            rc_f2 = self.mod.cmd_fix("s1/1_1", "text = text\n")
+        self.assertEqual(rc_f2, 2)
+        f2_rendered = buf_fix2.getvalue()
+        self.assertIn("Target: s1/1_1 -> s1/1_2", f2_rendered)
+        self.assertIn("Guard: reached 2/2 failed --fix attempts for s1/1; switch to a fresh s1/2 block instead.", f2_rendered)
+        self.assertNotIn("[s1/1_2] STOP --fix:", f2_rendered)
+        f2_clip = (self.tmp / "s1/1_2.txt").read_text(encoding="utf-8")
+        self.assertIn("[s1/1_2] STOP --fix: reached 2/2 failed --fix attempts for s1/1", f2_clip)
+
+        # 4. END box after exhausting --fix attempts shows STOP --fix guard state in Fix:
+        self.assertEqual(self.mod.cmd_normal("s1/2", "echo boom\nexit 5\n", auto_yes=True), 5)
+        self.assertEqual(self.mod.cmd_fix("s1/2", "text = text.replace('exit 5', 'exit 6')\n", auto_yes=True), 6)
+        buf_end_stop = io.StringIO()
+        with contextlib.redirect_stdout(buf_end_stop):
+            rc_f2_run = self.mod.cmd_fix("s1/2_1", "text = text.replace('exit 6', 'exit 7')\n")
+        self.assertEqual(rc_f2_run, 7)
+        end_stop_rendered = buf_end_stop.getvalue()
+        self.assertIn("Error: boom", end_stop_rendered)
+        self.assertIn("Fix: STOP --fix (2/2 failed attempts; emit a fresh s1/3 block instead)", end_stop_rendered)
+
+
 if __name__ == "__main__":
     unittest.main()
