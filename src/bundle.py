@@ -130,7 +130,7 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
 
     sdir = start_session(session_arg, force=force, sandbox_mode=sb_arg)
     session_name = sdir.name
-    bundle_path = sdir / "0.txt"
+    bundle_path = sdir / "0"
     res = format_start_bundle(session_name=session_name, stdin_body=stdin_text, sandbox_mode=sb_arg)
     write_private(bundle_path, str(res["full"]), overwrite=True)
     body_lines = [f"Bundle: {bundle_path}"]
@@ -151,7 +151,7 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
 def ensure_session_bundle(
     sdir: Path, work_dir: Path | None = None, sandbox_mode: str | None = None
 ) -> Path:
-    bundle_path = sdir / "0.txt"
+    bundle_path = sdir / "0"
     if not bundle_path.is_file():
         res = format_start_bundle(
             session_name=sdir.name, stdin_body="", work_dir=work_dir, sandbox_mode=sandbox_mode

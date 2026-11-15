@@ -1,3 +1,9 @@
+# ✅ [DONE] F11: Per-step directory layout and extensionless session/output artifacts — *2026-11-15, Implemented per-step directory layout (<session>/<step>/{block.sh|block.ps1,fix.py,out,error,aborted}) and extensionless <session>/0 bundle.*
+
+- Store session context bundle at `<session>/0` (replacing `<session>/0.txt`) in `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, and `README.md`.
+- Store each executed step in its own directory `<session>/<step>/` (e.g. `s1/1/`, `s1/1_1/`) with `block.sh` or `block.ps1`, `out` (stdout/stderr), `error` (failed output), `aborted` (abort marker), and `fix.py` (for `--fix` steps, alongside the patched `block.sh`/`block.ps1`) in `src/runner.py` and `src/ui.py`.
+- Remove legacy flat-file session support (`<step>.sh`, `<step>.txt`, `0.txt`) and update unit tests in `tests/test_run_block.py`, then rebuild `run_block` via `build.py`.
+
 # ✅ [DONE] F21: Replace bordered TUI boxes with full-width horizontal rule separators — *2026-11-15, Replaced full-perimeter TUI box borders with full-width horizontal rule separators in v0.19.2*
 
 Replace full-perimeter box-drawing borders (`┌─ ... ─┐`, `│ ... │`, `└─ ... ─┘`) in `src/ui.py` with terminal-width horizontal rule separators (`── <TITLE> ───...` and `───...`) so long lines (paths, errors, `--fix` reasons) wrap naturally without breaking box alignment.

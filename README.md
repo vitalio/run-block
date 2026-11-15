@@ -4,7 +4,7 @@
 
 `run_block` is a zero-dependency Python 3 CLI that connects any chat LLM to your local
 terminal without API keys or background daemons. It receives a session context bundle on `stdin`
-(`<command> | run_block` -> `~/.local/state/run_block/<session>/0.txt`) and executes numbered
+(`<command> | run_block` -> `~/.local/state/run_block/<session>/0`) and executes numbered
 Bash or PowerShell blocks (`<session>/1`, `<session>/2`, ...) with syntax validation, a
 pre-execution `BLOCK PLAN` safety scanner, PTY streaming, and one-keystroke clipboard copy
 with Claude/GPT/Gemini token counts.
@@ -26,7 +26,7 @@ irm https://raw.githubusercontent.com/vitalio/run_block/main/install.ps1 | iex
 ## Starting a Session
 
 Pipe any context bundle on `stdin` into `run_block` to initialize
-`~/.local/state/run_block/<session>/0.txt` and copy it to your clipboard:
+`~/.local/state/run_block/<session>/0` and copy it to your clipboard:
 
 ```bash
 cat context.txt | run_block
@@ -73,10 +73,10 @@ RUN_FIX
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `RUN_BLOCK_DIR` | `~/.local/state/run_block` | Session storage directory (`$XDG_STATE_HOME/run_block` on POSIX; `%LOCALAPPDATA%\run_block\state` on Windows) |
-| `RUN_BLOCK_CWD` | `auto` | `auto` (session `Workdir` from `0.txt`, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
+| `RUN_BLOCK_CWD` | `auto` | `auto` (session `Workdir` from `<session>/0`, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `Enter`/`Esc` prompt), `auto` (copy automatically), `never` |
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |
-| `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0.txt` `Sandbox:` header) |
+| `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
 | `RUN_BLOCK_TOKEN_STATS` | `true` | Show byte size and Claude/GPT/Gemini token counts (`true` / `false`) |
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
@@ -90,16 +90,16 @@ RUN_FIX
 
 | Command | Description |
 | :--- | :--- |
-| `<command> \| run_block` | Start a new session from `stdin` context bundle into `<session>/0.txt` |
+| `<command> \| run_block` | Start a new session from `stdin` context bundle into `<session>/0` |
 | `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
 | `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
 | `run_block --retry [-y] [session/step]` | Re-run the last (or specified) block |
 | `run_block --list`, `-l [session]` | List sessions and blocks with their status and summary |
 | `run_block --show [session/step]` | Show saved script and output of a block (or `<session>/0` bundle) |
-| `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0.txt` |
+| `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
 | `run_block --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
-| `run_block --start [--session NAME]` | Read context bundle from `stdin` into `<session>/0.txt` |
+| `run_block --start [--session NAME]` | Read context bundle from `stdin` into `<session>/0` |
 | `run_block --update [--force]` | Self-update `run_block` from GitHub (`vitalio/run_block`) |
 | `run_block --check-update` | Check GitHub for a newer version |
 | `run_block -V`, `--version` | Print version and exit `0` |

@@ -75,10 +75,10 @@ def next_fix_step(step: str, sdir: Path | None = None) -> str:
             min_next = int(sub) + 1
     if sdir is not None and sdir.is_dir():
         max_n = 0
-        pat = re.compile(rf"^{re.escape(base)}_(\d+)\.")
+        pat = re.compile(rf"^{re.escape(base)}_(\d+)$")
         for p in sdir.iterdir():
             m = pat.match(p.name)
-            if m:
+            if m and p.is_dir():
                 max_n = max(max_n, int(m.group(1)))
         return f"{base}_{max(min_next, max_n + 1)}"
     return f"{base}_{min_next}"
@@ -177,12 +177,15 @@ def _find_fix_chain_scripts(sdir: Path, base_step: str) -> list[tuple[str, Path]
         chain.append((base_step, base_script))
     if sdir.is_dir():
         fix_items: list[tuple[int, str, Path]] = []
-        pat = re.compile(rf"^{re.escape(base_step)}_(\d+)\.(sh|ps1)$")
-        for p in sdir.iterdir():
-            m = pat.match(p.name)
-            if m and p.is_file():
+        pat = re.compile(rf"^{re.escape(base_step)}_(\d+)$")
+        for d in sdir.iterdir():
+            m = pat.match(d.name)
+            if m and d.is_dir():
                 sub_idx = int(m.group(1))
-                fix_items.append((sub_idx, f"{base_step}_{sub_idx}", p))
+                step_name = f"{base_step}_{sub_idx}"
+                sp = _find_step_script(sdir, step_name)
+                if sp.is_file():
+                    fix_items.append((sub_idx, step_name, sp))
         for _, step_name, p in sorted(fix_items, key=lambda x: x[0]):
             chain.append((step_name, p))
     return chain
@@ -192,10 +195,10 @@ def _consecutive_failed_fixes(sdir: Path, base_step: str) -> int:
     if not sdir.is_dir():
         return 0
     indices: set[int] = set()
-    pat = re.compile(rf"^{re.escape(base_step)}_(\d+)\.(txt|error\.txt|sh|ps1|aborted)$")
-    for p in sdir.iterdir():
-        m = pat.match(p.name)
-        if m:
+    pat = re.compile(rf"^{re.escape(base_step)}_(\d+)$")
+    for d in sdir.iterdir():
+        m = pat.match(d.name)
+        if m and d.is_dir():
             indices.add(int(m.group(1)))
     failures = 0
     for idx in sorted(indices):
@@ -303,13 +306,14 @@ def not_run_exit(
     headless: bool = False,
     fix_target: str | None = None,
 ) -> int:
-    sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    step_dir = _step_dir(sdir, step_name)
+    step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     line = msg if msg.endswith("\n") else msg + "\n"
     clean_msg = msg.strip()
     prefix = f"[{label}] NOT RUN:"
     detail = clean_msg[len(prefix):].strip() if clean_msg.startswith(prefix) else clean_msg
     detail_lines = detail.splitlines() or [detail]
-    err_target = sdir / f"{step_name}.error.txt" if out_path.exists() else out_path
+    err_target = step_dir / "error" if out_path.exists() else out_path
     try:
         write_private(err_target, line, overwrite=True)
     except Exception:
@@ -361,7 +365,8 @@ def run_script(
     footer_on_fail: str | None = None,
 ) -> int:
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
-    sdir = script_path.parent
+    step_dir = script_path.parent
+    sdir = step_dir.parent
     work_dir = get_work_dir(sdir)
     sandbox_mode = get_sandbox_mode(sdir, override=sandbox_override)
     shell_bin, _ = get_setting("shell")
@@ -426,7 +431,7 @@ def run_script(
                 offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
         return chk.returncode
 
-    aborted_marker = script_path.with_suffix(".aborted")
+    aborted_marker = step_dir / "aborted"
     summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
     summary_obj["sandbox"] = sandbox_mode
     approved, abort_reason = confirm_execution(
@@ -438,7 +443,7 @@ def run_script(
             return 130
         reason_str = abort_reason or f"aborted by user (re-run with: {prog_name()} --retry {label})"
         return not_run_exit(
-            label, script_path.parent, script_path.stem, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless
+            label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless
         )
     aborted_marker.unlink(missing_ok=True)
 
@@ -474,7 +479,7 @@ def run_script(
                 os.close(slave_fd)
                 slave_fd = None
 
-    bundle_file = sdir / "0.txt"
+    bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
     child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
@@ -650,12 +655,14 @@ def cmd_normal(
     sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
     ensure_session_bundle(sdir, sandbox_mode=sandbox_override)
     label = f"{session}/{step}"
+    step_dir = _step_dir(sdir, step)
     script_path = _find_step_script(sdir, step)
-    out_path = sdir / f"{step}.txt"
+    out_path = step_dir / "out"
     if split_err:
         return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
 
-    aborted_marker = script_path.with_suffix(".aborted")
+    aborted_marker = step_dir / "aborted"
+
     overwrite = aborted_marker.exists()
     if overwrite:
         out_path.unlink(missing_ok=True)
@@ -715,6 +722,7 @@ def cmd_normal(
     if not payload.strip():
         return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: empty script on stdin", headless=headless)
 
+    step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     write_private(script_path, payload, overwrite=overwrite)
     return run_script(
         label,
@@ -738,8 +746,9 @@ def cmd_fix(
     sdir = ensure_base() / session
     new_step = next_fix_step(target, sdir=sdir)
     label = f"{session}/{new_step}"
-    fix_path = sdir / f"{new_step}.fix"
-    out_path = sdir / f"{new_step}.txt"
+    new_step_dir = _step_dir(sdir, new_step)
+    fix_path = new_step_dir / "fix.py"
+    out_path = new_step_dir / "out"
     if split_err:
         return not_run_exit(
             label, sdir, new_step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless, fix_target=target_ref
@@ -843,18 +852,19 @@ def cmd_fix(
         return _fail_not_run(primary_err or f"fix made no changes to {primary[1]}")
 
     ext = chosen_script.suffix or _script_ext()
-    script_path = sdir / f"{new_step}{ext}"
+    new_step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    script_path = new_step_dir / f"block{ext}"
     write_private(fix_path, fix_code)
     write_private(script_path, chosen_new)
     diff = "".join(
         difflib.unified_diff(
             chosen_orig.splitlines(keepends=True),
             chosen_new.splitlines(keepends=True),
-            fromfile=f"{chosen_step}{ext}",
-            tofile=f"{new_step}{ext}",
+            fromfile=f"{chosen_step}/{chosen_script.name}",
+            tofile=f"{new_step}/block{ext}",
         )
     )
-    header = [f"[{label}] patched {chosen_step}{ext} -> {new_step}{ext}:\n", diff]
+    header = [f"[{label}] patched {chosen_step}/{chosen_script.name} -> {new_step}/block{ext}:\n", diff]
     return run_script(
         label,
         script_path,
@@ -875,17 +885,18 @@ def _step_sort_key(stem: str) -> tuple[int, int]:
 
 
 def _step_status(sdir: Path, stem: str) -> str:
-    if (sdir / f"{stem}.aborted").exists():
+    step_d = _step_dir(sdir, stem)
+    if (step_d / "aborted").exists():
         return "ABORTED"
-    out_p = sdir / f"{stem}.txt"
-    if out_p.is_file():
-        txt = out_p.read_text(encoding="utf-8", errors="replace")
-        label = f"{sdir.name}/{stem}"
-        matches = re.findall(rf"^\[{re.escape(label)}\]\s+(END|SUCCESS|FAILED|NOT RUN)([^\n]*)", txt, flags=re.MULTILINE)
-        if matches:
-            kind, rest = matches[-1]
-            return (kind + rest.split("—")[0]).strip()
-        return "DONE"
+    for candidate in (step_d / "out", step_d / "error"):
+        if candidate.is_file():
+            txt = candidate.read_text(encoding="utf-8", errors="replace")
+            label = f"{sdir.name}/{stem}"
+            matches = re.findall(rf"^\[{re.escape(label)}\]\s+(END|SUCCESS|FAILED|NOT RUN)([^\n]*)", txt, flags=re.MULTILINE)
+            if matches:
+                kind, rest = matches[-1]
+                return (kind + rest.split("—")[0]).strip()
+            return "DONE"
     return "SAVED"
 
 
@@ -900,7 +911,7 @@ def _find_latest_step(session: str | None = None) -> tuple[str, str]:
             reverse=True,
         )
     for sdir in sdirs:
-        scripts = [p.stem for p in _iter_session_scripts(sdir)]
+        scripts = [p.parent.name for p in _iter_session_scripts(sdir)]
         if scripts:
             return sdir.name, scripts[-1]
     raise SystemExit(f"{prog_name()}: no saved blocks found in {base}")
@@ -917,8 +928,8 @@ def cmd_list(session: str | None = None) -> int:
         sys.stdout.write(f"Sessions in {base}:\n")
         total_bytes = 0
         for sdir in sdirs:
-            scripts = [p.stem for p in _iter_session_scripts(sdir)]
-            has_bundle = (sdir / "0.txt").is_file()
+            scripts = [p.parent.name for p in _iter_session_scripts(sdir)]
+            has_bundle = (sdir / "0").is_file()
             sz = _dir_size_bytes(sdir)
             total_bytes += sz
             if scripts:
@@ -937,12 +948,12 @@ def cmd_list(session: str | None = None) -> int:
             raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
         sys.stdout.write(f"Blocks in {session} ({_human_size(_dir_size_bytes(sdir))}):\n")
     sdir = base / session
-    if (sdir / "0.txt").is_file():
+    if (sdir / "0").is_file():
         ref0 = f"{session}/0"
-        sys.stdout.write(f"  {ref0:<10}  {'BUNDLE':<24}  Session context bundle (0.txt)\n")
+        sys.stdout.write(f"  {ref0:<10}  {'BUNDLE':<24}  Session context bundle (0)\n")
     script_paths = _iter_session_scripts(sdir)
     for sp in script_paths[-15:]:
-        stem = sp.stem
+        stem = sp.parent.name
         st = _step_status(sdir, stem)
         sh_text = sp.read_text(encoding="utf-8", errors="replace")
         summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
@@ -961,12 +972,17 @@ def cmd_show(ref: str | None = None) -> int:
     else:
         session, step = _find_latest_step()
     sdir = ensure_base() / session
+    if step == "0":
+        bundle_path = sdir / "0"
+        if bundle_path.is_file():
+            sys.stdout.write(f"=== [{session}/0] Bundle: {bundle_path} ===\n")
+            sys.stdout.write(bundle_path.read_text(encoding="utf-8", errors="replace"))
+            return 0
+        raise SystemExit(f"{prog_name()}: bundle {session}/0 not found ({bundle_path})")
+    step_dir = _step_dir(sdir, step)
     script_path = _find_step_script(sdir, step)
-    out_path = sdir / f"{step}.txt"
-    if step == "0" and out_path.is_file():
-        sys.stdout.write(f"=== [{session}/0] Bundle: {out_path} ===\n")
-        sys.stdout.write(out_path.read_text(encoding="utf-8", errors="replace"))
-        return 0
+    out_path = step_dir / "out"
+    err_path = step_dir / "error"
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({_step_status(sdir, step)}) ===\n")
@@ -974,6 +990,9 @@ def cmd_show(ref: str | None = None) -> int:
     if out_path.is_file():
         sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path} ===\n")
         sys.stdout.write(out_path.read_text(encoding="utf-8", errors="replace"))
+    if err_path.is_file():
+        sys.stdout.write(f"\n=== [{session}/{step}] Error: {err_path} ===\n")
+        sys.stdout.write(err_path.read_text(encoding="utf-8", errors="replace"))
     return 0
 
 
@@ -985,12 +1004,14 @@ def cmd_retry(
     else:
         session, step = _find_latest_step()
     sdir = ensure_base() / session
+    step_dir = _step_dir(sdir, step)
     script_path = _find_step_script(sdir, step)
-    out_path = sdir / f"{step}.txt"
+    out_path = step_dir / "out"
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     out_path.unlink(missing_ok=True)
-    (sdir / f"{step}.aborted").unlink(missing_ok=True)
+    (step_dir / "error").unlink(missing_ok=True)
+    (step_dir / "aborted").unlink(missing_ok=True)
     return run_script(
         f"{session}/{step}",
         script_path,
@@ -1048,7 +1069,7 @@ def cmd_sandbox(argv: list[str]) -> int:
         sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
         set_session_bundle_header(sdir, "Sandbox", format_sandbox_header(mode_arg))
     sys.stdout.write(
-        f"Updated {sdir.name}/0.txt -> Sandbox: {format_sandbox_header(mode_arg)} (backend: {backend})\n"
+        f"Updated {sdir.name}/0 -> Sandbox: {format_sandbox_header(mode_arg)} (backend: {backend})\n"
     )
     return 0
 

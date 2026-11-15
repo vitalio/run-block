@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # run_block-repo: vitalio/run_block
 """Usage:
-  <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0.txt
+  <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0
   {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes for non-interactive headless mode)
   {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N

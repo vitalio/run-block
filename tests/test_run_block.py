@@ -204,7 +204,8 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc_dup, 2)
             rc_skip = self.mod.cmd_normal("s1/3", "echo step3\n")
             self.assertEqual(rc_skip, 2)
-        out1 = (self.tmp / "s1/1.txt").read_text(encoding="utf-8")
+        self.assertTrue((self.tmp / "s1/1/block.sh").is_file())
+        out1 = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
         self.assertIn("hello_world in_rb=1", out1)
         self.assertIn("[s1/1] START\n", out1)
         self.assertIn("[s1/1] END\n", out1)
@@ -235,16 +236,18 @@ class TestRunBlock(unittest.TestCase):
             # Even when targeting base s1/2, anchor from 2_1.sh resolves against 2_1.sh -> 2_2.sh
             self.assertEqual(self.mod.cmd_fix("s1/2", fix2), 0)
 
-        out_f1 = (self.tmp / "s1/1_1.txt").read_text(encoding="utf-8")
+        out_f1 = (self.tmp / "s1/1_1/out").read_text(encoding="utf-8")
         self.assertIn("at line 2: assert text.count(old_3) == 2 (actual: 0 == 2)", out_f1)
-        out_f2 = (self.tmp / "s1/1_2.txt").read_text(encoding="utf-8")
+        out_f2 = (self.tmp / "s1/1_2/out").read_text(encoding="utf-8")
         self.assertIn("STOP --fix", out_f2)
         self.assertIn("s1/2", out_f2)
-        out_f3 = (self.tmp / "s1/1_3.txt").read_text(encoding="utf-8")
+        out_f3 = (self.tmp / "s1/1_3/out").read_text(encoding="utf-8")
         self.assertIn("NOT RUN: STOP --fix", out_f3)
         self.assertIn("emit a fresh s1/2 block instead", out_f3)
-        out_s2_f2 = (self.tmp / "s1/2_2.txt").read_text(encoding="utf-8")
-        self.assertIn("patched 2_1.sh -> 2_2.sh", out_s2_f2)
+        self.assertTrue((self.tmp / "s1/2_2/fix.py").is_file())
+        self.assertTrue((self.tmp / "s1/2_2/block.sh").is_file())
+        out_s2_f2 = (self.tmp / "s1/2_2/out").read_text(encoding="utf-8")
+        self.assertIn("patched 2_1/block.sh -> 2_2/block.sh", out_s2_f2)
         self.assertIn("fixed_ok", out_s2_f2)
 
     def test_syntax_error_does_not_run(self):
@@ -252,7 +255,7 @@ class TestRunBlock(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             rc = self.mod.cmd_normal("s1/1", "if true; then\n")
         self.assertNotEqual(rc, 0)
-        out = (self.tmp / "s1/1.txt").read_text(encoding="utf-8")
+        out = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
         self.assertIn("END (syntax error", out)
         rendered = buf.getvalue()
         self.assertIn("── SYNTAX ERROR ─", rendered)
@@ -392,7 +395,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("Date:", r_pipe.stdout)
         self.assertNotIn("Bundle-Command:", r_pipe.stdout)
         self.assertNotIn("Chat-Lang:", r_pipe.stdout)
-        bundle1 = (self.tmp / "sessions/s1/0.txt").read_text(encoding="utf-8")
+        bundle1 = (self.tmp / "sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
         self.assertIn("\nDate: ", bundle1)
         self.assertIn("===== File: AGENTS.md =====", bundle1)
@@ -442,7 +445,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("Bundle:", r_show0.stdout)
 
         # Running s1/2 from a completely unrelated directory when RUN_BLOCK_CWD=auto
-        # must still execute in the session's Workdir recorded in s1/0.txt.
+        # must still execute in the session's Workdir recorded in s1/0.
         other_dir = self.tmp / "other_unrelated_dir"
         other_dir.mkdir()
         env_auto = {**os.environ, "RUN_BLOCK_DIR": str(self.tmp / "sessions")}
@@ -459,7 +462,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(r_cross.returncode, 0, r_cross.stderr)
         self.assertIn(str(proj.resolve()), r_cross.stdout)
 
-        # Implicit session creation via s3/1 (without prior --start) must also create s3/0.txt
+        # Implicit session creation via s3/1 (without prior --start) must also create s3/0
         r_imp1 = subprocess.run(
             [str(SCRIPT), "-y", "s3/1"],
             input="pwd\n",
@@ -470,7 +473,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_imp1.returncode, 0, r_imp1.stderr)
-        s3_bundle = self.tmp / "sessions/s3/0.txt"
+        s3_bundle = self.tmp / "sessions/s3/0"
         self.assertTrue(s3_bundle.is_file())
         hdrs = self.mod.parse_bundle_headers(s3_bundle.parent)
         self.assertEqual(hdrs.get("session"), "s3")
@@ -478,7 +481,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(Path(hdrs["workdir"]).resolve(), proj.resolve())
         self.assertTrue(hdrs.get("date"))
 
-        # Subsequent step s3/2 run from other_dir also uses s3/0.txt Workdir
+        # Subsequent step s3/2 run from other_dir also uses s3/0 Workdir
         r_imp2 = subprocess.run(
             [str(SCRIPT), "-y", "s3/2"],
             input="pwd\n",
@@ -558,11 +561,11 @@ class TestRunBlock(unittest.TestCase):
                 rc_abort = self.mod.cmd_normal("s9/2", "echo step2\n")
             self.assertEqual(rc_abort, 130)
             self.assertEqual(buf_abort.getvalue(), "")
-            self.assertTrue((self.tmp / "s9/2.aborted").is_file())
+            self.assertTrue((self.tmp / "s9/2/aborted").is_file())
 
         # Verify STEP ALREADY EXISTS interactive actions: view script (s), view output (o), copy output (c), and default N on Enter
-        s_script = self.tmp / "s9/1.sh"
-        s_out = self.tmp / "s9/1.txt"
+        s_script = self.tmp / "s9/1/block.sh"
+        s_out = self.tmp / "s9/1/out"
         viewed_paths: list[Path] = []
 
         def fake_editor(p: Path, _r, _w) -> None:
@@ -637,14 +640,15 @@ class TestRunBlock(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 rc_ok = self.mod.cmd_normal("s1/1", "echo ps1_ran_ok\n")
                 self.assertEqual(rc_ok, 0)
-                self.assertTrue((self.tmp / "s1/1.ps1").is_file())
+                self.assertTrue((self.tmp / "s1/1/block.ps1").is_file())
                 rc_err = self.mod.cmd_normal("s1/2", "echo SYNTAX_ERR\n")
                 self.assertNotEqual(rc_err, 0)
                 rc_fix = self.mod.cmd_fix("s1/2", "text = text.replace('SYNTAX_ERR', 'fixed_ps1')\n")
                 self.assertEqual(rc_fix, 0)
-                self.assertTrue((self.tmp / "s1/2_1.ps1").is_file())
-            self.assertIn("ps1_ran_ok", (self.tmp / "s1/1.txt").read_text(encoding="utf-8"))
-            self.assertIn("fixed_ps1", (self.tmp / "s1/2_1.txt").read_text(encoding="utf-8"))
+                self.assertTrue((self.tmp / "s1/2_1/block.ps1").is_file())
+                self.assertTrue((self.tmp / "s1/2_1/fix.py").is_file())
+            self.assertIn("ps1_ran_ok", (self.tmp / "s1/1/out").read_text(encoding="utf-8"))
+            self.assertIn("fixed_ps1", (self.tmp / "s1/2_1/out").read_text(encoding="utf-8"))
         finally:
             os.environ.pop("RUN_BLOCK_SHELL", None)
 
@@ -675,9 +679,10 @@ class TestRunBlock(unittest.TestCase):
 
         for idx in range(1, 5):
             sdir = self.tmp / f"s{idx}"
-            sdir.mkdir()
-            (sdir / "1.sh").write_text(f"echo {idx}\n", encoding="utf-8")
-            (sdir / "1.txt").write_text(f"out {idx}\n", encoding="utf-8")
+            step1 = sdir / "1"
+            step1.mkdir(parents=True)
+            (step1 / "block.sh").write_text(f"echo {idx}\n", encoding="utf-8")
+            (step1 / "out").write_text(f"out {idx}\n", encoding="utf-8")
             os.utime(sdir, (1000 + idx * 10, 1000 + idx * 10))
 
         buf = io.StringIO()
@@ -773,10 +778,12 @@ class TestRunBlock(unittest.TestCase):
         ]
         for name, payload_sz, ts in specs:
             sdir = self.tmp / name
-            sdir.mkdir()
-            f_out = sdir / "1.txt"
+            step1 = sdir / "1"
+            step1.mkdir(parents=True)
+            f_out = step1 / "out"
             f_out.write_bytes(b"x" * payload_sz)
             os.utime(f_out, (ts, ts))
+            os.utime(step1, (ts, ts))
             os.utime(sdir, (ts, ts))
 
         # --list displays per-session and total storage sizes
@@ -870,11 +877,10 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc, 2)
             self.assertIn("NOT RUN: unsafe construct in --fix", buf.getvalue())
             self.assertFalse(marker.exists())
-            (self.tmp / "s1/1_1.txt").unlink(missing_ok=True)
-            (self.tmp / "s1/1_1.error.txt").unlink(missing_ok=True)
+            shutil.rmtree(self.tmp / "s1/1_1", ignore_errors=True)
 
-        # 2. Tampering with 0.txt inside a running block must be automatically reverted
-        bundle_file = self.tmp / "s1/0.txt"
+        # 2. Tampering with 0 inside a running block must be automatically reverted
+        bundle_file = self.tmp / "s1/0"
         orig_bundle = bundle_file.read_text(encoding="utf-8")
         buf2 = io.StringIO()
         with contextlib.redirect_stdout(buf2):
@@ -885,7 +891,7 @@ class TestRunBlock(unittest.TestCase):
             )
         self.assertEqual(rc2, 0)
         self.assertEqual(bundle_file.read_text(encoding="utf-8"), orig_bundle)
-        self.assertIn("SECURITY WARNING: block attempted to modify 0.txt (reverted)", buf2.getvalue())
+        self.assertIn("SECURITY WARNING: block attempted to modify 0 (reverted)", buf2.getvalue())
 
     def test_sandbox_header_cli_and_env_scrubbing(self):
         proj = self.tmp / "sb_proj"
@@ -907,7 +913,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        b_txt = (self.tmp / "sb_sessions/s1/0.txt").read_text(encoding="utf-8")
+        b_txt = (self.tmp / "sb_sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Sandbox: strict (rw: Workdir, /tmp; secrets: hidden; net: on)", b_txt)
 
         # Toggle sandbox via CLI (with non-TTY stdin as in CI)
@@ -921,7 +927,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_sb_nonet.returncode, 0, r_sb_nonet.stderr)
-        b_txt2 = (self.tmp / "sb_sessions/s1/0.txt").read_text(encoding="utf-8")
+        b_txt2 = (self.tmp / "sb_sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Sandbox: nonet", b_txt2)
 
         # Query sandbox status for a named session with non-TTY stdin
@@ -1034,7 +1040,7 @@ class TestRunBlock(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             rc_split = self.mod.cmd_normal("s4/1", split_paste, auto_yes=True)
         self.assertEqual(rc_split, 0)
-        out_split = (self.tmp / "s4/1.txt").read_text(encoding="utf-8")
+        out_split = (self.tmp / "s4/1/out").read_text(encoding="utf-8")
         self.assertIn("before_fence\nafter_fence", out_split)
 
         unclosed_paste = (
@@ -1060,7 +1066,7 @@ class TestRunBlock(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             rc_sfix = self.mod.cmd_fix("s4/1", split_fix_paste, auto_yes=True)
         self.assertEqual(rc_sfix, 0)
-        out_sfix = (self.tmp / "s4/1_1.txt").read_text(encoding="utf-8")
+        out_sfix = (self.tmp / "s4/1_1/out").read_text(encoding="utf-8")
         self.assertIn("fixed_before\nfixed_after", out_sfix)
         loop_sum = self.mod.summarize_script_actions(loop_subshell_script, Path("/tmp/work"))
         self.assertEqual(loop_sum["cd_dirs"], ["$HOME/proj_a", "$HOME/proj_b"])
@@ -1167,7 +1173,7 @@ class TestRunBlock(unittest.TestCase):
         with contextlib.redirect_stdout(buf_end):
             rc = self.mod.cmd_normal("s1/1", py_fail_script)
         self.assertEqual(rc, 1)
-        out_txt = (self.tmp / "s1/1.txt").read_text(encoding="utf-8")
+        out_txt = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
         self.assertIn("[s1/1] <stdin> line 4: compute()", out_txt)
         self.assertIn("[s1/1] <stdin> line 3: return items[5]", out_txt)
         self.assertLess(out_txt.index("[s1/1] <stdin> line 3: return items[5]"), out_txt.index("[s1/1] END (exit 1)"))
@@ -1200,7 +1206,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("Target: s1/1_1 -> s1/1_2", f2_rendered)
         self.assertIn("Guard: reached 2/2 failed --fix attempts for s1/1; switch to a fresh s1/2 block instead.", f2_rendered)
         self.assertNotIn("[s1/1_2] STOP --fix:", f2_rendered)
-        f2_clip = (self.tmp / "s1/1_2.txt").read_text(encoding="utf-8")
+        f2_clip = (self.tmp / "s1/1_2/out").read_text(encoding="utf-8")
         self.assertIn("[s1/1_2] STOP --fix: reached 2/2 failed --fix attempts for s1/1", f2_clip)
 
         # 4. END box after exhausting --fix attempts shows STOP --fix guard state in Fix:

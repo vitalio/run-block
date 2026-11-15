@@ -104,20 +104,32 @@ def _script_ext(shell_bin: str | None = None) -> str:
     return ".ps1" if _is_powershell(shell_bin) else ".sh"
 
 
+def _step_dir(sdir: Path, step: str) -> Path:
+    return sdir / step
+
+
 def _find_step_script(sdir: Path, step: str, shell_bin: str | None = None) -> Path:
+    step_d = _step_dir(sdir, step)
     for ext in (".sh", ".ps1"):
-        p = sdir / f"{step}{ext}"
+        p = step_d / f"block{ext}"
         if p.exists():
             return p
-    return sdir / f"{step}{_script_ext(shell_bin)}"
+    return step_d / f"block{_script_ext(shell_bin)}"
 
 
 def _iter_session_scripts(sdir: Path) -> list[Path]:
-    by_stem: dict[str, Path] = {}
-    for ext in (".sh", ".ps1"):
-        for p in sdir.glob(f"*{ext}"):
-            by_stem.setdefault(p.stem, p)
-    return [by_stem[k] for k in sorted(by_stem.keys(), key=_step_sort_key)]
+    by_step: dict[str, Path] = {}
+    if not sdir.is_dir():
+        return []
+    for d in sdir.iterdir():
+        if not d.is_dir() or not re.fullmatch(r"\d+(?:_\d+)?", d.name):
+            continue
+        for ext in (".sh", ".ps1"):
+            p = d / f"block{ext}"
+            if p.is_file():
+                by_step.setdefault(d.name, p)
+                break
+    return [by_step[k] for k in sorted(by_step.keys(), key=_step_sort_key)]
 
 
 def default_base_dir(prog: str | None = None) -> Path:
@@ -174,7 +186,7 @@ def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]
     index_by_norm: dict[str, int] = {}
     if session_dir is None:
         return items
-    bundle_file = session_dir / "0.txt"
+    bundle_file = session_dir / "0"
     if not bundle_file.is_file():
         return items
     try:
