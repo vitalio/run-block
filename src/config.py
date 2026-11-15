@@ -146,7 +146,7 @@ def usage_text() -> str:
     return (__doc__ or "").format(prog=prog, base_dir=bdir)
 
 
-def _git_toplevel_or_cwd() -> Path:
+def _git_toplevel() -> Path | None:
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
@@ -162,7 +162,23 @@ def _git_toplevel_or_cwd() -> Path:
                 return top.resolve()
     except Exception:
         pass
-    return Path.cwd().resolve()
+    return None
+
+
+def _git_toplevel_or_cwd() -> Path:
+    cwd = Path.cwd().resolve()
+    top = _git_toplevel()
+    if top is not None:
+        if cwd == top or top in cwd.parents:
+            cur = cwd
+            while True:
+                if (cur / ".agents_bundle").is_file() or (cur / "AGENTS.md").is_file():
+                    return cur
+                if cur == top or cur.parent == cur:
+                    break
+                cur = cur.parent
+        return top
+    return cwd
 
 
 BUNDLE_HEADER_RE = re.compile(r"^([A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z0-9-]+)?):\s*(.*)$")

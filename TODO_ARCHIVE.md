@@ -1,3 +1,12 @@
+# ✅ [DONE] B3: Keep subproject working directory when initializing session from subdir — *2026-11-15, Keep subproject working directory when initializing session from subdir*
+
+- In `src/config.py`, `get_work_dir()` currently falls back to `_git_toplevel_or_cwd()`, which climbs to `git rev-parse --show-toplevel` even when a session starts inside a self-contained subproject directory (e.g. `/home/vitaly/chrome/canary`) containing its own `.agents_bundle` or `AGENTS.md`.
+- This creates a mismatch between `0` bundle outputs (collected in `pwd`) and subsequent `run_block` steps (executed in the monorepo root).
+- Acceptance criteria:
+  - In `src/config.py`, when `RUN_BLOCK_CWD=auto` and no session `Workdir` header exists yet, prefer the nearest directory (starting from `Path.cwd().resolve()` up to the Git toplevel) containing `.agents_bundle` or `AGENTS.md`, falling back to `git rev-parse --show-toplevel` and then `Path.cwd().resolve()`.
+  - Keep `RUN_BLOCK_CWD=cwd`, explicit `RUN_BLOCK_CWD=/path`, and persisted `Workdir:` in `<session>/0` working unchanged.
+  - Update `RUN_BLOCK_CWD` documentation in `README.md` and add unit tests in `tests/test_run_block.py` covering subproject session init, regular Git subdir init, and `RUN_BLOCK_CWD` overrides.
+
 # ✅ [DONE] F11: Per-step directory layout and extensionless session/output artifacts — *2026-11-15, Implemented per-step directory layout (<session>/<step>/{block.sh|block.ps1,fix.py,out,error,aborted}) and extensionless <session>/0 bundle.*
 
 - Store session context bundle at `<session>/0` (replacing `<session>/0.txt`) in `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, and `README.md`.

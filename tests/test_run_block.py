@@ -1221,6 +1221,114 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("Error: boom", end_stop_rendered)
         self.assertIn("Fix: STOP --fix (2/2 failed attempts; emit a fresh s1/3 block instead)", end_stop_rendered)
 
+    def test_b3_subproject_workdir_resolution_and_overrides(self):
+        repo = self.tmp / "monorepo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
+        (repo / "AGENTS.md").write_text("# Monorepo root\n", encoding="utf-8")
+
+        subproj = repo / "apps" / "canary"
+        subproj_nested = subproj / "src"
+        subproj_nested.mkdir(parents=True)
+        (subproj / ".agents_bundle").write_text("bundle vitalio/run_block\n", encoding="utf-8")
+
+        regular_subdir = repo / "packages" / "plain"
+        regular_subdir.mkdir(parents=True)
+
+        sessions_dir = self.tmp / "b3_sessions"
+        base_env = {**os.environ, "RUN_BLOCK_DIR": str(sessions_dir)}
+        base_env.pop("RUN_BLOCK_CWD", None)
+
+        # 1. Starting session from nested dir inside a subproject with .agents_bundle keeps subproject root
+        r_sub = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s1"],
+            input="Role: execute\n",
+            capture_output=True,
+            text=True,
+            cwd=str(subproj_nested),
+            env=base_env,
+            check=False,
+        )
+        self.assertEqual(r_sub.returncode, 0, r_sub.stderr)
+        s1_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s1")
+        self.assertEqual(Path(s1_hdrs["workdir"]).resolve(), subproj.resolve())
+
+        # Subsequent step run from monorepo root still executes in persisted subproject Workdir
+        r_sub_step = subprocess.run(
+            [str(SCRIPT), "-y", "s1/1"],
+            input="pwd\n",
+            capture_output=True,
+            text=True,
+            cwd=str(repo),
+            env=base_env,
+            check=False,
+        )
+        self.assertEqual(r_sub_step.returncode, 0, r_sub_step.stderr)
+        self.assertIn(str(subproj.resolve()), r_sub_step.stdout)
+
+        # 2. Subproject with AGENTS.md (without .agents_bundle) also resolves to subproject root
+        subproj_agents = repo / "apps" / "docs_sub"
+        subproj_agents.mkdir(parents=True)
+        (subproj_agents / "AGENTS.md").write_text("# Subproject rules\n", encoding="utf-8")
+        r_agents = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s2"],
+            input="Role: execute\n",
+            capture_output=True,
+            text=True,
+            cwd=str(subproj_agents),
+            env=base_env,
+            check=False,
+        )
+        self.assertEqual(r_agents.returncode, 0, r_agents.stderr)
+        s2_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s2")
+        self.assertEqual(Path(s2_hdrs["workdir"]).resolve(), subproj_agents.resolve())
+
+        # 3. Regular Git subdir without .agents_bundle or AGENTS.md climbs to Git toplevel
+        r_reg = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s3"],
+            input="Role: execute\n",
+            capture_output=True,
+            text=True,
+            cwd=str(regular_subdir),
+            env=base_env,
+            check=False,
+        )
+        self.assertEqual(r_reg.returncode, 0, r_reg.stderr)
+        s3_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s3")
+        self.assertEqual(Path(s3_hdrs["workdir"]).resolve(), repo.resolve())
+
+        # 4. RUN_BLOCK_CWD=cwd forces exact $PWD even inside subproject
+        env_cwd = {**base_env, "RUN_BLOCK_CWD": "cwd"}
+        r_cwd = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s4"],
+            input="Role: execute\n",
+            capture_output=True,
+            text=True,
+            cwd=str(subproj_nested),
+            env=env_cwd,
+            check=False,
+        )
+        self.assertEqual(r_cwd.returncode, 0, r_cwd.stderr)
+        s4_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s4")
+        self.assertEqual(Path(s4_hdrs["workdir"]).resolve(), subproj_nested.resolve())
+
+        # 5. Explicit RUN_BLOCK_CWD=/path overrides subproject and session Workdir
+        explicit_dir = self.tmp / "explicit_target"
+        explicit_dir.mkdir()
+        env_exp = {**base_env, "RUN_BLOCK_CWD": str(explicit_dir)}
+        r_exp = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s5"],
+            input="Role: execute\n",
+            capture_output=True,
+            text=True,
+            cwd=str(subproj_nested),
+            env=env_exp,
+            check=False,
+        )
+        self.assertEqual(r_exp.returncode, 0, r_exp.stderr)
+        s5_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s5")
+        self.assertEqual(Path(s5_hdrs["workdir"]).resolve(), explicit_dir.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

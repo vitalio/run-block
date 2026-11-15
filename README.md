@@ -73,7 +73,7 @@ RUN_FIX
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `RUN_BLOCK_DIR` | `~/.local/state/run_block` | Session storage directory (`$XDG_STATE_HOME/run_block` on POSIX; `%LOCALAPPDATA%\run_block\state` on Windows) |
-| `RUN_BLOCK_CWD` | `auto` | `auto` (session `Workdir` from `<session>/0`, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
+| `RUN_BLOCK_CWD` | `auto` | `auto` (session `Workdir` from `<session>/0`, nearest `.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `Enter`/`Esc` prompt), `auto` (copy automatically), `never` |
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |
