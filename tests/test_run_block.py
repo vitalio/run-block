@@ -1198,8 +1198,9 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("[s1/1_2] STOP --fix: reached 2/2 failed --fix attempts for s1/1", f2_clip)
 
         # 4. END box after exhausting --fix attempts shows STOP --fix guard state in Fix:
-        self.assertEqual(self.mod.cmd_normal("s1/2", "echo boom\nexit 5\n", auto_yes=True), 5)
-        self.assertEqual(self.mod.cmd_fix("s1/2", "text = text.replace('exit 5', 'exit 6')\n", auto_yes=True), 6)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo boom\nexit 5\n", auto_yes=True), 5)
+            self.assertEqual(self.mod.cmd_fix("s1/2", "text = text.replace('exit 5', 'exit 6')\n", auto_yes=True), 6)
         buf_end_stop = io.StringIO()
         with contextlib.redirect_stdout(buf_end_stop):
             rc_f2_run = self.mod.cmd_fix("s1/2_1", "text = text.replace('exit 6', 'exit 7')\n")
