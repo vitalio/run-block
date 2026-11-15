@@ -19,7 +19,7 @@ RUN_BLOCK
 ### Session & Step Numbering (`<session>/<step>`) & `--fix`
 
 - Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`).
-- Always prefer `--fix <session>/<target>` on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to patch `text` in Python instead of rewriting the full block as `<session>/<step+1>` (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden):
+- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:
 
 ```bash
 {cmd:run_block} --fix s1/1 <<'RUN_FIX'

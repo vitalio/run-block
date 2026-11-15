@@ -57,6 +57,9 @@ script in your terminal editor.
 
 ### 3. Patching a failed block (`--fix`)
 
+Use `--fix` for small, targeted patches; emit a fresh `<session>/<step+1>` block directly
+when changes span multiple sections or rival the original block size.
+
 ```bash
 run_block --fix s1/2 <<'RUN_FIX'
 old = 'wrong_arg'

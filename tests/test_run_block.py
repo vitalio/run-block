@@ -189,6 +189,10 @@ class TestRunBlock(unittest.TestCase):
         bash_md = (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8")
         self.assertIn("## Terminal blocks (`{cmd:run_block}`)", bash_md)
         self.assertIn("ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT)", bash_md)
+        self.assertIn("small, targeted patch", bash_md)
+        self.assertIn("comparable in size to the original block", bash_md)
+        readme_md = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("small, targeted patches", readme_md)
     def test_start_autoincrement(self):
         s1 = self.mod.start_session()
         s2 = self.mod.start_session()
@@ -635,6 +639,8 @@ class TestRunBlock(unittest.TestCase):
             self.assertIn("powershell", pwsh_md)
             self.assertIn("'@ | {cmd:run_block} s1/1", pwsh_md)
             self.assertIn("fresh `pwsh` process", pwsh_md)
+            self.assertIn("small, targeted patch", pwsh_md)
+            self.assertIn("comparable in size to the original block", pwsh_md)
 
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):

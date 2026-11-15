@@ -1,3 +1,8 @@
+# ✅ [DONE] F17: Limit --fix to small targeted patches rather than full-block replacements — *2026-11-15*
+
+- Update `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (plus `README.md` if applicable) to specify that `run_block --fix` should only be used for small, targeted patches; if a fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead.
+- Bump `VERSION` (patch), rebuild `run_block` via `python3 build.py`, and update/verify tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] B3: Keep subproject working directory when initializing session from subdir — *2026-11-15, Keep subproject working directory when initializing session from subdir*
 
 - In `src/config.py`, `get_work_dir()` currently falls back to `_git_toplevel_or_cwd()`, which climbs to `git rev-parse --show-toplevel` even when a session starts inside a self-contained subproject directory (e.g. `/home/vitaly/chrome/canary`) containing its own `.agents_bundle` or `AGENTS.md`.

@@ -9,10 +9,6 @@
 - Encountered a stall during block execution when a model-generated inspection command (`git diff HEAD`) opened an interactive pager inside the PTY, forcing manual `q` / `Ctrl+C` intervention.
 - Need to design a balanced approach in `run_block` rules (and/or runner defaults) that prevents trivial interactive pagination/stalls when reading output without blocking intentional human-in-the-loop prompts, keeping in mind a future automation layer that will introduce stricter non-interactive rules.
 
-# ⚪ [NEW] F17: Limit --fix to small targeted patches rather than full-block replacements
-
-- Update run_block rules/instructions to specify that run_block --fix should only be used for small, targeted patches; if a fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh <session>/<step+1> block directly instead.
-
 # ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
 
 - Depends on: F19
