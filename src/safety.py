@@ -140,28 +140,158 @@ def _expand_sh_vars(target: str, sh_vars: dict[str, list[str]]) -> list[str]:
     return [clean]
 
 
-def _add_unique(items: list[str], val: str, limit: int = 12) -> None:
+def _add_unique(items: list[str], val: str, limit: int | None = None) -> None:
     clean = val.strip()
-    if clean and clean not in items and len(items) < limit:
+    if clean and clean not in items and (limit is None or len(items) < limit):
         items.append(clean)
 
 
-def _extract_py_path_expr(node: ast.AST, var_map: dict[str, str]) -> str | None:
+def _has_trailing_continuation(line: str) -> bool:
+    stripped = line.rstrip()
+    if not stripped or stripped.lstrip().startswith("#"):
+        return False
+    bs = 0
+    for ch in reversed(stripped):
+        if ch == "\\":
+            bs += 1
+        else:
+            break
+    return (bs % 2) == 1
+
+
+def _has_unquoted_redirect(cmd: str) -> bool:
+    in_sq = False
+    in_dq = False
+    escaped = False
+    for ch in cmd:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\" and not in_sq:
+            escaped = True
+            continue
+        if ch == "'" and not in_dq:
+            in_sq = not in_sq
+            continue
+        if ch == '"' and not in_sq:
+            in_dq = not in_dq
+            continue
+        if ch == ">" and not in_sq and not in_dq:
+            return True
+    return False
+
+
+def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
+    """Joins shell line continuations outside heredocs and multiline python -c blocks."""
+    out: list[tuple[int, str]] = []
+    eof_token: str | None = None
+    py_quote: str | None = None
+    cont_buf: list[str] = []
+    cont_start: int = 0
+
+    for idx, raw in enumerate(script_text.splitlines(), start=1):
+        s = raw.strip()
+        if eof_token is not None:
+            out.append((idx, raw))
+            if s == eof_token:
+                eof_token = None
+            continue
+        if py_quote is not None:
+            out.append((idx, raw))
+            if s == py_quote or (s.endswith(py_quote) and not s.endswith("\\" + py_quote)):
+                py_quote = None
+            continue
+
+        if cont_buf:
+            if _has_trailing_continuation(raw):
+                piece = raw.rstrip()[:-1].strip()
+                if piece:
+                    cont_buf.append(piece)
+                continue
+            tail = raw.strip()
+            if tail:
+                cont_buf.append(tail)
+            logical = " ".join(cont_buf)
+            logical_idx = cont_start
+            cont_buf = []
+        else:
+            if _has_trailing_continuation(raw):
+                cont_start = idx
+                first_piece = raw.rstrip()[:-1].rstrip()
+                cont_buf = [first_piece] if first_piece else []
+                continue
+            logical = raw
+            logical_idx = idx
+
+        out.append((logical_idx, logical))
+        ls = logical.strip()
+        if not ls or ls.startswith("#"):
+            continue
+        m_py = PY_HEREDOC_START_RE.search(ls)
+        if m_py:
+            eof_token = m_py.group(1)
+            continue
+        m_pyc = PY_DASH_C_START_RE.match(ls)
+        if m_pyc:
+            q_ch, rest = m_pyc.group(1), m_pyc.group(2)
+            if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
+                py_quote = q_ch
+            continue
+        m_sh = SHELL_HEREDOC_START_RE.search(ls)
+        if m_sh:
+            eof_token = m_sh.group(1)
+
+    if cont_buf:
+        out.append((cont_start, " ".join(cont_buf)))
+    return out
+
+
+def _extract_py_path_expr(node: ast.AST, var_map: dict[str, list[str]]) -> list[str]:
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.Name) and node.id in var_map:
-        return var_map[node.id]
+        return [node.value]
+    if isinstance(node, ast.Name):
+        return list(var_map.get(node.id, []))
+    if isinstance(node, ast.JoinedStr):
+        parts: list[list[str]] = []
+        for val in node.values:
+            if isinstance(val, ast.Constant) and isinstance(val.value, str):
+                parts.append([val.value])
+            elif isinstance(val, ast.FormattedValue):
+                sub = _extract_py_path_expr(val.value, var_map)
+                if not sub:
+                    return []
+                parts.append(sub)
+            else:
+                return []
+        acc = [""]
+        for group in parts:
+            acc = [a + b for a in acc for b in group]
+        return acc
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         left = _extract_py_path_expr(node.left, var_map)
         right = _extract_py_path_expr(node.right, var_map)
         if right:
-            return f"{left}/{right}" if left and not left.startswith("<") else right
+            valid_left = [l for l in left if l and not l.startswith("<")]
+            if valid_left:
+                return [f"{l.rstrip('/')}/{r.lstrip('/')}" for l in valid_left for r in right]
+            return right
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Name) and node.func.id == "Path" and node.args:
             return _extract_py_path_expr(node.args[0], var_map)
         if isinstance(node.func, ast.Attribute) and node.func.attr == "home":
-            return "~"
-    return None
+            return ["~"]
+    return []
+
+
+def _extract_py_iter_paths(iter_node: ast.AST, var_map: dict[str, list[str]]) -> list[str]:
+    if isinstance(iter_node, (ast.Tuple, ast.List, ast.Set)):
+        vals: list[str] = []
+        for elt in iter_node.elts:
+            vals.extend(_extract_py_path_expr(elt, var_map))
+        return vals
+    if isinstance(iter_node, ast.Name) and iter_node.id in var_map:
+        return list(var_map[iter_node.id])
+    return []
 
 
 def _analyze_python_ast(
@@ -176,79 +306,128 @@ def _analyze_python_ast(
         tree = ast.parse(py_code)
     except Exception:
         return
-    var_map: dict[str, str] = {}
-    for node in ast.walk(tree):
+    var_map: dict[str, list[str]] = {}
+
+    def _visit(node: ast.AST) -> None:
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-            p = _extract_py_path_expr(node.value, var_map)
-            if p:
-                var_map[node.targets[0].id] = p
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        unparsed = ast.unparse(node) if hasattr(ast, "unparse") else ""
-        if isinstance(node.func, ast.Attribute):
-            attr = node.func.attr
-            owner = _extract_py_path_expr(node.func.value, var_map)
-            mod_name = node.func.value.id if isinstance(node.func.value, ast.Name) else ""
-            if attr in ("write_text", "write_bytes"):
-                _add_unique(writes, owner or "file (python)")
-            elif attr in ("read_text", "read_bytes") and owner:
-                _add_unique(reads, owner)
-            elif attr == "parse" and mod_name == "ast":
-                _add_unique(execs, "ast.parse")
-            elif mod_name in ("shutil", "os") and attr in ("copy", "copy2", "move", "replace") and len(node.args) >= 2:
-                dst = _extract_py_path_expr(node.args[-1], var_map)
-                _add_unique(writes, dst or f"{mod_name}.{attr}")
-            elif (mod_name == "shutil" and attr == "rmtree") or (mod_name == "os" and attr in ("remove", "unlink", "system")) or attr == "unlink":
-                target = _extract_py_path_expr(node.args[0], var_map) if node.args else owner
-                _add_unique(writes, f"{attr}({target or '...'})")
-                if mod_name in ("shutil", "os"):
+            seq_vals = _extract_py_iter_paths(node.value, var_map)
+            if seq_vals:
+                var_map[node.targets[0].id] = seq_vals
+            else:
+                p = _extract_py_path_expr(node.value, var_map)
+                if p:
+                    var_map[node.targets[0].id] = p
+        elif isinstance(node, ast.For):
+            if isinstance(node.target, ast.Name):
+                items = _extract_py_iter_paths(node.iter, var_map)
+                if items:
+                    var_map[node.target.id] = items
+            elif isinstance(node.target, (ast.Tuple, ast.List)) and isinstance(node.iter, (ast.Tuple, ast.List)):
+                names = [elt.id if isinstance(elt, ast.Name) else "" for elt in node.target.elts]
+                if any(names):
+                    buckets: dict[str, list[str]] = {n: [] for n in names if n}
+                    for row in node.iter.elts:
+                        if isinstance(row, (ast.Tuple, ast.List)) and len(row.elts) == len(names):
+                            for n, cell in zip(names, row.elts):
+                                if n:
+                                    buckets[n].extend(_extract_py_path_expr(cell, var_map))
+                    for n, vals in buckets.items():
+                        if vals:
+                            var_map[n] = vals
+
+        if isinstance(node, ast.Call):
+            unparsed = ast.unparse(node) if hasattr(ast, "unparse") else ""
+            if isinstance(node.func, ast.Attribute):
+                attr = node.func.attr
+                owners = _extract_py_path_expr(node.func.value, var_map)
+                mod_name = node.func.value.id if isinstance(node.func.value, ast.Name) else ""
+                if attr in ("write_text", "write_bytes"):
+                    if owners:
+                        for o in owners:
+                            _add_unique(writes, o)
+                    else:
+                        _add_unique(writes, "file (python)")
+                elif attr in ("read_text", "read_bytes") and owners:
+                    for o in owners:
+                        _add_unique(reads, o)
+                elif attr == "parse" and mod_name == "ast":
+                    _add_unique(execs, "ast.parse")
+                elif mod_name in ("shutil", "os") and attr in ("copy", "copy2", "move", "replace") and len(node.args) >= 2:
+                    dsts = _extract_py_path_expr(node.args[-1], var_map)
+                    if dsts:
+                        for d in dsts:
+                            _add_unique(writes, d)
+                    else:
+                        _add_unique(writes, f"{mod_name}.{attr}")
+                elif (
+                    (mod_name == "shutil" and attr == "rmtree")
+                    or (mod_name == "os" and attr in ("remove", "unlink", "rmdir", "system"))
+                    or (attr in ("unlink", "rmdir") and mod_name not in ("shutil", "os"))
+                ):
+                    if mod_name in ("shutil", "os"):
+                        targets = _extract_py_path_expr(node.args[0], var_map) if node.args else []
+                    else:
+                        targets = owners
+                    if targets:
+                        for t in targets:
+                            _add_unique(writes, f"{attr}({t})")
+                    else:
+                        _add_unique(writes, f"{attr}(...)")
                     py_risks.append({
                         "line": start_line_offset + getattr(node, "lineno", 1),
                         "category": "fs-destructive",
                         "description": "destructive Python call",
-                        "snippet": unparsed or f"{mod_name}.{attr}(...)",
+                        "snippet": unparsed or (f"{mod_name}.{attr}(...)" if mod_name else f"{attr}(...)"),
                     })
-            elif mod_name == "subprocess" and attr in ("run", "Popen", "call", "check_call", "check_output"):
-                _add_unique(execs, f"subprocess.{attr}")
-                py_risks.append({
-                    "line": start_line_offset + getattr(node, "lineno", 1),
-                    "category": "remote-exec",
-                    "description": "Python subprocess execution",
-                    "snippet": unparsed or f"subprocess.{attr}(...)",
-                })
-            elif mod_name == "os" and attr in ("popen", "execl", "execle", "execlp", "execv", "execve", "execvp", "spawnl", "spawnv"):
-                _add_unique(execs, f"os.{attr}")
-                py_risks.append({
-                    "line": start_line_offset + getattr(node, "lineno", 1),
-                    "category": "remote-exec",
-                    "description": "Python process execution",
-                    "snippet": unparsed or f"os.{attr}(...)",
-                })
-            elif attr in ("urlopen", "urlretrieve") or (mod_name == "socket" and attr in ("connect", "create_connection")):
-                _add_unique(execs, f"{mod_name or 'net'}.{attr}")
-                py_risks.append({
-                    "line": start_line_offset + getattr(node, "lineno", 1),
-                    "category": "net-write",
-                    "description": "Python network call",
-                    "snippet": unparsed or f"{attr}(...)",
-                })
-        elif isinstance(node.func, ast.Name):
-            fn_id = node.func.id
-            if fn_id == "open" and len(node.args) >= 2:
-                mode_node = node.args[1]
-                if isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str):
-                    if any(m in mode_node.value for m in ("w", "a", "x")):
-                        target = _extract_py_path_expr(node.args[0], var_map)
-                        _add_unique(writes, target or "open(..., 'w')")
-            elif fn_id in ("eval", "exec", "__import__"):
-                _add_unique(execs, fn_id)
-                py_risks.append({
-                    "line": start_line_offset + getattr(node, "lineno", 1),
-                    "category": "remote-exec",
-                    "description": f"dynamic Python {fn_id}()",
-                    "snippet": unparsed or f"{fn_id}(...)",
-                })
+                elif mod_name == "subprocess" and attr in ("run", "Popen", "call", "check_call", "check_output"):
+                    _add_unique(execs, f"subprocess.{attr}")
+                    py_risks.append({
+                        "line": start_line_offset + getattr(node, "lineno", 1),
+                        "category": "remote-exec",
+                        "description": "Python subprocess execution",
+                        "snippet": unparsed or f"subprocess.{attr}(...)",
+                    })
+                elif mod_name == "os" and attr in ("popen", "execl", "execle", "execlp", "execv", "execve", "execvp", "spawnl", "spawnv"):
+                    _add_unique(execs, f"os.{attr}")
+                    py_risks.append({
+                        "line": start_line_offset + getattr(node, "lineno", 1),
+                        "category": "remote-exec",
+                        "description": "Python process execution",
+                        "snippet": unparsed or f"os.{attr}(...)",
+                    })
+                elif attr in ("urlopen", "urlretrieve") or (mod_name == "socket" and attr in ("connect", "create_connection")):
+                    _add_unique(execs, f"{mod_name or 'net'}.{attr}")
+                    py_risks.append({
+                        "line": start_line_offset + getattr(node, "lineno", 1),
+                        "category": "net-write",
+                        "description": "Python network call",
+                        "snippet": unparsed or f"{attr}(...)",
+                    })
+            elif isinstance(node.func, ast.Name):
+                fn_id = node.func.id
+                if fn_id == "open" and len(node.args) >= 2:
+                    mode_node = node.args[1]
+                    if isinstance(mode_node, ast.Constant) and isinstance(mode_node.value, str):
+                        if any(m in mode_node.value for m in ("w", "a", "x")):
+                            targets = _extract_py_path_expr(node.args[0], var_map)
+                            if targets:
+                                for t in targets:
+                                    _add_unique(writes, t)
+                            else:
+                                _add_unique(writes, "open(..., 'w')")
+                elif fn_id in ("eval", "exec", "__import__"):
+                    _add_unique(execs, fn_id)
+                    py_risks.append({
+                        "line": start_line_offset + getattr(node, "lineno", 1),
+                        "category": "remote-exec",
+                        "description": f"dynamic Python {fn_id}()",
+                        "snippet": unparsed or f"{fn_id}(...)",
+                    })
+
+        for child in ast.iter_child_nodes(node):
+            _visit(child)
+
+    _visit(tree)
 
 
 def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> dict[str, object]:
@@ -266,37 +445,125 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
     dir_stack: list[str] = []
     sh_vars: dict[str, list[str]] = {}
 
+    home_str = str(Path.home())
+    abs_home_prefixes = [home_str]
+    for pfx in ("/home", "/Users"):
+        if pfx not in abs_home_prefixes:
+            abs_home_prefixes.append(pfx)
+    abs_home_re = re.compile(
+        r"(?:(?:"
+        + "|".join(re.escape(p) for p in abs_home_prefixes)
+        + r")/[A-Za-z0-9._-]+|(?:"
+        + re.escape(home_str)
+        + r"))(?:/[A-Za-z0-9._-]+)+"
+    )
+
+    def _resolve_external_repo_dir(token: str) -> str | None:
+        clean = token.strip().strip("'\"")
+        if not clean:
+            return None
+        w_res = wdir.resolve()
+        w_parent = w_res.parent
+
+        def _is_external(cand: str) -> bool:
+            try:
+                exp = os.path.expanduser(cand.replace("$HOME", home_str))
+                res = (wdir / exp).resolve()
+                return res != w_res and res != w_parent
+            except Exception:
+                return True
+
+        parts = clean.split("/")
+        if len(parts) >= 2 and parts[0] in ("$HOME", "~", ".."):
+            cand1 = f"{parts[0]}/{parts[1]}"
+            try:
+                exp1 = os.path.expanduser(cand1.replace("$HOME", home_str))
+                res1 = (wdir / exp1).resolve()
+                if res1 == w_parent and len(parts) >= 3:
+                    cand2 = f"{cand1}/{parts[2]}"
+                    if _is_external(cand2):
+                        return cand2
+                if _is_external(cand1):
+                    return cand1
+            except Exception:
+                return cand1
+            return None
+
+        if clean.startswith("/"):
+            m_abs = abs_home_re.search(clean)
+            if m_abs:
+                matched = m_abs.group(0)
+                aparts = matched.split("/")
+                if len(aparts) >= 4 and aparts[1] in ("home", "Users"):
+                    cand1 = "/".join(aparts[:4])
+                    try:
+                        res1 = Path(cand1).resolve()
+                        if res1 == w_parent and len(aparts) >= 5:
+                            cand2 = "/".join(aparts[:5])
+                            if _is_external(cand2):
+                                return cand2
+                        if _is_external(cand1):
+                            return cand1
+                    except Exception:
+                        return cand1
+                elif home_str != "/" and matched.startswith(home_str.rstrip("/") + "/"):
+                    h_parts = home_str.rstrip("/").split("/")
+                    if len(aparts) > len(h_parts):
+                        cand1 = "/".join(aparts[: len(h_parts) + 1])
+                        if _is_external(cand1):
+                            return cand1
+        return None
+
     def _infer_op_dir(cmd_str: str) -> tuple[str, str]:
+        m_cwd_env = re.match(
+            r'^([A-Za-z_][A-Za-z0-9_]*_CWD)=("[^"]+"|\'[^\']+\'|[^\s;|&#()]+)\s+(.+)$',
+            cmd_str,
+        )
+        if m_cwd_env:
+            raw_cwd = m_cwd_env.group(2).strip("'\"")
+            rest_cmd = m_cwd_env.group(3)
+            expanded_cwd = _expand_sh_vars(raw_cwd, sh_vars)
+            target_cwd = ", ".join(expanded_cwd)
+            try:
+                exp0 = os.path.expanduser(expanded_cwd[0].replace("$HOME", home_str))
+                if (wdir / exp0).resolve() != wdir.resolve():
+                    return target_cwd, rest_cmd
+            except Exception:
+                return target_cwd, rest_cmd
         if cur_group_dir:
             return cur_group_dir, cmd_str
         m_git_c = re.match(r"^git\s+-C\s+([^\s]+)\s+(.+)$", cmd_str)
         if m_git_c:
             expanded_d = _expand_sh_vars(m_git_c.group(1), sh_vars)
             return ", ".join(expanded_d), f"git {m_git_c.group(2)}"
-        tokens = re.findall(r"(?:\$HOME|~|\.\.)/[A-Za-z0-9._-]+(?:/[^\s'\";|&]+)*", cmd_str)
+        tokens = re.findall(
+            r"(?:\$HOME|~|\.\.|/home/[A-Za-z0-9._-]+|/Users/[A-Za-z0-9._-]+|"
+            + re.escape(home_str)
+            + r")(?:/[^\s'\";|&]+)+",
+            cmd_str,
+        )
         if tokens:
-            first_tok = tokens[0]
-            parts = first_tok.split("/")
-            if len(parts) >= 2 and parts[0] in ("$HOME", "~", ".."):
-                ext_dir = f"{parts[0]}/{parts[1]}"
-                try:
-                    expanded = ext_dir.replace("$HOME", str(Path.home())).replace("~", str(Path.home()))
-                    resolved_ext = (wdir / expanded).resolve()
-                    if resolved_ext != wdir.resolve():
-                        short_cmd = cmd_str.replace(f"{ext_dir}/", "").replace(f'"{ext_dir}"', ".").replace(ext_dir, ".")
-                        return ext_dir, short_cmd
-                except Exception:
-                    short_cmd = cmd_str.replace(f"{ext_dir}/", "")
-                    return ext_dir, short_cmd
+            ext_dir = _resolve_external_repo_dir(tokens[0])
+            if ext_dir:
+                short_cmd = (
+                    cmd_str.replace(f"{ext_dir}/", "")
+                    .replace(f'"{ext_dir}"', ".")
+                    .replace(f"'{ext_dir}'", ".")
+                    .replace(ext_dir, ".")
+                )
+                return ext_dir, short_cmd
         return cur_group_dir, cmd_str
 
-    def add_op(tag: str, desc: str) -> None:
-        operations.append((tag, desc))
-        g_dir, short_desc = _infer_op_dir(desc) if tag in ("read", "write", "git", "exec") else (cur_group_dir, desc)
+    def _append_group_item(g_dir: str, tag: str, short_desc: str) -> None:
         if not operation_groups or operation_groups[-1][0] != g_dir:
             operation_groups.append((g_dir, [(tag, short_desc)]))
         else:
             operation_groups[-1][1].append((tag, short_desc))
+
+    def add_op(tag: str, desc: str) -> None:
+        operations.append((tag, desc))
+        g_dir, short_desc = _infer_op_dir(desc) if tag in ("read", "write", "git", "exec") else (cur_group_dir, desc)
+        _append_group_item(g_dir, tag, short_desc)
 
     py_blocks = 0
     py_eof: str | None = None
@@ -304,6 +571,32 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
     py_buf: list[str] = []
     py_start = 0
     sh_eof: str | None = None
+
+    def _py_item_dir_and_rel(item: str) -> tuple[str, str]:
+        m_del = re.match(r"^([a-z_]+)\((.+)\)$", item)
+        prefix = f"{m_del.group(1)}(" if m_del else ""
+        suffix = ")" if m_del else ""
+        raw_p = m_del.group(2) if m_del else item
+        if raw_p in ("file (python)", "open(..., 'w')", "..."):
+            return cur_group_dir, item
+        ext_dir = _resolve_external_repo_dir(raw_p)
+        if ext_dir:
+            rel = raw_p[len(ext_dir) :].lstrip("/") or "."
+            return ext_dir, f"{prefix}{rel}{suffix}"
+        if cur_group_dir:
+            return cur_group_dir, item
+        p_norm = raw_p.removeprefix("./")
+        if "/" in p_norm and not p_norm.startswith("/"):
+            parent, name = p_norm.rsplit("/", 1)
+            return parent, f"{prefix}{name}{suffix}"
+        return "", item
+
+    def _format_py_items(items: list[str], max_shown: int = 8) -> str:
+        if len(items) <= max_shown:
+            return ", ".join(items)
+        shown = ", ".join(items[:max_shown])
+        rem = len(items) - max_shown
+        return f"{shown} (+{rem} more, {len(items)} total)"
 
     def _emit_py_op(buf_lines: list[str], start_line: int) -> None:
         pw: list[str] = []
@@ -316,20 +609,47 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             _add_unique(reads, x)
         for x in pe:
             _add_unique(exec_cmds, x)
+
+        dir_buckets: dict[str, dict[str, list[str]]] = {}
+        for kind, raw_list in (("write", pw), ("read", pr)):
+            for entry in raw_list:
+                g_dir, rel_entry = _py_item_dir_and_rel(entry)
+                bucket = dir_buckets.setdefault(g_dir, {"write": [], "read": []})
+                if rel_entry not in bucket[kind]:
+                    bucket[kind].append(rel_entry)
+
+        n_lines = len([ln for ln in buf_lines if ln.strip()]) or len(buf_lines) or 1
+        total_paths = len(pw) + len(pr)
+        has_external = any(bool(d) and d != cur_group_dir for d in dir_buckets)
+        if len(dir_buckets) > 1 or has_external or total_paths > 8:
+            head_desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (
+                f" — calls: {', '.join(pe)}" if pe else ""
+            )
+            add_op("python", head_desc)
+            for g_dir, bucket in dir_buckets.items():
+                for kind in ("write", "read"):
+                    k_items = bucket[kind]
+                    if not k_items:
+                        continue
+                    formatted = _format_py_items(k_items)
+                    op_text = f"{g_dir}: {formatted}" if (g_dir and g_dir != cur_group_dir) else formatted
+                    operations.append((kind, op_text))
+                    _append_group_item(g_dir, kind, formatted)
+            return
+
         parts = []
         if pw:
-            parts.append("writes: " + ", ".join(pw))
+            parts.append("writes: " + _format_py_items(pw))
         if pr:
-            parts.append("reads: " + ", ".join(pr))
+            parts.append("reads: " + _format_py_items(pr))
         if pe:
             parts.append("calls: " + ", ".join(pe))
-        n_lines = len([ln for ln in buf_lines if ln.strip()]) or len(buf_lines) or 1
         desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (f" — {'; '.join(parts)}" if parts else "")
         add_op("python", desc)
     sh_cmd: str = ""
     sh_lines: int = 0
 
-    for idx, raw in enumerate(lines, start=1):
+    for idx, raw in _iter_logical_lines(script_text):
         s = raw.strip()
         if py_eof is not None:
             if s == py_eof:
@@ -395,7 +715,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             sh_cmd = s
             sh_lines = 0
             continue
-        if re.match(r"^(?:echo|printf)\b", s) and ">" not in s:
+        if re.match(r"^(?:echo|printf)\b", s) and not _has_unquoted_redirect(s):
             continue
         if re.match(r"^set\s+[+-][A-Za-z]", s):
             continue
@@ -490,7 +810,7 @@ def scan_script_risks(script_text: str) -> list[dict[str, object]]:
     cur_cd_dir: str = ""
     cd_stack: list[str] = []
     sh_vars: dict[str, list[str]] = {}
-    for idx, raw_line in enumerate(script_text.splitlines(), start=1):
+    for idx, raw_line in _iter_logical_lines(script_text):
         stripped = raw_line.strip()
         if py_eof_token is not None:
             if stripped == py_eof_token:

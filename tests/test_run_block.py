@@ -936,6 +936,84 @@ class TestRunBlock(unittest.TestCase):
             ],
         )
 
+    def test_b2_continuations_quoted_echo_external_paths_and_multidir_python(self):
+        # 1. Backslash continuations joined before classifying & scanning risks (but not inside heredocs)
+        cont_script = (
+            "git status \\\n"
+            "  --porcelain\n"
+            "rm \\\n"
+            "  -rf /tmp/b2_target\n"
+            "cat <<'EOF' > notes.txt\n"
+            "line_with_trailing \\\n"
+            "second_heredoc_line\n"
+            "EOF\n"
+        )
+        c_sum = self.mod.summarize_script_actions(cont_script, Path("/tmp/work"))
+        self.assertEqual(
+            c_sum["operations"],
+            [
+                ("git", "git status --porcelain"),
+                ("write", "rm -rf /tmp/b2_target"),
+                ("write", "cat <<'EOF' > notes.txt (2 lines)"),
+            ],
+        )
+        c_risks = self.mod.scan_script_risks(cont_script)
+        self.assertEqual([r["category"] for r in c_risks], ["fs-destructive"])
+
+        # 2. Quoted '>' in echo/printf is ignored; unquoted '>' is preserved
+        echo_script = (
+            'echo "10 > 5"\n'
+            "printf '%s -> %s\\n' a b\n"
+            'echo "msg > inside" > actual_out.txt\n'
+        )
+        e_sum = self.mod.summarize_script_actions(echo_script, Path("/tmp/work"))
+        self.assertEqual(e_sum["operations"], [("exec", 'echo "msg > inside" > actual_out.txt')])
+
+        # 3. Absolute external /home/<user>/<repo>/... paths and *_CWD=/path prefixes
+        ext_abs_script = (
+            "cat /home/alice/projects/sibling_repo/VERSION\n"
+            "OTHER_CWD=/home/alice/projects/third_repo pytest -q\n"
+        )
+        ext_sum = self.mod.summarize_script_actions(
+            ext_abs_script, Path("/home/alice/projects/current_repo")
+        )
+        self.assertEqual(
+            ext_sum["operation_groups"],
+            [
+                ("/home/alice/projects/sibling_repo", [("read", "cat VERSION")]),
+                ("/home/alice/projects/third_repo", [("exec", "pytest -q")]),
+            ],
+        )
+
+        # 4. Python AST: loop targets, Path.unlink()/rmdir() + fs-destructive risk, and multi-dir >12 paths without dropping
+        many_src = ", ".join(f'"src/f{i}.py"' for i in range(10))
+        many_tests = ", ".join(f'"tests/t{i}.py"' for i in range(6))
+        py_script = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            f"for p in ({many_src}):\n"
+            "    Path(p).write_text('x')\n"
+            f"for t in ({many_tests}):\n"
+            "    Path(t).read_text()\n"
+            "for old in ('src/stale.py', 'tests/old_dir'):\n"
+            "    Path(old).unlink()\n"
+            "Path('tests/empty_dir').rmdir()\n"
+            "PY\n"
+        )
+        p_sum = self.mod.summarize_script_actions(py_script, Path("/tmp/work"))
+        p_groups = dict(p_sum["operation_groups"])
+        self.assertIn("src", p_groups)
+        self.assertIn("tests", p_groups)
+        src_writes = dict(p_groups["src"])["write"]
+        self.assertIn("(+3 more, 11 total)", src_writes)
+        self.assertIn("tests/t5.py", dict(p_sum["rows"])["read"])
+        self.assertIn("unlink(src/stale.py)", dict(p_sum["rows"])["write"])
+        self.assertIn("rmdir(tests/empty_dir)", dict(p_sum["rows"])["write"])
+
+        p_risks = self.mod.scan_script_risks(py_script)
+        fs_risks = [r for r in p_risks if r["category"] == "fs-destructive"]
+        self.assertGreaterEqual(len(fs_risks), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
