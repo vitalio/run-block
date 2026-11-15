@@ -1,3 +1,19 @@
+# 🔵 [WIP] F22: Replace box-drawing horizontal rules with plain [TITLE] section headers
+
+- Replace box-drawing horizontal rules (`── <TITLE> ───...` and bottom `───...`) in `src/ui.py` with plain bracketed section headers (`[<TITLE>]`) and no trailing bottom rule so TUI sections never wrap or misalign when the terminal is resized.
+- Simplify interactive prompt redraws in `prompt_yes_no_box`, `confirm_execution`, and `offer_clipboard_copy` in `src/ui.py` to update the prompt line in place without redrawing a bottom separator line.
+- Update `AGENTS.md` and TUI formatting assertions in `tests/test_run_block.py` to match the plain `[<TITLE>]` section format.
+
+# 🎯 [NEXT] F24: Remove blank lines between directory groups in BLOCK PLAN Operations
+
+- Remove blank separator lines between directory groups inside `Operations:` in `src/ui.py` so grouped directory entries render compactly without vertical gaps.
+- Update `BLOCK PLAN` formatting assertions in `tests/test_run_block.py` to verify compact directory group rendering.
+
+# 🎯 [NEXT] F23: Format session bundle Date header in UTC (YYYY-MM-DD HH:MM UTC)
+
+- Format the `Date:` header in `src/bundle.py` using UTC (`datetime.now(timezone.utc)` or `now.astimezone(timezone.utc)`) formatted as `YYYY-MM-DD HH:MM UTC` to match bundle rules.
+- Update `tests/test_run_block.py` to verify the `YYYY-MM-DD HH:MM UTC` format in both `<session>/0` bundle headers and session initialization summary output.
+
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: vitalio/agents_bundle#F7
