@@ -1,3 +1,9 @@
+# ✅ [DONE] F33: Replace v(iew) with e(dit) in START BUNDLE to edit session bundle in default editor — *2026-11-16*
+
+- Update `format_clipboard_box()` and `offer_clipboard_copy()` in `src/ui.py` so `START BUNDLE` renders `-> Copy to clipboard? [Enter/e(dit)/Esc]:` while `END`, `NOT RUN`, and `SYNTAX ERROR` keep `[Enter/v(iew)/Esc]:`.
+- Update `read_clipboard_key()` and `offer_clipboard_copy()` in `src/ui.py` to handle `e`/`E` for `START BUNDLE`, opening `<session>/0` via `open_script_in_editor()` (`RUN_BLOCK_EDITOR`, `VISUAL`, `EDITOR`, or default editor) and returning to the `START BUNDLE` prompt after the editor exits so `Enter` copies the updated `<session>/0` to the clipboard and `Esc` skips copying.
+- Update `README.md` if clipboard prompt shortcuts are documented, and add unit tests in `tests/test_run_block.py` covering the `START BUNDLE` `e(dit)` prompt, key handling, and editor return flow.
+
 # ✅ [DONE] F28: Parse stdin header preamble into session metadata and exclude from session 0 bundle — *2026-11-16*
 
 - Parse optional leading `Key: Value` header lines (separated from body by a blank line) from `stdin` during `format_start_bundle()` and `cmd_start()` in `src/bundle.py` and `src/config.py`.

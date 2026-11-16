@@ -16,11 +16,13 @@ def flush_tty_input(tty_r) -> None:
 
 
 def read_clipboard_key(tty_r) -> str:
-    """Wait for a single key: returns 'copy', 'skip', or 'view'."""
+    """Wait for a single key: returns 'copy', 'skip', 'view', or 'edit'."""
     flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
         ans = tty_r.readline().strip().lower()
-        if ans in ("v", "view", "e", "edit"):
+        if ans in ("e", "edit"):
+            return "edit"
+        if ans in ("v", "view"):
             return "view"
         return "skip" if ans in ("n", "no", "esc", "\x1b") else "copy"
     try:
@@ -28,14 +30,18 @@ def read_clipboard_key(tty_r) -> str:
         old_attrs = termios.tcgetattr(fd)
     except Exception:
         ans = tty_r.readline().strip().lower()
-        return "view" if ans in ("v", "view", "e", "edit") else ("skip" if ans in ("n", "no", "esc", "\x1b") else "copy")
+        if ans in ("e", "edit"):
+            return "edit"
+        return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
         while True:
             ch = os.read(fd, 1)
             if not ch:
                 return "skip"
-            if ch in (b"v", b"V", b"e", b"E"):
+            if ch in (b"e", b"E"):
+                return "edit"
+            if ch in (b"v", b"V"):
                 return "view"
             if ch in (b"\r", b"\n", b"y", b"Y"):
                 return "copy"
@@ -1000,6 +1006,12 @@ def build_box_body_lines(
     return hdr_lines
 
 
+def _clipboard_prompt_line(title_kind: str) -> str:
+    if title_kind.strip() == "START BUNDLE":
+        return "-> Copy to clipboard? [Enter/e(dit)/Esc]:"
+    return "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
+
+
 def format_clipboard_box(
     label: str,
     out_path: Path,
@@ -1012,7 +1024,7 @@ def format_clipboard_box(
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
     body_lines = build_box_body_lines(out_path, rc=rc, stats=stats, extra_lines=extra_lines, label=label)
-    prompt_line = "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
+    prompt_line = _clipboard_prompt_line(title_kind)
     return _render_block(title_kind, body_lines, prompt_line=prompt_line)
 
 
@@ -1056,7 +1068,8 @@ def offer_clipboard_copy(
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prefixed_line2 = _prefix_block_line("-> Copy to clipboard? [Enter/v(iew)/Esc]:", border_color=border_col)
+    is_start_bundle = title_kind.strip() == "START BUNDLE"
+    prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -1064,11 +1077,13 @@ def offer_clipboard_copy(
             tty_w.flush()
             while True:
                 action = read_clipboard_key(tty_r)
-                if action == "view":
+                if (is_start_bundle and action == "edit") or (not is_start_bundle and action == "view"):
                     if out_path.is_file():
                         open_script_in_editor(out_path, tty_r, tty_w)
                         tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
+                    continue
+                if action in ("view", "edit"):
                     continue
                 if action == "copy":
                     if copy_file_to_clipboard(cmd, out_path):

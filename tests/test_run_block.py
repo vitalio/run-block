@@ -1527,6 +1527,73 @@ class TestRunBlock(unittest.TestCase):
         legacy_lines = self.mod.format_session_header_lines(label="s9/1", sdir=legacy_dir)
         self.assertTrue(any("Role:" in ln and "audit" in ln for ln in legacy_lines))
 
+    def test_f33_start_bundle_edit_prompt_and_editor_flow(self):
+        bundle_file = self.tmp / "s1" / "0"
+        bundle_file.parent.mkdir(parents=True, exist_ok=True)
+        bundle_file.write_text("Session: s1\nNext-Block: s1/1\n\nOriginal prompt\n", encoding="utf-8")
+
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
+            sb_box, _, sb_off = self.mod.format_clipboard_box(
+                "s1",
+                bundle_file,
+                title_kind="START BUNDLE",
+                extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
+            )
+            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", sb_box)
+            self.assertNotIn("[Enter/v(iew)/Esc]:", sb_box)
+            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:"))
+
+            for kind in ("END", "NOT RUN", "SYNTAX ERROR"):
+                with self.subTest(title_kind=kind):
+                    other_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind=kind)
+                    self.assertIn("-> Copy to clipboard? [Enter/v(iew)/Esc]:", other_box)
+                    self.assertNotIn("[Enter/e(dit)/Esc]:", other_box)
+
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("e\n")), "edit")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("E\n")), "edit")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("v\n")), "view")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("\n")), "copy")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("esc\n")), "skip")
+
+        edited_calls: list[Path] = []
+
+        def fake_edit(p: Path, _r, _w) -> None:
+            edited_calls.append(p)
+            p.write_text("Session: s1\nNext-Block: s1/1\n\nEdited prompt\n", encoding="utf-8")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = _KeepOpenStringIO()
+        tty_r = io.StringIO("e\n\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {bundle_file}")),              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)),              unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_edit),              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy,              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy(
+                "s1",
+                bundle_file,
+                title_kind="START BUNDLE",
+                extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
+            )
+        self.assertEqual(edited_calls, [bundle_file])
+        mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
+        self.assertIn("Edited prompt", bundle_file.read_text(encoding="utf-8"))
+        self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", tty_w.getvalue())
+        self.assertIn(f"✓ Copied {bundle_file} to clipboard.", tty_w.getvalue())
+
+        tty_w_esc = _KeepOpenStringIO()
+        tty_r_esc = io.StringIO("e\nesc\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {bundle_file}")),              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_esc, tty_r_esc)),              unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_edit),              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy_esc,              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy(
+                "s1",
+                bundle_file,
+                title_kind="START BUNDLE",
+                extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
+            )
+        mock_copy_esc.assert_not_called()
+        self.assertIn("Skipped clipboard copy.", tty_w_esc.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
