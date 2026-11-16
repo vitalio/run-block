@@ -1837,5 +1837,69 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("RUN_BLOCK_PROGRESS", (ROOT / "README.md").read_text(encoding="utf-8"))
 
 
+    def test_f41_status_box_exit_error_and_dim_metadata(self):
+        tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+        saved_no_color = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
+                self.assertEqual(
+                    self.mod._colorize_kv_line("Exit: 0"),
+                    "\x1b[2mExit:\x1b[0m 0",
+                )
+
+                end_box = self.mod.format_info_box(
+                    "END",
+                    [
+                        "Block: s1/1",
+                        "Exit: 2",
+                        "Error: boom",
+                        "Fix: run_block --fix s1/1 (0/2 failed attempts)",
+                        "Output: /tmp/s1/1/out",
+                        "Stats: 1 line · 5 B · ~2 tokens",
+                    ],
+                )
+                self.assertIn("\x1b[2mExit:\x1b[0m   \x1b[1;31m2\x1b[0m", end_box)
+                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31mboom\x1b[0m", end_box)
+                self.assertIn("\x1b[2mFix:    run_block --fix s1/1 (0/2 failed attempts)\x1b[0m", end_box)
+                self.assertIn("\x1b[2mOutput: /tmp/s1/1/out\x1b[0m", end_box)
+                self.assertIn("\x1b[2mStats:  1 line · 5 B · ~2 tokens\x1b[0m", end_box)
+
+                syn_box = self.mod.format_info_box(
+                    "SYNTAX ERROR",
+                    [
+                        "Block: s1/2",
+                        "Exit: 2",
+                        "Output: /tmp/s1/2/out",
+                        "Error: unexpected EOF",
+                        "Stats: 1 line · 15 B · ~4 tokens",
+                    ],
+                )
+                self.assertIn("\x1b[2mExit:\x1b[0m   \x1b[1;31m2\x1b[0m", syn_box)
+                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31munexpected EOF\x1b[0m", syn_box)
+                self.assertIn("\x1b[2mOutput: /tmp/s1/2/out\x1b[0m", syn_box)
+                self.assertIn("\x1b[2mStats:  1 line · 15 B · ~4 tokens\x1b[0m", syn_box)
+
+                not_run_box = self.mod.format_info_box(
+                    "NOT RUN",
+                    [
+                        "Block: s1/3",
+                        "Reason: target script missing",
+                        "Error: file not found",
+                        "Output: /tmp/s1/3/out",
+                        "Stats: 1 line · 20 B · ~5 tokens",
+                    ],
+                )
+                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31mfile not found\x1b[0m", not_run_box)
+                self.assertIn("\x1b[2mOutput: /tmp/s1/3/out\x1b[0m", not_run_box)
+                self.assertIn("\x1b[2mStats:  1 line · 20 B · ~5 tokens\x1b[0m", not_run_box)
+        finally:
+            if saved_no_color is None:
+                os.environ.pop("NO_COLOR", None)
+            else:
+                os.environ["NO_COLOR"] = saved_no_color
+
+
 if __name__ == "__main__":
     unittest.main()

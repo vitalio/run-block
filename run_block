@@ -54,7 +54,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.1"
+VERSION = "0.21.2"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -2656,6 +2656,7 @@ _TITLE_COLORS = {
 }
 _BORDER_COLOR = "\x1b[2;36m"
 _KEY_COLOR = "\x1b[2m"
+_ERROR_COLOR = "\x1b[31m"
 _WARN_COLOR = "\x1b[1;31m"
 _HIGHLIGHT_COLOR = "\x1b[1;33m"
 _TAG_COLORS = {
@@ -2746,6 +2747,12 @@ def _colorize_kv_line(line: str) -> str:
                 return f"{_KEY_COLOR}{key}{spaces}{val}{_ANSI_RESET}"
             return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_HIGHLIGHT_COLOR}{val}{_ANSI_RESET}"
         if key == "Sandbox:" and val.strip() == "off":
+            return f"{_KEY_COLOR}{key}{spaces}{val}{_ANSI_RESET}"
+        if key == "Exit:" and val.strip() != "0":
+            return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_WARN_COLOR}{val}{_ANSI_RESET}"
+        if key == "Error:":
+            return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_ERROR_COLOR}{val}{_ANSI_RESET}"
+        if key in ("Fix:", "Output:", "Stats:"):
             return f"{_KEY_COLOR}{key}{spaces}{val}{_ANSI_RESET}"
         return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{val}"
     return line

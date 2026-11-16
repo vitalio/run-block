@@ -1,3 +1,9 @@
+# ✅ [DONE] F41: Highlight Exit and Error values and dim Fix, Output, and Stats in status boxes — *2026-11-16, Highlight non-zero Exit in bold red, Error in red, and dim Fix/Output/Stats in status boxes*
+
+- Update `_colorize_kv_line()` in `src/ui.py` so non-zero `Exit:` codes render in bold red (`\x1b[1;31m`) and `Error:` descriptions render in red (`\x1b[31m`) across `END`, `SYNTAX ERROR`, and `NOT RUN` boxes.
+- Render secondary metadata lines (`Fix:`, `Output:`, and `Stats:`) in dim gray (`_KEY_COLOR`, `\x1b[2m`) so failure diagnostics stand out clearly.
+- Add unit tests in `tests/test_run_block.py` and rebuild the standalone `run_block` executable via `build.py`.
+
 # ✅ [DONE] F39: Omit redundant Esc label in yes/no confirmation prompt suffixes — *2026-11-16*
 
 - Remove `/Esc` from `_safety_prompt_suffix()` (`[Y/n/v(iew)]:` / `[y/n/v(iew)]:`) and `_build_prompt_yes_no_suffix()` (`[y/N]:`, `[y/N/s(cript)]:`, etc.) in `src/ui.py` where `n` already represents declining/canceling.
