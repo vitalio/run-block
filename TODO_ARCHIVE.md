@@ -1,3 +1,8 @@
+# ✅ [DONE] F32: Unify Esc cancel prompts across interactive TUI boxes — *2026-11-16, Unify Esc cancel prompts across interactive TUI boxes, README, and unit tests*
+
+- Update interactive prompt suffixes in `src/ui.py` (`_build_prompt_yes_no_suffix()`, `format_safety_box()`, `confirm_execution()`) so all TUI confirmation boxes (`STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `CLEAN SESSIONS`, `BLOCK PLAN`, `END`) consistently advertise `Esc` for canceling/exiting alongside existing key bindings.
+- Update `README.md` and unit tests in `tests/test_run_block.py` to cover the unified prompt labels and `Esc` handling across TUI boxes.
+
 # ✅ [DONE] F29: Track operation start lines and build instrumented script copies for plan progress — *2026-11-16*
 
 - Record the 1-based starting line number (`line`) for each top-level operation in `summarize_script_actions()` inside `src/safety.py`, keeping nested Python AST sub-entries grouped under their parent Python step without separate top-level step numbers.

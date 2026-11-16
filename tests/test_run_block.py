@@ -169,18 +169,18 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
         self.assertEqual(box_lines[0], "╭─ BLOCK PLAN " + "─" * 34)
-        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/v(iew)]:")
+        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/v(iew)/Esc]:")
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
         self.assertIn("│ Block:   s1/2", box)
         self.assertIn("│ Sandbox: off", box)
-        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/v(iew)]:"))
+        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/v(iew)/Esc]:"))
         self.assertNotIn("BLOCK PLAN (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
         self.assertIn("Safety warnings (6):", box)
         self.assertNotIn("Line ", box)
-        self.assertIn("[y/n/v(iew)]:", box)
+        self.assertIn("[y/n/v(iew)/Esc]:", box)
 
     def test_bundle_and_rules_files_exist(self):
         b_txt = (ROOT / "src/bundles/run_block.bundle").read_text(encoding="utf-8")
@@ -625,7 +625,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(viewed_paths, [s_script, s_out])
             mock_copy.assert_called_once_with(["true"], s_out)
             out_c_text = tty_w_c.getvalue()
-            self.assertIn("-> Overwrite and re-run s9/1? [y/N/s(cript)/o(utput)/c(opy)]:", out_c_text)
+            self.assertIn("-> Overwrite and re-run s9/1? [y/N/s(cript)/o(utput)/c(opy)/Esc]:", out_c_text)
             self.assertIn(f"✓ Copied {s_out} to clipboard.", out_c_text)
 
             # Pressing Enter on [y/N/...] selects default N without overwriting
@@ -644,6 +644,28 @@ class TestRunBlock(unittest.TestCase):
             )
             self.assertFalse(ok_enter)
             self.assertIn("✗ Keeping existing s9/1.", tty_w_enter.getvalue())
+
+            # Unified Esc suffixes and Esc cancellation across confirmation prompts
+            self.assertEqual(self.mod._build_prompt_yes_no_suffix(True), "[Y/n/Esc]:")
+            self.assertEqual(self.mod._build_prompt_yes_no_suffix(False), "[y/N/Esc]:")
+            self.assertEqual(
+                self.mod._build_prompt_yes_no_suffix(False, has_script=True, has_output=True, can_copy=True),
+                "[y/N/s(cript)/o(utput)/c(opy)/Esc]:",
+            )
+            for esc_input in ("esc\n", "\x1b\n"):
+                with self.subTest(esc_input=repr(esc_input)):
+                    tty_w_esc = io.StringIO()
+                    tty_r_esc = io.StringIO(esc_input)
+                    ok_esc = self.mod.prompt_yes_no_box(
+                        "SESSION ALREADY EXISTS",
+                        ["Session: s9"],
+                        "Overwrite existing session s9?",
+                        default_yes=False,
+                        tty_streams=(tty_w_esc, tty_r_esc),
+                    )
+                    self.assertFalse(ok_esc)
+                    self.assertIn("-> Overwrite existing session s9? [y/N/Esc]:", tty_w_esc.getvalue())
+                    self.assertIn("✗ Canceled by user.", tty_w_esc.getvalue())
 
     def test_powershell_mode_and_agents(self):
         fake_pwsh = self.tmp / "pwsh"
@@ -1454,7 +1476,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[2mreads: a.txt\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;31m-> Execute this block? [y/n/v(iew)]:\x1b[0m", box_warn)
+                self.assertIn("\x1b[1;31m-> Execute this block? [y/n/v(iew)/Esc]:\x1b[0m", box_warn)
 
                 # 3. BLOCK PLAN with differing Workdir (highlighted) and no safety warnings (prompt not red)
                 other_dir = self.tmp / "other_workdir"
@@ -1464,7 +1486,7 @@ class TestRunBlock(unittest.TestCase):
                     "s1/3", [], default_yes=True, summary=sum_clean
                 )
                 self.assertIn(f"\x1b[2mWorkdir:\x1b[0m \x1b[1;33m{other_dir}\x1b[0m", box_clean)
-                self.assertIn("-> Execute this block? [Y/n/v(iew)]:", box_clean)
+                self.assertIn("-> Execute this block? [Y/n/v(iew)/Esc]:", box_clean)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_clean)
         finally:
             if saved_no_color is None:

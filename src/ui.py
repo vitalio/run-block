@@ -153,6 +153,10 @@ def format_session_header_lines(
     return wrapped
 
 
+def _safety_prompt_suffix(default_yes: bool) -> str:
+    return "[Y/n/v(iew)/Esc]:" if default_yes else "[y/n/v(iew)/Esc]:"
+
+
 def format_safety_box(
     label: str,
     findings: list[dict[str, object]],
@@ -163,7 +167,7 @@ def format_safety_box(
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
     title = " BLOCK PLAN "
-    prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
+    prompt_suffix = _safety_prompt_suffix(default_yes)
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     term_cols = _hr_width()
     max_row_len = max(24, term_cols - 2)
@@ -257,6 +261,7 @@ def _build_prompt_yes_no_suffix(
         parts.append("o(utput)")
     if can_copy:
         parts.append("c(opy)")
+    parts.append("Esc")
     return f"[{'/'.join(parts)}]:"
 
 
@@ -418,7 +423,7 @@ def _parse_confirm_line(
         return "yes"
     if default_no and ans == "":
         return "no"
-    if ans in ("n", "no", "q", "esc"):
+    if ans in ("n", "no", "q", "esc", "\x1b"):
         return "no"
     return "invalid"
 
@@ -517,7 +522,7 @@ def confirm_execution(
     )
     _, border_col = _block_colors("BLOCK PLAN")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prompt_suffix = "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
+    prompt_suffix = _safety_prompt_suffix(default_yes)
     raw_prompt = f"-> Execute this block? {prompt_suffix}"
     if findings and _use_color():
         raw_prompt = f"{_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"

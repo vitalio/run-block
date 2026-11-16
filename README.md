@@ -57,7 +57,9 @@ RUN_BLOCK
 
 Before running, `run_block` displays the `BLOCK PLAN` (working directory, operations, and
 any safety warnings). Press `Enter`/`y` to run, `n`/`Esc` to abort, or `v` to inspect the
-script in your terminal editor.
+script in your terminal editor. Across all interactive TUI confirmation prompts (`BLOCK PLAN`,
+`END`, `STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and
+`CLEAN SESSIONS`), `Esc` consistently cancels or exits without proceeding.
 
 ### 3. Patching a failed block (`--fix`)
 
