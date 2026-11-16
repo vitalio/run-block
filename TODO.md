@@ -68,3 +68,15 @@
 - Impact on the model: a traceback or diagnostic may be separated from the command that produced it, and `__RB_STEP__` progress markers (stdout) may drift relative to stderr lines of the same step, which can mislead error attribution in long blocks with interleaved output.
 - Reproduce first with a unit test that interleaves `echo` and `echo >&2` in a loop and compares the order in `out` with the write order; then pick an approach (for example keep one shared descriptor for `out` and obtain `err` separately, such as a per-command stderr tee in the instrumented script, or accept and document the ordering limits).
 - After the approach is decided, document the `err` file and the ordering guarantees in `README.md` (step directory contents: `out`, `err`, `error`, `aborted`) and keep `AGENTS.md` in sync in the same commit.
+
+# ⚪ [NEW] F44: Connect python-stdlib and python-annotations rules in .agents_bundle
+
+- In `.agents_bundle`, remove `py_min=3.9` from `stack/python-cli` and add
+  `rule vitalio/agents-rules:stack/python-stdlib` and
+  `rule vitalio/agents-rules:stack/python-annotations py_min=3.9`, after the
+  python-cli split is released in agents-rules and the package cache is
+  refreshed.
+- Keep `from __future__ import annotations` only in `build.py` and
+  `src/header.py`; do not add it to modules under `src/`.
+- Run `python3 -m unittest discover -s tests`; if the progress line shows
+  stderr noise, capture it with `contextlib.redirect_stderr` in `tests/`.
