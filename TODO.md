@@ -1,9 +1,13 @@
+# 🎯 [NEXT] B6: Track multiline quoted strings in BLOCK PLAN analyzer and step instrumentation
+
+- When a shell script contains a multiline single-quoted (`'...'`) or double-quoted (`"..."`) argument (such as `todo_md edit ... -b $'...\n...'` or `todo_md add ... -b "..."`), `src/safety.py` (`summarize_script_actions` and `_instrument_bash_script`) splits on physical newlines without tracking open quote state.
+- As a result, `BLOCK PLAN` reports each physical line inside the quoted literal as a separate `[exec]` operation, and live step instrumentation injects `printf '%s\n' '__RB_STEP__:N'` directly inside the user's string literal, corrupting written text.
+- Track multiline single- and double-quote state (respecting backslash escapes inside double quotes) alongside heredoc tracking in `src/safety.py`, and add regression tests in `tests/test_run_block.py`.
+
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: agents_bundle:F7, agents_bundle:F15
-printf '%s\n' '__RB_STEP__:2'
 - Move `src/rules/` and `src/bundles/` to `agents/` using the unified logical bundle/rule layout once `agents_bundle` supports it, updating `AGENTS.md`, `README.md`, `build.py`, and tests.
-printf '%s\n' '__RB_STEP__:3'
 - Tighten Rule 1 in `bash.md` and `pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
 
 # ⚪ [NEW] F16: Prevent unintended interactive pagers during block execution
@@ -14,13 +18,9 @@ printf '%s\n' '__RB_STEP__:3'
 # ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
 
 - Hide `Bundle-Command` from TUI box headers in `src/ui.py` (`HIDDEN_SESSION_HEADER_KEYS`) to avoid noisy or multi-line `-p` headers in `START BUNDLE` / `BLOCK PLAN` / `END`, while preserving it in `meta.json` for `--info`.
-printf '%s\n' '__RB_STEP__:2'
 - Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
-printf '%s\n' '__RB_STEP__:3'
 - Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.
-printf '%s\n' '__RB_STEP__:4'
 - Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
-printf '%s\n' '__RB_STEP__:5'
 - Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_run_block.py`.
 
 # ⚪ [NEW] F34: Design workspace state fingerprinting and drift detection across steps
