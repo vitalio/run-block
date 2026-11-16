@@ -1,8 +1,10 @@
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
-- Depends on: vitalio/agents_bundle#F7
-- Move src/rules/ and src/bundles/ to agents/ once agents_bundle supports the root agents/ directory, updating AGENTS.md and tests.
-- Tighten Rule 1 in bash.md and pwsh.md so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
+- Depends on: agents_bundle:F7, agents_bundle:F15
+printf '%s\n' '__RB_STEP__:2'
+- Move `src/rules/` and `src/bundles/` to `agents/` using the unified logical bundle/rule layout once `agents_bundle` supports it, updating `AGENTS.md`, `README.md`, `build.py`, and tests.
+printf '%s\n' '__RB_STEP__:3'
+- Tighten Rule 1 in `bash.md` and `pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
 
 # ⚪ [NEW] F16: Prevent unintended interactive pagers during block execution
 
@@ -11,10 +13,12 @@
 
 # ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
 
-- Depends on: F19
-- Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `0.txt`, block count, size, timestamp, and last step status.
-- Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers from `0.txt`, storage path, total size, and full block list with statuses and action summaries.
+- Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0.txt`, block count, size, timestamp, and last step status.
+printf '%s\n' '__RB_STEP__:5'
+- Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers from `meta.json`/`0.txt`, storage path, total size, and full block list with statuses and action summaries.
+printf '%s\n' '__RB_STEP__:6'
 - Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
+printf '%s\n' '__RB_STEP__:7'
 - Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_run_block.py`.
 
 # ⚪ [NEW] F34: Design workspace state fingerprinting and drift detection across steps
