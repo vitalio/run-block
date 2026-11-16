@@ -38,3 +38,22 @@ rules are loaded via `.agents_bundle`.
   only when confirmed (or when `-y`/`--yes` is explicitly passed).
 - `src/cli.py` — CLI argument routing and self-update (`--update`,
   `--check-update`).
+
+## Bundle Input Protocol
+
+- Header contract: Treat `Bundle-*` preamble headers (`Bundle-Command`,
+  `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) as transport metadata for
+  `<session>/meta.json` only, never forwarding them into `<session>/0`. Forward
+  `stdin` headers into `<session>/0` according to `Bundle-Expose` /
+  `Bundle-Hide` (without overriding `Session`, `Next-Block`, `Workdir`,
+  `Sandbox`, or `Date`).
+- Fragment parsing & stripping: When `Bundle-Boundary: <nonce>` is present,
+  parse `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
+  markers (agnostic of generator internals via `kind`, `group`, `name`, `via`,
+  `rc`, `ms`), compute per-part line/byte/token counts, strip all markers from
+  `<session>/0`, and persist structured `bundle_plan` metadata in
+  `<session>/meta.json`. Fall back to `===== ... =====` section splitting when
+  no boundary is declared.
+- Analyzer & diagnostics: Keep bundle parsing, size/error/secret diagnostics,
+  and `--bundle-plan` output in a dedicated module (`src/bundle_plan.py`),
+  reusing `src/safety.py` secret detection without duplicating patterns.
