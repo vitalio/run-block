@@ -21,7 +21,9 @@ rules are loaded via `.agents_bundle`.
   statistics, and clipboard integration.
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
   `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
-  headless mode.
+  headless mode. Child `stdout` and `stderr` are read via separate
+  descriptors and merged into `out`; `stderr` is also saved to `err`, which
+  the `END` box prefers for its `Error:` line.
 - `src/bundle.py` — session initialization from `stdin`
   (`<command> | run_block` -> `<session>/0` and `<session>/meta.json`). Parses
   optional leading `Key: Value` header lines (separated from the body by a

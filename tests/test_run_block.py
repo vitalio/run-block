@@ -2007,5 +2007,46 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("__RB_STEP__:1", nested_inst)
 
 
+    def test_b7_separate_stderr_capture_and_error_line(self):
+        # stderr diagnostic printed mid-run followed by more stdout must win in END Error:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = self.mod.cmd_normal(
+                "s1/1", "echo out_before\necho err_diag >&2\necho out_after\nexit 3\n"
+            )
+        self.assertEqual(rc, 3)
+        out_txt = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
+        for needle in ("out_before", "err_diag", "out_after"):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, out_txt)
+        self.assertEqual((self.tmp / "s1/1/err").read_text(encoding="utf-8"), "err_diag\n")
+        self.assertIn("Error:  err_diag", buf.getvalue())
+        self.assertNotIn("Error:  out_after", buf.getvalue())
+
+        # Without stderr output: no err file, Error: falls back to the last line of out
+        buf2 = io.StringIO()
+        with contextlib.redirect_stdout(buf2):
+            rc2 = self.mod.cmd_normal("s1/2", "echo only_out\nexit 4\n")
+        self.assertEqual(rc2, 4)
+        self.assertFalse((self.tmp / "s1/2/err").exists())
+        self.assertIn("Error:  only_out", buf2.getvalue())
+
+        # Retry of a step that no longer writes to stderr removes the stale err file
+        (self.tmp / "s1/2/err").write_text("stale\n", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_retry("s1/2", auto_yes=True), 4)
+        self.assertFalse((self.tmp / "s1/2/err").exists())
+
+        # Direct helper: prefers err, ignores blank trailing lines, falls back to out
+        step = self.tmp / "s7/1"
+        step.mkdir(parents=True)
+        (step / "out").write_text("[s7/1] START\n\nlast_out\n\n[s7/1] END (exit 1)\n", encoding="utf-8")
+        self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_out")
+        (step / "err").write_text("first_err\nlast_err\n\n", encoding="utf-8")
+        self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_err")
+        (step / "err").write_text("\n  \n", encoding="utf-8")
+        self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_out")
+
+
 if __name__ == "__main__":
     unittest.main()

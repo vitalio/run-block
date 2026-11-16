@@ -29,6 +29,7 @@ import difflib
 import json
 import math
 import os
+import queue
 import re
 import select
 import shlex
@@ -37,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import unicodedata
 import urllib.request
@@ -54,7 +56,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.4"
+VERSION = "0.21.5"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -3013,25 +3015,13 @@ def _render_block(
     return box, width, cursor_col_offset
 
 
-def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
+def _last_nonempty_line(path: Path, skip_prefixes: tuple[str, ...], max_len: int) -> str:
     try:
-        if not out_path.is_file():
+        if not path.is_file():
             return ""
-        raw = out_path.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return ""
-    skip_prefixes: tuple[str, ...] = ()
-    if label:
-        skip_prefixes = (
-            f"[{label}] START",
-            f"[{label}] END",
-            f"[{label}] STOP --fix",
-            f"[{label}] <stdin> line ",
-            f"[{label}] patched ",
-            f"[{label}] SECURITY WARNING:",
-        )
-    term_cols = _hr_width()
-    max_len = max(60, term_cols - 8)
     for line in reversed(raw.splitlines()):
         s = line.strip()
         if not s:
@@ -3042,6 +3032,25 @@ def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
             return s[: max_len - 3] + "..."
         return s
     return ""
+
+
+def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
+    skip_prefixes: tuple[str, ...] = ()
+    if label:
+        skip_prefixes = (
+            f"[{label}] START",
+            f"[{label}] END",
+            f"[{label}] STOP --fix",
+            f"[{label}] <stdin> line ",
+            f"[{label}] patched ",
+            f"[{label}] SECURITY WARNING:",
+        )
+    max_len = max(60, _hr_width() - 8)
+    if out_path.name == "out":
+        err_line = _last_nonempty_line(out_path.with_name("err"), skip_prefixes, max_len)
+        if err_line:
+            return err_line
+    return _last_nonempty_line(out_path, skip_prefixes, max_len)
 
 
 def _format_end_fix_status(label: str, resolved_sdir: Path | None) -> str:
@@ -3665,6 +3674,38 @@ def _prepare_progress_script(
         return None
 
 
+def _iter_child_streams(out_fd, err_fd):
+    """Yield (is_err, text) chunks read concurrently from two child descriptors."""
+    q: queue.Queue = queue.Queue()
+
+    def _reader(fd, is_err):
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                break
+            q.put((is_err, chunk))
+        q.put((is_err, None))
+
+    threads = [
+        threading.Thread(target=_reader, args=(fd, flag), daemon=True)
+        for fd, flag in ((out_fd, False), (err_fd, True))
+    ]
+    for th in threads:
+        th.start()
+    pending = len(threads)
+    while pending:
+        is_err, chunk = q.get()
+        if chunk is None:
+            pending -= 1
+            continue
+        yield is_err, chunk.decode("utf-8", "replace")
+    for th in threads:
+        th.join()
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -3760,6 +3801,26 @@ def run_script(
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
+    err_chunks: list[str] = []
+
+    def _emit(text: str, is_err: bool) -> None:
+        if is_err:
+            err_chunks.append(text)
+            log_chunks.append(text)
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            return
+        if progress_filter is not None:
+            out_txt, prog_txt = progress_filter.feed(text)
+            if out_txt:
+                log_chunks.append(out_txt)
+            if prog_txt or out_txt:
+                sys.stdout.write(prog_txt + out_txt)
+                sys.stdout.flush()
+        else:
+            log_chunks.append(text)
+            sys.stdout.write(text)
+            sys.stdout.flush()
     for h in header_lines or []:
         log_chunks.append(h)
     log_chunks.append("\n")
@@ -3772,6 +3833,8 @@ def run_script(
     tty_in = None
     master_fd = None
     slave_fd = None
+    err_master_fd = None
+    err_slave_fd = None
     if HAS_PTY and sys.stdout.isatty() and not no_clipboard() and not headless:
         try:
             tty_in = open("/dev/tty", "rb", buffering=0)
@@ -3779,6 +3842,8 @@ def run_script(
             attrs = termios.tcgetattr(slave_fd)
             attrs[1] &= ~termios.ONLCR
             termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+            err_master_fd, err_slave_fd = pty.openpty()
+            termios.tcsetattr(err_slave_fd, termios.TCSANOW, attrs)
         except OSError:
             if tty_in is not None:
                 tty_in.close()
@@ -3789,6 +3854,12 @@ def run_script(
             if slave_fd is not None:
                 os.close(slave_fd)
                 slave_fd = None
+            if err_master_fd is not None:
+                os.close(err_master_fd)
+                err_master_fd = None
+            if err_slave_fd is not None:
+                os.close(err_slave_fd)
+                err_slave_fd = None
 
     step_lines = list(summary_obj.get("operation_steps") or [])
     use_progress = (
@@ -3818,44 +3889,38 @@ def run_script(
     child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
     try:
-        if master_fd is not None and slave_fd is not None:
+        if (
+            master_fd is not None
+            and slave_fd is not None
+            and err_master_fd is not None
+            and err_slave_fd is not None
+        ):
             try:
                 proc = subprocess.Popen(
                     exec_cmd,
                     cwd=work_dir,
                     stdin=tty_in if tty_in is not None else slave_fd,
                     stdout=slave_fd,
-                    stderr=slave_fd,
+                    stderr=err_slave_fd,
                     env=child_env,
                     close_fds=True,
                 )
                 os.close(slave_fd)
                 slave_fd = None
-                while True:
-                    try:
-                        chunk = os.read(master_fd, 4096)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    text = chunk.decode("utf-8", "replace")
-                    if progress_filter is not None:
-                        out_txt, prog_txt = progress_filter.feed(text)
-                        if out_txt:
-                            log_chunks.append(out_txt)
-                        if prog_txt or out_txt:
-                            sys.stdout.write(prog_txt + out_txt)
-                            sys.stdout.flush()
-                    else:
-                        log_chunks.append(text)
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
+                os.close(err_slave_fd)
+                err_slave_fd = None
+                for is_err, text in _iter_child_streams(master_fd, err_master_fd):
+                    _emit(text, is_err)
                 rc = proc.wait()
             finally:
                 if slave_fd is not None:
                     os.close(slave_fd)
+                if err_slave_fd is not None:
+                    os.close(err_slave_fd)
                 if master_fd is not None:
                     os.close(master_fd)
+                if err_master_fd is not None:
+                    os.close(err_master_fd)
                 if tty_in is not None:
                     tty_in.close()
         else:
@@ -3864,27 +3929,14 @@ def run_script(
                 cwd=work_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 env=child_env,
             )
-            assert proc.stdout is not None
-            while True:
-                chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
-                if not chunk:
-                    break
-                text = chunk.decode("utf-8", "replace")
-                if progress_filter is not None:
-                    out_txt, prog_txt = progress_filter.feed(text)
-                    if out_txt:
-                        log_chunks.append(out_txt)
-                    if prog_txt or out_txt:
-                        sys.stdout.write(prog_txt + out_txt)
-                        sys.stdout.flush()
-                else:
-                    log_chunks.append(text)
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+            assert proc.stdout is not None and proc.stderr is not None
+            for is_err, text in _iter_child_streams(proc.stdout.fileno(), proc.stderr.fileno()):
+                _emit(text, is_err)
             proc.stdout.close()
+            proc.stderr.close()
             rc = proc.wait()
         if progress_filter is not None:
             rem_out, rem_prog = progress_filter.flush()
@@ -3919,6 +3971,12 @@ def run_script(
     log_chunks.append(end_line)
     full_output = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(log_chunks))).replace("\r\n", "\n")
     write_private(out_path, full_output)
+    err_path = step_dir / "err"
+    err_text = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(err_chunks))).replace("\r\n", "\n")
+    if err_text.strip():
+        write_private(err_path, err_text, overwrite=True)
+    else:
+        err_path.unlink(missing_ok=True)
     clip_target = resolve_clipboard_target(out_path, full_output)
     if headless:
         if stdin_diag_lines:

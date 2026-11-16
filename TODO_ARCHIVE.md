@@ -1,3 +1,9 @@
+# ✅ [DONE] B7: Capture child stderr separately to extract accurate Error lines in END box — *2026-11-16*
+
+- In `src/runner.py`, block execution currently merges child `stdout` and `stderr` into a single descriptor (`stdout=slave_fd, stderr=slave_fd` in PTY mode and `stdout=PIPE, stderr=STDOUT` in pipe mode), so `src/ui.py` (`_extract_last_error_line`) only sees the combined `step_dir / "out"` file and picks its last non-empty line when `rc != 0`.
+- When a command writes an error to `stderr` mid-run and then continues printing normal output to `stdout` before exiting non-zero (for example `head -n 25 dev/*` printing `head: error reading 'dev/__pycache__': Is a directory` to `stderr` followed by file contents on `stdout`), `END` displays the last line of `stdout` in `Error:` instead of the diagnostic from `stderr`.
+- Read child `stderr` via a separate descriptor alongside `stdout` in `src/runner.py`, continuing to stream both to the terminal and into `step_dir / "out"` while also saving `stderr` to `step_dir / "err"`, and update `_extract_last_error_line` in `src/ui.py` to prefer the last non-empty line from `step_dir / "err"` (falling back to `step_dir / "out"` only when `stderr` is empty), with unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] B6: Track multiline quoted strings in BLOCK PLAN analyzer and step instrumentation — *2026-11-16, Track multiline single, ANSI-C, and double-quoted strings in _iter_logical_lines and instrument_script_for_progress*
 
 - When a shell script contains a multiline single-quoted (`'...'`) or double-quoted (`"..."`) argument (such as `todo_md edit ... -b $'...\n...'` or `todo_md add ... -b "..."`), `src/safety.py` (`summarize_script_actions` and `_instrument_bash_script`) splits on physical newlines without tracking open quote state.

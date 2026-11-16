@@ -468,6 +468,38 @@ def _prepare_progress_script(
         return None
 
 
+def _iter_child_streams(out_fd, err_fd):
+    """Yield (is_err, text) chunks read concurrently from two child descriptors."""
+    q: queue.Queue = queue.Queue()
+
+    def _reader(fd, is_err):
+        while True:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                chunk = b""
+            if not chunk:
+                break
+            q.put((is_err, chunk))
+        q.put((is_err, None))
+
+    threads = [
+        threading.Thread(target=_reader, args=(fd, flag), daemon=True)
+        for fd, flag in ((out_fd, False), (err_fd, True))
+    ]
+    for th in threads:
+        th.start()
+    pending = len(threads)
+    while pending:
+        is_err, chunk = q.get()
+        if chunk is None:
+            pending -= 1
+            continue
+        yield is_err, chunk.decode("utf-8", "replace")
+    for th in threads:
+        th.join()
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -563,6 +595,26 @@ def run_script(
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
+    err_chunks: list[str] = []
+
+    def _emit(text: str, is_err: bool) -> None:
+        if is_err:
+            err_chunks.append(text)
+            log_chunks.append(text)
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            return
+        if progress_filter is not None:
+            out_txt, prog_txt = progress_filter.feed(text)
+            if out_txt:
+                log_chunks.append(out_txt)
+            if prog_txt or out_txt:
+                sys.stdout.write(prog_txt + out_txt)
+                sys.stdout.flush()
+        else:
+            log_chunks.append(text)
+            sys.stdout.write(text)
+            sys.stdout.flush()
     for h in header_lines or []:
         log_chunks.append(h)
     log_chunks.append("\n")
@@ -575,6 +627,8 @@ def run_script(
     tty_in = None
     master_fd = None
     slave_fd = None
+    err_master_fd = None
+    err_slave_fd = None
     if HAS_PTY and sys.stdout.isatty() and not no_clipboard() and not headless:
         try:
             tty_in = open("/dev/tty", "rb", buffering=0)
@@ -582,6 +636,8 @@ def run_script(
             attrs = termios.tcgetattr(slave_fd)
             attrs[1] &= ~termios.ONLCR
             termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
+            err_master_fd, err_slave_fd = pty.openpty()
+            termios.tcsetattr(err_slave_fd, termios.TCSANOW, attrs)
         except OSError:
             if tty_in is not None:
                 tty_in.close()
@@ -592,6 +648,12 @@ def run_script(
             if slave_fd is not None:
                 os.close(slave_fd)
                 slave_fd = None
+            if err_master_fd is not None:
+                os.close(err_master_fd)
+                err_master_fd = None
+            if err_slave_fd is not None:
+                os.close(err_slave_fd)
+                err_slave_fd = None
 
     step_lines = list(summary_obj.get("operation_steps") or [])
     use_progress = (
@@ -621,44 +683,38 @@ def run_script(
     child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
     try:
-        if master_fd is not None and slave_fd is not None:
+        if (
+            master_fd is not None
+            and slave_fd is not None
+            and err_master_fd is not None
+            and err_slave_fd is not None
+        ):
             try:
                 proc = subprocess.Popen(
                     exec_cmd,
                     cwd=work_dir,
                     stdin=tty_in if tty_in is not None else slave_fd,
                     stdout=slave_fd,
-                    stderr=slave_fd,
+                    stderr=err_slave_fd,
                     env=child_env,
                     close_fds=True,
                 )
                 os.close(slave_fd)
                 slave_fd = None
-                while True:
-                    try:
-                        chunk = os.read(master_fd, 4096)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    text = chunk.decode("utf-8", "replace")
-                    if progress_filter is not None:
-                        out_txt, prog_txt = progress_filter.feed(text)
-                        if out_txt:
-                            log_chunks.append(out_txt)
-                        if prog_txt or out_txt:
-                            sys.stdout.write(prog_txt + out_txt)
-                            sys.stdout.flush()
-                    else:
-                        log_chunks.append(text)
-                        sys.stdout.write(text)
-                        sys.stdout.flush()
+                os.close(err_slave_fd)
+                err_slave_fd = None
+                for is_err, text in _iter_child_streams(master_fd, err_master_fd):
+                    _emit(text, is_err)
                 rc = proc.wait()
             finally:
                 if slave_fd is not None:
                     os.close(slave_fd)
+                if err_slave_fd is not None:
+                    os.close(err_slave_fd)
                 if master_fd is not None:
                     os.close(master_fd)
+                if err_master_fd is not None:
+                    os.close(err_master_fd)
                 if tty_in is not None:
                     tty_in.close()
         else:
@@ -667,27 +723,14 @@ def run_script(
                 cwd=work_dir,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
                 env=child_env,
             )
-            assert proc.stdout is not None
-            while True:
-                chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
-                if not chunk:
-                    break
-                text = chunk.decode("utf-8", "replace")
-                if progress_filter is not None:
-                    out_txt, prog_txt = progress_filter.feed(text)
-                    if out_txt:
-                        log_chunks.append(out_txt)
-                    if prog_txt or out_txt:
-                        sys.stdout.write(prog_txt + out_txt)
-                        sys.stdout.flush()
-                else:
-                    log_chunks.append(text)
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+            assert proc.stdout is not None and proc.stderr is not None
+            for is_err, text in _iter_child_streams(proc.stdout.fileno(), proc.stderr.fileno()):
+                _emit(text, is_err)
             proc.stdout.close()
+            proc.stderr.close()
             rc = proc.wait()
         if progress_filter is not None:
             rem_out, rem_prog = progress_filter.flush()
@@ -722,6 +765,12 @@ def run_script(
     log_chunks.append(end_line)
     full_output = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(log_chunks))).replace("\r\n", "\n")
     write_private(out_path, full_output)
+    err_path = step_dir / "err"
+    err_text = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(err_chunks))).replace("\r\n", "\n")
+    if err_text.strip():
+        write_private(err_path, err_text, overwrite=True)
+    else:
+        err_path.unlink(missing_ok=True)
     clip_target = resolve_clipboard_target(out_path, full_output)
     if headless:
         if stdin_diag_lines:

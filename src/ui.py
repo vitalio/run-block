@@ -991,25 +991,13 @@ def _render_block(
     return box, width, cursor_col_offset
 
 
-def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
+def _last_nonempty_line(path: Path, skip_prefixes: tuple[str, ...], max_len: int) -> str:
     try:
-        if not out_path.is_file():
+        if not path.is_file():
             return ""
-        raw = out_path.read_text(encoding="utf-8", errors="replace")
+        raw = path.read_text(encoding="utf-8", errors="replace")
     except Exception:
         return ""
-    skip_prefixes: tuple[str, ...] = ()
-    if label:
-        skip_prefixes = (
-            f"[{label}] START",
-            f"[{label}] END",
-            f"[{label}] STOP --fix",
-            f"[{label}] <stdin> line ",
-            f"[{label}] patched ",
-            f"[{label}] SECURITY WARNING:",
-        )
-    term_cols = _hr_width()
-    max_len = max(60, term_cols - 8)
     for line in reversed(raw.splitlines()):
         s = line.strip()
         if not s:
@@ -1020,6 +1008,25 @@ def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
             return s[: max_len - 3] + "..."
         return s
     return ""
+
+
+def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
+    skip_prefixes: tuple[str, ...] = ()
+    if label:
+        skip_prefixes = (
+            f"[{label}] START",
+            f"[{label}] END",
+            f"[{label}] STOP --fix",
+            f"[{label}] <stdin> line ",
+            f"[{label}] patched ",
+            f"[{label}] SECURITY WARNING:",
+        )
+    max_len = max(60, _hr_width() - 8)
+    if out_path.name == "out":
+        err_line = _last_nonempty_line(out_path.with_name("err"), skip_prefixes, max_len)
+        if err_line:
+            return err_line
+    return _last_nonempty_line(out_path, skip_prefixes, max_len)
 
 
 def _format_end_fix_status(label: str, resolved_sdir: Path | None) -> str:
