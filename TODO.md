@@ -1,8 +1,18 @@
-# 🎯 [NEXT] F43: Brighten Error line styling and keep confirmation prompt distinct from Safety warnings
+# 🔵 [WIP] F22: Replace box-drawing horizontal rules with plain [TITLE] section headers — *2026-11-15, Replaced box-drawing horizontal rules with plain [TITLE] section headers and simplified in-place prompt redraws.*
 
-- In `src/ui.py`, `_ERROR_COLOR` uses non-bold `\x1b[31m`, making `Error:` values in `END` and `SYNTAX ERROR` boxes appear dim on dark terminal themes compared to bold tags and headers.
-- In `format_safety_box` and `confirm_execution` (`src/ui.py`), when `findings` is non-empty, `-> Execute this block?` is wrapped in `_WARN_COLOR` (`\x1b[1;31m`), making the interactive prompt the exact same color as `Safety warnings`.
-- Update `_ERROR_COLOR` in `src/ui.py` to bright bold red (`\x1b[1;91m`), keep `-> Execute this block?` distinct from `_WARN_COLOR` when safety warnings are present, and update ANSI styling unit tests in `tests/test_run_block.py`.
+- Replace box-drawing horizontal rules (`── <TITLE> ───...` and bottom `───...`) in `src/ui.py` with plain bracketed section headers (`[<TITLE>]`) and no trailing bottom rule so TUI sections never wrap or misalign when the terminal is resized.
+- Simplify interactive prompt redraws in `prompt_yes_no_box`, `confirm_execution`, and `offer_clipboard_copy` in `src/ui.py` to update the prompt line in place without redrawing a bottom separator line.
+- Update `AGENTS.md` and TUI formatting assertions in `tests/test_run_block.py` to match the plain `[<TITLE>]` section format.
+
+# 🎯 [NEXT] F43: Brighten Error line, title and border colors, and keep confirmation prompt distinct from Safety warnings
+
+- In `src/ui.py`, `_ERROR_COLOR` uses non-bold `\x1b[31m`, so `Error:` values in `END` and `SYNTAX ERROR` boxes look dim on dark terminal themes compared to bold tags and headers.
+- `_TITLE_COLORS` (`START BUNDLE`, `BLOCK PLAN`, `END`, `SYNTAX ERROR`, `NOT RUN`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`) use the regular-intensity bold palette (`1;36`, `1;33`, `1;32`, `1;31`), and the fallback for unknown titles in `src/ui.py` is `\x1b[1;36m`. Make them brighter (`1;96`, `1;93`, `1;92`, `1;91`).
+- `_BORDER_COLOR` (`\x1b[2;36m`) is dim, and the box builder derives border color from the title color by replacing the bold prefix with `2;` (`"\x1b[2;" + t_col[4:]`). Change the derivation so the border keeps the brightness of the title color instead of being forced to dim, and make the default `_BORDER_COLOR` non-dim.
+- In `format_safety_box` and `confirm_execution` (`src/ui.py`), when `findings` is non-empty, `-> Execute this block?` is wrapped in `_WARN_COLOR` (`\x1b[1;31m`), which is the same color as the `Safety warnings` header. Keep the prompt visually distinct from `_WARN_COLOR`.
+- Update `_ERROR_COLOR` to bright bold red (`\x1b[1;91m`).
+- Update the ANSI styling unit tests in `tests/test_run_block.py` to match the new codes, including a check that the border of a bold title is not dim.
+- Out of scope: `_KEY_COLOR` (metadata keys) and `_TAG_COLORS` (operation tags).
 
 # 🎯 [NEXT] F42: Support marking sessions as completed (--done) with confirmation before reopening
 
