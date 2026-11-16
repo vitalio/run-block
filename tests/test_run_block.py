@@ -1595,5 +1595,110 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("Skipped clipboard copy.", tty_w_esc.getvalue())
 
 
+    def test_f29_operation_step_lines_and_instrumented_scripts(self):
+        # 1. Top-level line mapping keeps nested Python AST sub-entries under parent Python step
+        many_src = ", ".join(f'"src/f{i}.py"' for i in range(6))
+        many_tests = ", ".join(f'"tests/t{i}.py"' for i in range(6))
+        script = (
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "echo starting\n"
+            "git status \\\n"
+            "  --porcelain\n"
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            f"for p in ({many_src}):\n"
+            "    Path(p).write_text('x')\n"
+            f"for t in ({many_tests}):\n"
+            "    Path(t).read_text()\n"
+            "PY\n"
+            "cat <<'EOF' > note.txt\n"
+            "hello\n"
+            "EOF\n"
+            "if [ -d src ]; then\n"
+            "  ls -la src\n"
+            "fi\n"
+            "rm -f note.txt\n"
+        )
+        summary = self.mod.summarize_script_actions(script, Path("/tmp/work"))
+        steps = summary["operation_steps"]
+        self.assertEqual([s["step"] for s in steps], [1, 2, 3, 4, 5])
+        self.assertEqual([s["tag"] for s in steps], ["git", "python", "write", "read", "write"])
+        self.assertEqual([s["line"] for s in steps], [4, 6, 13, 17, 19])
+        # Nested Python AST sub-entries are still in operations, without extra step numbers
+        self.assertGreater(len(summary["operations"]), len(steps))
+
+        # 2. Bash instrumentation emits markers before top-level ops, skips heredocs/continuations/if-bodies, and passes bash -n
+        inst_bash = self.mod.instrument_script_for_progress(script, is_powershell=False)
+        ok_syn, syn_err, _ = self.mod.check_script_syntax(inst_bash, self.tmp)
+        self.assertTrue(ok_syn, syn_err)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:1'\ngit status \\\n  --porcelain", inst_bash)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:2'\npython3 - <<'PY'", inst_bash)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:3'\ncat <<'EOF' > note.txt", inst_bash)
+        self.assertNotIn("__RB_STEP__:4", inst_bash)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:5'\nrm -f note.txt", inst_bash)
+
+        # Executing instrumented bash script emits step markers in order without breaking heredocs or continuations
+        (self.tmp / "src").mkdir(exist_ok=True)
+        (self.tmp / "tests").mkdir(exist_ok=True)
+        for i in range(6):
+            (self.tmp / f"tests/t{i}.py").write_text("ok", encoding="utf-8")
+        proc = subprocess.run(
+            ["bash", "-c", "git() { echo GIT_OK; }; rm() { echo RM_OK; }; " + inst_bash],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        markers = [ln for ln in proc.stdout.splitlines() if ln.startswith("__RB_STEP__:")]
+        self.assertEqual(markers, ["__RB_STEP__:1", "__RB_STEP__:2", "__RB_STEP__:3", "__RB_STEP__:5"])
+
+        # 3. Multiline python3 -c, for/while/case bodies are safely skipped and valid syntax
+        complex_bash = (
+            "python3 -c '\n"
+            "x = 1\n"
+            "print(x)\n"
+            "'\n"
+            "for item in a b; do\n"
+            "  cat missing_or_ok\n"
+            "done\n"
+            "case x in\n"
+            "  x)\n"
+            "    ls\n"
+            "    ;;\n"
+            "esac\n"
+            "while false; do\n"
+            "  rm -f x\n"
+            "done\n"
+            "git status -sb\n"
+        )
+        inst_complex = self.mod.instrument_script_for_progress(complex_bash, is_powershell=False)
+        ok_c, err_c, _ = self.mod.check_script_syntax(inst_complex, self.tmp)
+        self.assertTrue(ok_c, err_c)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:1'\npython3 -c '", inst_complex)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:7'\ngit status -sb", inst_complex)
+        for skipped in ("__RB_STEP__:2", "__RB_STEP__:3", "__RB_STEP__:4", "__RB_STEP__:5", "__RB_STEP__:6"):
+            self.assertNotIn(skipped, inst_complex)
+
+        # 4. PowerShell instrumentation skips here-strings, backtick continuations, and brace blocks
+        ps_script = (
+            "git status `\n"
+            "  --porcelain\n"
+            "if (Test-Path src) {\n"
+            "  ls src\n"
+            "}\n"
+            "cat <<'EOF' > out.txt\n"
+            "body\n"
+            "EOF\n"
+            "rm -f out.txt\n"
+        )
+        inst_ps = self.mod.instrument_script_for_progress(ps_script, is_powershell=True)
+        self.assertIn("Write-Output '__RB_STEP__:1'\ngit status `", inst_ps)
+        self.assertNotIn("__RB_STEP__:2", inst_ps)
+        self.assertNotIn("__RB_STEP__:4", inst_ps)
+        self.assertIn("Write-Output '__RB_STEP__:5'\ncat <<'EOF' > out.txt", inst_ps)
+        self.assertIn("Write-Output '__RB_STEP__:6'\nrm -f out.txt", inst_ps)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,9 @@
+# ✅ [DONE] F29: Track operation start lines and build instrumented script copies for plan progress — *2026-11-16*
+
+- Record the 1-based starting line number (`line`) for each top-level operation in `summarize_script_actions()` inside `src/safety.py`, keeping nested Python AST sub-entries grouped under their parent Python step without separate top-level step numbers.
+- Add a helper in `src/safety.py` to generate an instrumented in-memory script copy (`bash` and `pwsh`) that emits identifiable step-marker lines before each top-level operation while safely skipping heredocs, multiline `python -c` blocks, line continuations, and compound control-flow bodies (`if`/`for`/`while`/`case`).
+- Cover line-number mapping and instrumented script generation (including syntax preservation and edge cases) with unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F33: Replace v(iew) with e(dit) in START BUNDLE to edit session bundle in default editor — *2026-11-16*
 
 - Update `format_clipboard_box()` and `offer_clipboard_copy()` in `src/ui.py` so `START BUNDLE` renders `-> Copy to clipboard? [Enter/e(dit)/Esc]:` while `END`, `NOT RUN`, and `SYNTAX ERROR` keep `[Enter/v(iew)/Esc]:`.

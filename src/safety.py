@@ -441,6 +441,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
     cd_dirs: list[str] = []
     operations: list[tuple[str, str]] = []
     operation_groups: list[tuple[str, list[tuple[str, str]]]] = []
+    operation_steps: list[dict[str, object]] = []
     cur_group_dir = ""
     dir_stack: list[str] = []
     sh_vars: dict[str, list[str]] = {}
@@ -560,10 +561,19 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         else:
             operation_groups[-1][1].append((tag, short_desc))
 
-    def add_op(tag: str, desc: str) -> None:
+    def add_op(tag: str, desc: str, line: int = 0) -> None:
         operations.append((tag, desc))
         g_dir, short_desc = _infer_op_dir(desc) if tag in ("read", "write", "git", "exec") else (cur_group_dir, desc)
         _append_group_item(g_dir, tag, short_desc)
+        operation_steps.append(
+            {
+                "step": len(operation_steps) + 1,
+                "line": line,
+                "tag": tag,
+                "desc": desc,
+                "dir": g_dir,
+            }
+        )
 
     py_blocks = 0
     py_eof: str | None = None
@@ -625,7 +635,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             head_desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (
                 f" — calls: {', '.join(pe)}" if pe else ""
             )
-            add_op("python", head_desc)
+            add_op("python", head_desc, line=start_line)
             for g_dir, bucket in dir_buckets.items():
                 for kind in ("write", "read"):
                     k_items = bucket[kind]
@@ -645,9 +655,10 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         if pe:
             parts.append("calls: " + ", ".join(pe))
         desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (f" — {'; '.join(parts)}" if parts else "")
-        add_op("python", desc)
+        add_op("python", desc, line=start_line)
     sh_cmd: str = ""
     sh_lines: int = 0
+    sh_start: int = 0
 
     for idx, raw in _iter_logical_lines(script_text):
         s = raw.strip()
@@ -676,16 +687,17 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
                 if m_redir:
                     target_f = m_redir.group(1).strip("'\"")
                     _add_unique(writes, target_f)
-                    add_op("write", f"{sh_cmd} ({line_lbl})")
+                    add_op("write", f"{sh_cmd} ({line_lbl})", line=sh_start)
                 elif re.match(r"^git\s+", sh_cmd):
                     _add_unique(git_cmds, sh_cmd)
-                    add_op("git", f"{sh_cmd} ({line_lbl})")
+                    add_op("git", f"{sh_cmd} ({line_lbl})", line=sh_start)
                 else:
                     _add_unique(exec_cmds, sh_cmd)
-                    add_op("exec", f"{sh_cmd} ({line_lbl})")
+                    add_op("exec", f"{sh_cmd} ({line_lbl})", line=sh_start)
                 sh_eof = None
                 sh_cmd = ""
                 sh_lines = 0
+                sh_start = 0
             else:
                 sh_lines += 1
             continue
@@ -714,6 +726,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             sh_eof = m_sh.group(1)
             sh_cmd = s
             sh_lines = 0
+            sh_start = idx
             continue
         if re.match(r"^(?:echo|printf)\b", s) and not _has_unquoted_redirect(s):
             continue
@@ -759,17 +772,17 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             continue
         if re.match(r"^git\s+", s):
             _add_unique(git_cmds, s)
-            add_op("git", s)
+            add_op("git", s, line=idx)
             continue
         if re.match(r"^(?:rm|cp|mv|mkdir|chmod|touch)\s+", s):
             _add_unique(writes, s)
-            add_op("write", s)
+            add_op("write", s, line=idx)
             continue
         if re.match(r"^(?:cat|nl|grep|ls|head|tail|find|which|command\s+-v|wc|stat|file|sed\s+-n)\s+", s):
             _add_unique(reads, s)
-            add_op("read", s)
+            add_op("read", s, line=idx)
             continue
-        add_op("exec", s)
+        add_op("exec", s, line=idx)
         _add_unique(exec_cmds, s)
 
     rows: list[tuple[str, str]] = []
@@ -792,9 +805,229 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         "rows": rows,
         "operations": operations,
         "operation_groups": operation_groups,
+        "operation_steps": operation_steps,
         "cd_dirs": cd_dirs,
         "work_dir": str(wdir),
     }
+
+def _bash_compound_delta(line: str) -> tuple[int, int, bool]:
+    """Returns (opens, closes, starts_with_closer) for bash control-flow keywords outside quotes/comments."""
+    in_sq = False
+    in_dq = False
+    escaped = False
+    cleaned: list[str] = []
+    for ch in line:
+        if escaped:
+            cleaned.append(" ")
+            escaped = False
+            continue
+        if ch == "\\" and not in_sq:
+            cleaned.append(" ")
+            escaped = True
+            continue
+        if ch == "'" and not in_dq:
+            in_sq = not in_sq
+            cleaned.append(" ")
+            continue
+        if ch == '"' and not in_sq:
+            in_dq = not in_dq
+            cleaned.append(" ")
+            continue
+        if ch == "#" and not in_sq and not in_dq:
+            break
+        cleaned.append(" " if (in_sq or in_dq) else ch)
+
+    s = "".join(cleaned).strip()
+    if not s:
+        return 0, 0, False
+    starts_closer = bool(re.match(r"^(?:fi|done|esac|elif|else|\}|\))\b", s))
+    opens = 0
+    closes = 0
+    cmd_pos = True
+    i = 0
+    n = len(s)
+    while i < n:
+        ch = s[i]
+        if ch.isspace():
+            i += 1
+            continue
+        if ch in (";", "|", "&", "{", "("):
+            if ch == ";" and i + 1 < n and s[i + 1] == ";":
+                i += 2
+            elif ch in ("|", "&") and i + 1 < n and s[i + 1] == ch:
+                i += 2
+            else:
+                i += 1
+            cmd_pos = True
+            continue
+        if ch in ("}", ")"):
+            i += 1
+            cmd_pos = True
+            continue
+        m_word = re.match(r"[A-Za-z_][A-Za-z0-9_]*", s[i:])
+        if m_word:
+            word = m_word.group(0)
+            if cmd_pos:
+                if word in ("if", "for", "while", "until", "case"):
+                    opens += 1
+                elif word in ("fi", "done", "esac"):
+                    closes += 1
+                cmd_pos = word in ("then", "do", "else")
+            i += len(word)
+            continue
+        cmd_pos = False
+        i += 1
+    return opens, closes, starts_closer
+
+
+def _pwsh_brace_delta(line: str) -> tuple[int, int, bool]:
+    """Returns (opens, closes, starts_with_closer) for PowerShell braces outside quotes/comments."""
+    in_sq = False
+    in_dq = False
+    escaped = False
+    opens = 0
+    closes = 0
+    first_non_ws = ""
+    for ch in line:
+        if not first_non_ws and not ch.isspace():
+            first_non_ws = ch
+        if escaped:
+            escaped = False
+            continue
+        if ch == "`" and not in_sq:
+            escaped = True
+            continue
+        if ch == "'" and not in_dq:
+            in_sq = not in_sq
+            continue
+        if ch == '"' and not in_sq:
+            in_dq = not in_dq
+            continue
+        if ch == "#" and not in_sq and not in_dq:
+            break
+        if not in_sq and not in_dq:
+            if ch == "{":
+                opens += 1
+            elif ch == "}":
+                closes += 1
+    starts_closer = first_non_ws == "}" or bool(re.match(r"^(?:elseif|else|catch|finally)\b", line.strip(), re.IGNORECASE))
+    return opens, closes, starts_closer
+
+
+def instrument_script_for_progress(
+    script_text: str,
+    step_lines: list[dict[str, object]] | None = None,
+    *,
+    is_powershell: bool | None = None,
+    marker_prefix: str = "__RB_STEP__:",
+) -> str:
+    """Returns an instrumented script copy emitting step markers before top-level operations."""
+    steps = (
+        step_lines
+        if step_lines is not None
+        else list(summarize_script_actions(script_text).get("operation_steps") or [])
+    )
+    line_to_step: dict[int, int] = {}
+    for item in steps:
+        ln = int(item.get("line") or 0)
+        st = int(item.get("step") or 0)
+        if ln > 0 and st > 0 and ln not in line_to_step:
+            line_to_step[ln] = st
+    if not line_to_step:
+        return script_text
+
+    ps_mode = _is_powershell() if is_powershell is None else bool(is_powershell)
+    out: list[str] = []
+    eof_token: str | None = None
+    py_quote: str | None = None
+    ps_here_quote: str | None = None
+    in_continuation = False
+    depth = 0
+
+    for idx, raw_line in enumerate(script_text.splitlines(keepends=True), start=1):
+        line_no_nl = raw_line.rstrip("\r\n")
+        s = line_no_nl.strip()
+
+        if ps_here_quote is not None:
+            out.append(raw_line)
+            if line_no_nl.startswith(ps_here_quote):
+                ps_here_quote = None
+            continue
+
+        if eof_token is not None:
+            out.append(raw_line)
+            if s == eof_token:
+                eof_token = None
+            continue
+
+        if py_quote is not None:
+            out.append(raw_line)
+            if s == py_quote or (s.endswith(py_quote) and not s.endswith("\\" + py_quote)):
+                py_quote = None
+            continue
+
+        if in_continuation:
+            out.append(raw_line)
+            if ps_mode:
+                in_continuation = line_no_nl.rstrip().endswith("`")
+            else:
+                in_continuation = _has_trailing_continuation(line_no_nl)
+            continue
+
+        if ps_mode:
+            opens, closes, starts_closer = _pwsh_brace_delta(line_no_nl)
+        else:
+            opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
+
+        if idx in line_to_step and depth == 0 and not starts_closer:
+            step_num = line_to_step[idx]
+            indent = line_no_nl[: len(line_no_nl) - len(line_no_nl.lstrip(" \t"))]
+            if ps_mode:
+                out.append(f"{indent}Write-Output '{marker_prefix}{step_num}'\n")
+            else:
+                out.append(f"{indent}printf '%s\\n' '{marker_prefix}{step_num}'\n")
+
+        out.append(raw_line)
+
+        if not s or s.startswith("#"):
+            continue
+
+        if ps_mode:
+            if s.endswith("@'") and not s.startswith("#"):
+                ps_here_quote = "'@"
+                continue
+            if s.endswith('@"') and not s.startswith("#"):
+                ps_here_quote = '"@'
+                continue
+            if line_no_nl.rstrip().endswith("`"):
+                in_continuation = True
+                continue
+        else:
+            if _has_trailing_continuation(line_no_nl):
+                in_continuation = True
+                continue
+            m_py = PY_HEREDOC_START_RE.search(s)
+            if m_py:
+                eof_token = m_py.group(1)
+                depth = max(0, depth + opens - closes)
+                continue
+            m_pyc = PY_DASH_C_START_RE.match(s)
+            if m_pyc:
+                q_ch, rest = m_pyc.group(1), m_pyc.group(2)
+                if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
+                    py_quote = q_ch
+                    depth = max(0, depth + opens - closes)
+                    continue
+            m_sh = SHELL_HEREDOC_START_RE.search(s)
+            if m_sh:
+                eof_token = m_sh.group(1)
+                depth = max(0, depth + opens - closes)
+                continue
+
+        depth = max(0, depth + opens - closes)
+
+    return "".join(out)
+
 
 
 def scan_script_risks(script_text: str) -> list[dict[str, object]]:
@@ -978,6 +1211,7 @@ def analyze_script(
         "meta": summary.get("meta", ""),
         "rows": [list(r) for r in (summary.get("rows") or [])],
         "operations": [list(op) for op in (summary.get("operations") or [])],
+        "operation_steps": list(summary.get("operation_steps") or []),
         "operation_groups": [
             [g_dir, [list(op) for op in g_items]]
             for g_dir, g_items in (summary.get("operation_groups") or [])
