@@ -1,3 +1,15 @@
+# ✅ [DONE] F44: Connect python-stdlib and python-annotations rules in .agents_bundle — *2026-11-16, Connected stack/python-stdlib and stack/python-annotations rules in .agents_bundle*
+
+- In `.agents_bundle`, remove `py_min=3.9` from `stack/python-cli` and add
+  `rule vitalio/agents-rules:stack/python-stdlib` and
+  `rule vitalio/agents-rules:stack/python-annotations py_min=3.9`, after the
+  python-cli split is released in agents-rules and the package cache is
+  refreshed.
+- Keep `from __future__ import annotations` only in `build.py` and
+  `src/header.py`; do not add it to modules under `src/`.
+- Run `python3 -m unittest discover -s tests`; if the progress line shows
+  stderr noise, capture it with `contextlib.redirect_stderr` in `tests/`.
+
 # ✅ [DONE] B7: Capture child stderr separately to extract accurate Error lines in END box — *2026-11-16*
 
 - In `src/runner.py`, block execution currently merges child `stdout` and `stderr` into a single descriptor (`stdout=slave_fd, stderr=slave_fd` in PTY mode and `stdout=PIPE, stderr=STDOUT` in pipe mode), so `src/ui.py` (`_extract_last_error_line`) only sees the combined `step_dir / "out"` file and picks its last non-empty line when `rc != 0`.
