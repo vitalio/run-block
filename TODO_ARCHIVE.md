@@ -1,3 +1,8 @@
+# ✅ [DONE] F31: Render read operations in neutral foreground instead of dim gray in BLOCK PLAN — *2026-11-16*
+
+- Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so `[read]` operation tags, continuation lines, and `reads:` clauses render in neutral foreground color (normal white/default terminal text) instead of dim gray (`_KEY_COLOR`).
+- Add or update unit tests in `tests/test_run_block.py` verifying `[read]` ANSI styling in `BLOCK PLAN` output.
+
 # ✅ [DONE] F32: Unify Esc cancel prompts across interactive TUI boxes — *2026-11-16, Unify Esc cancel prompts across interactive TUI boxes, README, and unit tests*
 
 - Update interactive prompt suffixes in `src/ui.py` (`_build_prompt_yes_no_suffix()`, `format_safety_box()`, `confirm_execution()`) so all TUI confirmation boxes (`STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `CLEAN SESSIONS`, `BLOCK PLAN`, `END`) consistently advertise `Esc` for canceling/exiting alongside existing key bindings.

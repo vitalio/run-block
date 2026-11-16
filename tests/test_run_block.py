@@ -1468,12 +1468,24 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[2;33m╭─ \x1b[0m\x1b[1;33mBLOCK PLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertIn("\x1b[2mSandbox: off\x1b[0m", box_warn)
-                self.assertIn("\x1b[2m[read]    cat README.md\x1b[0m", box_warn)
+                self.assertIn("  [read]    cat README.md", box_warn)
+                self.assertNotIn("\x1b[2m[read]", box_warn)
                 self.assertIn("\x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
                 self.assertIn("\x1b[1;33m[write]\x1b[0m   \x1b[1;33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;36m[python]\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;33mwrites: b.txt\x1b[0m", box_warn)
-                self.assertIn("\x1b[2mreads: a.txt\x1b[0m", box_warn)
+                self.assertIn("reads: a.txt", box_warn)
+                self.assertNotIn("\x1b[2mreads:", box_warn)
+
+                # Wrapped [read] continuation lines also render in neutral foreground
+                long_read = "cat " + "/".join(["segment"] * 12) + "/file.txt\n"
+                sum_wrap = self.mod.summarize_script_actions(long_read, work_dir=Path(cwd_now))
+                box_wrap, _, _ = self.mod.format_safety_box(
+                    "s1/2b", [], default_yes=True, summary=sum_wrap
+                )
+                self.assertIn("  [read]  cat ", box_wrap)
+                self.assertNotIn("\x1b[2m[read]", box_wrap)
+                self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m-> Execute this block? [y/n/v(iew)/Esc]:\x1b[0m", box_warn)

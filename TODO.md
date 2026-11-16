@@ -24,11 +24,6 @@
 - Execute a temporary instrumented script copy in `run_script()` (`src/runner.py`) during interactive runs (with syntax validation, automatic fallback to the original script, temp-file cleanup, and opt-out via `RUN_BLOCK_PROGRESS=0` in `src/config.py`), while filtering marker lines out of `<session>/<step>/out` so saved output stays consistent with the unmodified script.
 - Document `RUN_BLOCK_PROGRESS` in `src/header.py` and `README.md`, and add end-to-end execution tests in `tests/test_run_block.py`.
 
-# ⚪ [NEW] F31: Render read operations in neutral foreground instead of dim gray in BLOCK PLAN
-
-- Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so `[read]` operation tags, continuation lines, and `reads:` clauses render in neutral foreground color (normal white/default terminal text) instead of dim gray (`_KEY_COLOR`).
-- Add or update unit tests in `tests/test_run_block.py` verifying `[read]` ANSI styling in `BLOCK PLAN` output.
-
 # ⚪ [NEW] F34: Design workspace state fingerprinting and drift detection across steps
 
 - Design candidate for `role=design` before decomposing into implementation tasks.
