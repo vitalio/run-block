@@ -752,10 +752,11 @@ _ERROR_COLOR = "\x1b[31m"
 _WARN_COLOR = "\x1b[1;31m"
 _HIGHLIGHT_COLOR = "\x1b[1;33m"
 _TAG_COLORS = {
+    "read": "\x1b[1;94m",
     "write": "\x1b[1;33m",
     "exec": "\x1b[1;35m",
     "git": "\x1b[1;36m",
-    "python": "\x1b[1;36m",
+    "python": "\x1b[1;32m",
 }
 _ANSI_RESET = "\x1b[0m"
 
@@ -855,8 +856,8 @@ def _colorize_python_op_rest(rest: str) -> str:
         kind = m.group(1)
         body = m.group(2)
         if kind == "reads:":
-            return f"{kind} {body}"
-        return f"{_HIGHLIGHT_COLOR}{kind} {body}{_ANSI_RESET}"
+            return f"{_TAG_COLORS['read']}{kind}{_ANSI_RESET} {body}"
+        return f"{_TAG_COLORS['write']}{kind} {body}{_ANSI_RESET}"
 
     return re.sub(r"\b(writes:|reads:)\s+([^;]+)", _repl, rest)
 
@@ -872,9 +873,7 @@ def _colorize_operation_lines(lines: list[str]) -> list[str]:
             indent, num_part, tag_br, tag, spaces, rest = m.groups()
             num_str = num_part or ""
             last_tag = tag
-            if tag == "read":
-                out.append(line)
-            elif tag == "write":
+            if tag == "write":
                 t_col = _TAG_COLORS["write"]
                 out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{t_col}{rest}{_ANSI_RESET}")
             elif tag == "python":

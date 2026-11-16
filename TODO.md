@@ -1,9 +1,3 @@
-# 🎯 [NEXT] F40: Assign distinct non-overlapping ANSI tag colors to all BLOCK PLAN operation types
-
-- Update `_TAG_COLORS`, `_colorize_operation_lines()`, and `_colorize_python_op_rest()` in `src/ui.py` so every operation tag in `BLOCK PLAN` uses a distinct ANSI color with zero overlap: `[read]` and `reads:` in bright blue (`\x1b[1;94m`), `[write]` and `writes:` in bold yellow (`\x1b[1;33m`), `[exec]` in bold magenta (`\x1b[1;35m`), `[git]` in bold cyan (`\x1b[1;36m`), and `[python]` in bold green (`\x1b[1;32m`).
-- Color only the `[read]` tag and `reads:` keyword while keeping read file paths in neutral terminal foreground text, matching `[exec]`, `[git]`, and `[python]`.
-- Update unit tests in `tests/test_run_block.py` and rebuild the standalone `run_block` executable via `build.py`.
-
 # 🎯 [NEXT] B6: Track multiline quoted strings in BLOCK PLAN analyzer and step instrumentation
 
 - When a shell script contains a multiline single-quoted (`'...'`) or double-quoted (`"..."`) argument (such as `todo_md edit ... -b $'...\n...'` or `todo_md add ... -b "..."`), `src/safety.py` (`summarize_script_actions` and `_instrument_bash_script`) splits on physical newlines without tracking open quote state.

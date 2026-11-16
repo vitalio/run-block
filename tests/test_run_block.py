@@ -1469,13 +1469,13 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[2;33m╭─ \x1b[0m\x1b[1;33mBLOCK PLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertIn("\x1b[2mSandbox: off\x1b[0m", box_warn)
-                self.assertIn("  1. [read]    cat README.md", box_warn)
+                self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    cat README.md", box_warn)
                 self.assertNotIn("\x1b[2m[read]", box_warn)
                 self.assertIn("2. \x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
                 self.assertIn("3. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
-                self.assertIn("4. \x1b[1;36m[python]\x1b[0m", box_warn)
+                self.assertIn("4. \x1b[1;32m[python]\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;33mwrites: b.txt\x1b[0m", box_warn)
-                self.assertIn("reads: a.txt", box_warn)
+                self.assertIn("\x1b[1;94mreads:\x1b[0m a.txt", box_warn)
                 self.assertNotIn("\x1b[2mreads:", box_warn)
 
                 # Wrapped [read] continuation lines also render in neutral foreground
@@ -1484,7 +1484,7 @@ class TestRunBlock(unittest.TestCase):
                 box_wrap, _, _ = self.mod.format_safety_box(
                     "s1/2b", [], default_yes=True, summary=sum_wrap
                 )
-                self.assertIn("  1. [read]  cat ", box_wrap)
+                self.assertIn("  1. \x1b[1;94m[read]\x1b[0m  cat ", box_wrap)
                 self.assertNotIn("\x1b[2m[read]", box_wrap)
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
@@ -1894,6 +1894,50 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31mfile not found\x1b[0m", not_run_box)
                 self.assertIn("\x1b[2mOutput: /tmp/s1/3/out\x1b[0m", not_run_box)
                 self.assertIn("\x1b[2mStats:  1 line · 20 B · ~5 tokens\x1b[0m", not_run_box)
+        finally:
+            if saved_no_color is None:
+                os.environ.pop("NO_COLOR", None)
+            else:
+                os.environ["NO_COLOR"] = saved_no_color
+
+
+    def test_f40_distinct_operation_tag_colors(self):
+        expected = {
+            "read": "\x1b[1;94m",
+            "write": "\x1b[1;33m",
+            "exec": "\x1b[1;35m",
+            "git": "\x1b[1;36m",
+            "python": "\x1b[1;32m",
+        }
+        self.assertEqual(self.mod._TAG_COLORS, expected)
+        self.assertEqual(len(set(self.mod._TAG_COLORS.values())), len(expected))
+
+        tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+        saved_no_color = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+                script = (
+                    "cat README.md\n"
+                    "touch out.txt\n"
+                    "pytest -q\n"
+                    "git status -sb\n"
+                    "python3 - <<'PY'\n"
+                    "from pathlib import Path\n"
+                    "Path('in.txt').read_text()\n"
+                    "Path('out.txt').write_text('ok')\n"
+                    "PY\n"
+                )
+                summary = self.mod.summarize_script_actions(script, work_dir=Path(os.getcwd()))
+                box, _, _ = self.mod.format_safety_box("s1/1", [], default_yes=True, summary=summary)
+                self.assertIn("1. \x1b[1;94m[read]\x1b[0m    cat README.md", box)
+                self.assertIn("2. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mtouch out.txt\x1b[0m", box)
+                self.assertIn("3. \x1b[1;35m[exec]\x1b[0m    pytest -q", box)
+                self.assertIn("4. \x1b[1;36m[git]\x1b[0m     git status -sb", box)
+                self.assertIn("5. \x1b[1;32m[python]\x1b[0m", box)
+                self.assertIn("\x1b[1;33mwrites: out.txt\x1b[0m", box)
+                self.assertIn("\x1b[1;94mreads:\x1b[0m in.txt", box)
         finally:
             if saved_no_color is None:
                 os.environ.pop("NO_COLOR", None)
