@@ -1,3 +1,9 @@
+# ✅ [DONE] F39: Omit redundant Esc label in yes/no confirmation prompt suffixes — *2026-11-16*
+
+- Remove `/Esc` from `_safety_prompt_suffix()` (`[Y/n/v(iew)]:` / `[y/n/v(iew)]:`) and `_build_prompt_yes_no_suffix()` (`[y/N]:`, `[y/N/s(cript)]:`, etc.) in `src/ui.py` where `n` already represents declining/canceling.
+- Keep `/Esc` in `_clipboard_prompt_line()` (`[Enter/e(dit)/Esc]:` and `[Enter/v(iew)/Esc]:`) where no `n` option is shown, and preserve `Esc` (`\x1b`) key handling across all interactive TUI prompts.
+- Update `README.md`, `tests/test_run_block.py`, and rebuild the standalone `run_block` executable via `build.py`.
+
 # ✅ [DONE] F30: Display plan step numbers in BLOCK PLAN and live progress markers during execution — *2026-11-16, Numbered BLOCK PLAN operations and added live progress markers during interactive execution*
 
 - Depends on: F29

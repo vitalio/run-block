@@ -199,7 +199,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/v(iew)/Esc]:" if default_yes else "[y/n/v(iew)/Esc]:"
+    return "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
 
 
 def format_safety_box(
@@ -322,7 +322,6 @@ def _build_prompt_yes_no_suffix(
         parts.append("o(utput)")
     if can_copy:
         parts.append("c(opy)")
-    parts.append("Esc")
     return f"[{'/'.join(parts)}]:"
 
 
