@@ -90,3 +90,14 @@
   `src/header.py`; do not add it to modules under `src/`.
 - Run `python3 -m unittest discover -s tests`; if the progress line shows
   stderr noise, capture it with `contextlib.redirect_stderr` in `tests/`.
+
+# ⚪ [NEW] F45: Prefer Workdir from the piped bundle header over the current directory
+
+- First add a test in `tests/test_run_block.py` showing whether
+  `format_start_bundle` in `src/bundle.py` currently ignores a `Workdir`
+  header from `stdin_headers`; it takes the directory from `get_work_dir()`.
+- If ignored, use the `Workdir` value from the stdin preamble (when the
+  directory exists) as `wdir` and write it into `<session>/0`, before the
+  `RUN_BLOCK_CWD` auto resolution in `src/config.py`.
+- Keep `src/header.py`, `README.md`, and the bundled rules in
+  `src/rules/blocks/` in sync.
