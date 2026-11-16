@@ -192,9 +192,85 @@ HIDDEN_SESSION_HEADER_KEYS = frozenset({
     "work-dir",
     "sandbox",
     "date",
-    "bundle-command",
-    "chat-lang",
 })
+
+
+def parse_stdin_preamble(stdin_text: str) -> tuple[list[tuple[str, str]], str]:
+    """Splits optional leading 'Key: Value' header lines (separated by a blank line) from body."""
+    if not stdin_text:
+        return [], ""
+    lines = stdin_text.replace("\r\n", "\n").splitlines()
+    items: list[tuple[str, str]] = []
+    index_by_norm: dict[str, int] = {}
+    sep_idx: int | None = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            if items:
+                sep_idx = idx
+            break
+        m = BUNDLE_HEADER_RE.match(stripped)
+        if not m:
+            return [], stdin_text.strip()
+        raw_key = re.sub(r"\s+", "-", m.group(1).strip())
+        norm_key = raw_key.lower()
+        val = m.group(2).strip()
+        if norm_key in index_by_norm:
+            items[index_by_norm[norm_key]] = (raw_key, val)
+        else:
+            index_by_norm[norm_key] = len(items)
+            items.append((raw_key, val))
+    else:
+        return items, ""
+    if sep_idx is None:
+        return [], stdin_text.strip()
+    body = "\n".join(lines[sep_idx + 1 :]).strip()
+    return items, body
+
+
+def read_session_meta(session_dir: Path | None) -> dict[str, object]:
+    if session_dir is None:
+        return {}
+    meta_file = session_dir / "meta.json"
+    if not meta_file.is_file():
+        return {}
+    try:
+        data = json.loads(meta_file.read_text(encoding="utf-8", errors="replace"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_session_meta(session_dir: Path, headers: list[tuple[str, str]]) -> Path | None:
+    meta_file = session_dir / "meta.json"
+    if not headers:
+        meta_file.unlink(missing_ok=True)
+        return None
+    payload = json.dumps({"headers": [[k, v] for k, v in headers]}, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(payload)
+    return meta_file
+
+
+def _parse_meta_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
+    meta = read_session_meta(session_dir)
+    raw_headers = meta.get("headers")
+    items: list[tuple[str, str]] = []
+    if isinstance(raw_headers, list):
+        for entry in raw_headers:
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                k = re.sub(r"\s+", "-", str(entry[0]).strip())
+                v = str(entry[1]).strip()
+                if k:
+                    items.append((k, v))
+    elif isinstance(raw_headers, dict):
+        for k_raw, v_raw in raw_headers.items():
+            k = re.sub(r"\s+", "-", str(k_raw).strip())
+            v = str(v_raw).strip()
+            if k:
+                items.append((k, v))
+    return items
 
 
 def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
@@ -203,29 +279,36 @@ def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]
     if session_dir is None:
         return items
     bundle_file = session_dir / "0"
-    if not bundle_file.is_file():
-        return items
-    try:
-        with bundle_file.open(encoding="utf-8", errors="replace") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith("====="):
-                    break
-                m = BUNDLE_HEADER_RE.match(stripped)
-                if not m:
-                    break
-                raw_key = re.sub(r"\s+", "-", m.group(1).strip())
-                norm_key = raw_key.lower()
-                val = m.group(2).strip()
-                if norm_key in index_by_norm:
-                    items[index_by_norm[norm_key]] = (raw_key, val)
-                else:
-                    index_by_norm[norm_key] = len(items)
-                    items.append((raw_key, val))
-    except OSError:
-        pass
+    if bundle_file.is_file():
+        try:
+            with bundle_file.open(encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    if stripped.startswith("====="):
+                        break
+                    m = BUNDLE_HEADER_RE.match(stripped)
+                    if not m:
+                        break
+                    raw_key = re.sub(r"\s+", "-", m.group(1).strip())
+                    norm_key = raw_key.lower()
+                    val = m.group(2).strip()
+                    if norm_key in index_by_norm:
+                        items[index_by_norm[norm_key]] = (raw_key, val)
+                    else:
+                        index_by_norm[norm_key] = len(items)
+                        items.append((raw_key, val))
+        except OSError:
+            pass
+    for raw_key, val in _parse_meta_header_items(session_dir):
+        norm_key = raw_key.lower()
+        if norm_key in index_by_norm:
+            if norm_key not in HIDDEN_SESSION_HEADER_KEYS:
+                items[index_by_norm[norm_key]] = (raw_key, val)
+        else:
+            index_by_norm[norm_key] = len(items)
+            items.append((raw_key, val))
     return items
 
 

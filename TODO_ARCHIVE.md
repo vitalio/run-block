@@ -1,3 +1,10 @@
+# ✅ [DONE] F28: Parse stdin header preamble into session metadata and exclude from session 0 bundle — *2026-11-16*
+
+- Parse optional leading `Key: Value` header lines (separated from body by a blank line) from `stdin` during `format_start_bundle()` and `cmd_start()` in `src/bundle.py` and `src/config.py`.
+- Persist parsed `stdin` headers in session metadata (`<session>/meta.json`) instead of writing them into `<session>/0`, keeping `<session>/0` limited to `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`, `Date`) and the prompt body.
+- Read session display headers in `src/ui.py` (`format_session_header_lines`) and `src/runner.py` from session metadata (with fallback to `<session>/0` for existing sessions) and remove `agents_bundle`-specific keys (`bundle-command`, `chat-lang`) from `HIDDEN_SESSION_HEADER_KEYS`.
+- Document the `stdin` header/body separation contract in `README.md` (user-facing) and `AGENTS.md` (architectural invariant), and cover with unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F27: Improve BLOCK PLAN and TUI block visual hierarchy and colors — *2026-11-16, Removed brackets around block titles, matched dim border colors to titles, and added BLOCK PLAN color hierarchy for Workdir, Sandbox, Operations, and Safety warnings.*
 
 - Update `src/ui.py` to remove `[...]` brackets around block titles in `_format_top_rule` (e.g. `╭─ BLOCK PLAN ───`).

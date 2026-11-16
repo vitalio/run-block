@@ -51,7 +51,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.20.8"
+VERSION = "0.20.9"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -250,9 +250,85 @@ HIDDEN_SESSION_HEADER_KEYS = frozenset({
     "work-dir",
     "sandbox",
     "date",
-    "bundle-command",
-    "chat-lang",
 })
+
+
+def parse_stdin_preamble(stdin_text: str) -> tuple[list[tuple[str, str]], str]:
+    """Splits optional leading 'Key: Value' header lines (separated by a blank line) from body."""
+    if not stdin_text:
+        return [], ""
+    lines = stdin_text.replace("\r\n", "\n").splitlines()
+    items: list[tuple[str, str]] = []
+    index_by_norm: dict[str, int] = {}
+    sep_idx: int | None = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            if items:
+                sep_idx = idx
+            break
+        m = BUNDLE_HEADER_RE.match(stripped)
+        if not m:
+            return [], stdin_text.strip()
+        raw_key = re.sub(r"\s+", "-", m.group(1).strip())
+        norm_key = raw_key.lower()
+        val = m.group(2).strip()
+        if norm_key in index_by_norm:
+            items[index_by_norm[norm_key]] = (raw_key, val)
+        else:
+            index_by_norm[norm_key] = len(items)
+            items.append((raw_key, val))
+    else:
+        return items, ""
+    if sep_idx is None:
+        return [], stdin_text.strip()
+    body = "\n".join(lines[sep_idx + 1 :]).strip()
+    return items, body
+
+
+def read_session_meta(session_dir: Path | None) -> dict[str, object]:
+    if session_dir is None:
+        return {}
+    meta_file = session_dir / "meta.json"
+    if not meta_file.is_file():
+        return {}
+    try:
+        data = json.loads(meta_file.read_text(encoding="utf-8", errors="replace"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_session_meta(session_dir: Path, headers: list[tuple[str, str]]) -> Path | None:
+    meta_file = session_dir / "meta.json"
+    if not headers:
+        meta_file.unlink(missing_ok=True)
+        return None
+    payload = json.dumps({"headers": [[k, v] for k, v in headers]}, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(payload)
+    return meta_file
+
+
+def _parse_meta_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
+    meta = read_session_meta(session_dir)
+    raw_headers = meta.get("headers")
+    items: list[tuple[str, str]] = []
+    if isinstance(raw_headers, list):
+        for entry in raw_headers:
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                k = re.sub(r"\s+", "-", str(entry[0]).strip())
+                v = str(entry[1]).strip()
+                if k:
+                    items.append((k, v))
+    elif isinstance(raw_headers, dict):
+        for k_raw, v_raw in raw_headers.items():
+            k = re.sub(r"\s+", "-", str(k_raw).strip())
+            v = str(v_raw).strip()
+            if k:
+                items.append((k, v))
+    return items
 
 
 def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
@@ -261,29 +337,36 @@ def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]
     if session_dir is None:
         return items
     bundle_file = session_dir / "0"
-    if not bundle_file.is_file():
-        return items
-    try:
-        with bundle_file.open(encoding="utf-8", errors="replace") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                if stripped.startswith("====="):
-                    break
-                m = BUNDLE_HEADER_RE.match(stripped)
-                if not m:
-                    break
-                raw_key = re.sub(r"\s+", "-", m.group(1).strip())
-                norm_key = raw_key.lower()
-                val = m.group(2).strip()
-                if norm_key in index_by_norm:
-                    items[index_by_norm[norm_key]] = (raw_key, val)
-                else:
-                    index_by_norm[norm_key] = len(items)
-                    items.append((raw_key, val))
-    except OSError:
-        pass
+    if bundle_file.is_file():
+        try:
+            with bundle_file.open(encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    if stripped.startswith("====="):
+                        break
+                    m = BUNDLE_HEADER_RE.match(stripped)
+                    if not m:
+                        break
+                    raw_key = re.sub(r"\s+", "-", m.group(1).strip())
+                    norm_key = raw_key.lower()
+                    val = m.group(2).strip()
+                    if norm_key in index_by_norm:
+                        items[index_by_norm[norm_key]] = (raw_key, val)
+                    else:
+                        index_by_norm[norm_key] = len(items)
+                        items.append((raw_key, val))
+        except OSError:
+            pass
+    for raw_key, val in _parse_meta_header_items(session_dir):
+        norm_key = raw_key.lower()
+        if norm_key in index_by_norm:
+            if norm_key not in HIDDEN_SESSION_HEADER_KEYS:
+                items[index_by_norm[norm_key]] = (raw_key, val)
+        else:
+            index_by_norm[norm_key] = len(items)
+            items.append((raw_key, val))
     return items
 
 
@@ -1658,7 +1741,7 @@ def _wrap_labeled_items(items: list[tuple[str, str]], max_width: int, indent: st
 def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None) -> Path | None:
     if path_hint is not None:
         for anc in (path_hint.parent, path_hint.parent.parent):
-            if (anc / "0").is_file():
+            if (anc / "0").is_file() or (anc / "meta.json").is_file():
                 return anc
     if label:
         sess = label.split("/", 1)[0].strip()
@@ -3979,7 +4062,7 @@ def format_start_bundle(
     sb_hdr = format_sandbox_header(sb_mode)
     dt_utc = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
     ts = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
-    clean_body = stdin_body.strip()
+    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
     bundle_header_lines = [
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",
@@ -4002,6 +4085,7 @@ def format_start_bundle(
     return {
         "console_lines": console_lines,
         "full": full_text,
+        "stdin_headers": stdin_headers,
         "total_lines": total_lines,
         "total_tokens": total_tokens,
         "sandbox": sb_mode,
@@ -4092,6 +4176,8 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     bundle_path = sdir / "0"
     res = format_start_bundle(session_name=session_name, stdin_body=stdin_text, sandbox_mode=sb_arg)
     write_private(bundle_path, str(res["full"]), overwrite=True)
+    stdin_headers = list(res.get("stdin_headers") or [])
+    write_session_meta(sdir, stdin_headers)
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
     if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:

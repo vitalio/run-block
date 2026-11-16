@@ -21,7 +21,7 @@ def format_start_bundle(
     sb_hdr = format_sandbox_header(sb_mode)
     dt_utc = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
     ts = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
-    clean_body = stdin_body.strip()
+    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
     bundle_header_lines = [
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",
@@ -44,6 +44,7 @@ def format_start_bundle(
     return {
         "console_lines": console_lines,
         "full": full_text,
+        "stdin_headers": stdin_headers,
         "total_lines": total_lines,
         "total_tokens": total_tokens,
         "sandbox": sb_mode,
@@ -134,6 +135,8 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     bundle_path = sdir / "0"
     res = format_start_bundle(session_name=session_name, stdin_body=stdin_text, sandbox_mode=sb_arg)
     write_private(bundle_path, str(res["full"]), overwrite=True)
+    stdin_headers = list(res.get("stdin_headers") or [])
+    write_session_meta(sdir, stdin_headers)
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
     if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:

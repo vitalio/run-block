@@ -23,6 +23,10 @@ rules are loaded via `.agents_bundle`.
   `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
   headless mode.
 - `src/bundle.py` — session initialization from `stdin`
-  (`<command> | run_block` -> `<session>/0.txt`).
+  (`<command> | run_block` -> `<session>/0` and `<session>/meta.json`). Parses
+  optional leading `Key: Value` header lines (separated from the body by a
+  blank line) into `<session>/meta.json`, keeping `<session>/0` limited to
+  `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
+  `Date`) and the prompt body.
 - `src/cli.py` — CLI argument routing and self-update (`--update`,
   `--check-update`).

@@ -26,7 +26,11 @@ irm https://raw.githubusercontent.com/vitalio/run_block/main/install.ps1 | iex
 ## Starting a Session
 
 Pipe any context bundle on `stdin` into `run_block` to initialize
-`~/.local/state/run_block/<session>/0` and copy it to your clipboard:
+`~/.local/state/run_block/<session>/0` and copy it to your clipboard.
+Optional leading `Key: Value` header lines on `stdin` (separated from the
+body by a blank line) are parsed into `<session>/meta.json` and displayed in
+TUI headers, while `<session>/0` stores only `run_block`'s own headers
+(`Session`, `Next-Block`, `Workdir`, `Sandbox`, `Date`) and the prompt body:
 
 ```bash
 cat context.txt | run_block

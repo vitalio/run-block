@@ -394,16 +394,30 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
         self.assertIn("╭─ START BUNDLE ", r_pipe.stdout)
-        self.assertIn("Session:    s1", r_pipe.stdout)
-        self.assertIn("Next-Block: s1/1", r_pipe.stdout)
-        self.assertIn("Sandbox:    off", r_pipe.stdout)
-        self.assertIn("Role:       execute", r_pipe.stdout)
-        self.assertIn("Task:       F14", r_pipe.stdout)
+        self.assertIn("Session:        s1", r_pipe.stdout)
+        self.assertIn("Next-Block:     s1/1", r_pipe.stdout)
+        self.assertIn("Sandbox:        off", r_pipe.stdout)
+        self.assertIn("Bundle-Command: agents_bundle role=execute task=F14", r_pipe.stdout)
+        self.assertIn("Chat-Lang:      Russian", r_pipe.stdout)
+        self.assertIn("Role:           execute", r_pipe.stdout)
+        self.assertIn("Task:           F14", r_pipe.stdout)
         self.assertNotIn("Date:", r_pipe.stdout)
-        self.assertNotIn("Bundle-Command:", r_pipe.stdout)
-        self.assertNotIn("Chat-Lang:", r_pipe.stdout)
         bundle1 = (self.tmp / "sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
+        self.assertNotIn("Bundle-Command:", bundle1)
+        self.assertNotIn("Chat-Lang:", bundle1)
+        self.assertNotIn("Role:", bundle1)
+        self.assertNotIn("Task:", bundle1)
+        meta1 = self.mod.read_session_meta(self.tmp / "sessions/s1")
+        self.assertEqual(
+            meta1.get("headers"),
+            [
+                ["Bundle-Command", "agents_bundle role=execute task=F14"],
+                ["Chat-Lang", "Russian"],
+                ["Role", "execute"],
+                ["Task", "F14"],
+            ],
+        )
         self.assertRegex(bundle1, r"(?m)^Date: \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$")
         from datetime import datetime, timedelta, timezone
         sample_now = datetime(2026, 11, 16, 1, 13, tzinfo=timezone(timedelta(hours=3)))
@@ -427,9 +441,11 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_step1.returncode, 0, r_step1.stderr)
         self.assertIn("╭─ END ", r_step1.stdout)
-        self.assertIn("Block:   s1/1", r_step1.stdout)
-        self.assertIn("Role:    execute", r_step1.stdout)
-        self.assertIn("Task:    F14", r_step1.stdout)
+        self.assertIn("Block:          s1/1", r_step1.stdout)
+        self.assertIn("Bundle-Command: agents_bundle role=execute task=F14", r_step1.stdout)
+        self.assertIn("Chat-Lang:      Russian", r_step1.stdout)
+        self.assertIn("Role:           execute", r_step1.stdout)
+        self.assertIn("Task:           F14", r_step1.stdout)
         self.assertIn("ran_s1_step1", r_step1.stdout)
 
         r_start = subprocess.run(
@@ -443,7 +459,7 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         self.assertIn("╭─ START BUNDLE ", r_start.stdout)
-        self.assertIn("Session:    s2", r_start.stdout)
+        self.assertIn("Session:        s2", r_start.stdout)
 
         r_show0 = subprocess.run(
             [str(SCRIPT), "--show", "s2/0"],
@@ -1455,6 +1471,62 @@ class TestRunBlock(unittest.TestCase):
                 os.environ.pop("NO_COLOR", None)
             else:
                 os.environ["NO_COLOR"] = saved_no_color
+
+    def test_f28_stdin_preamble_metadata_and_legacy_fallback(self):
+        self.assertNotIn("bundle-command", self.mod.HIDDEN_SESSION_HEADER_KEYS)
+        self.assertNotIn("chat-lang", self.mod.HIDDEN_SESSION_HEADER_KEYS)
+
+        hdrs, body = self.mod.parse_stdin_preamble(
+            "Role: plan\nTask: F28\n\n===== Prompt =====\nDo work\n"
+        )
+        self.assertEqual(hdrs, [("Role", "plan"), ("Task", "F28")])
+        self.assertEqual(body, "===== Prompt =====\nDo work")
+
+        hdrs_only, body_only = self.mod.parse_stdin_preamble("Role: execute\n")
+        self.assertEqual(hdrs_only, [("Role", "execute")])
+        self.assertEqual(body_only, "")
+
+        no_hdrs, plain_body = self.mod.parse_stdin_preamble("Plain text\n\nMore text\n")
+        self.assertEqual(no_hdrs, [])
+        self.assertEqual(plain_body, "Plain text\n\nMore text")
+
+        bad_preamble, bad_body = self.mod.parse_stdin_preamble(
+            "Summary: first\nnot a header line\n\nBody\n"
+        )
+        self.assertEqual(bad_preamble, [])
+        self.assertEqual(bad_body, "Summary: first\nnot a header line\n\nBody")
+
+        # Stdin Workdir/Sandbox headers in preamble must not override run_block's own 0 headers
+        proj = self.tmp / "f28_proj"
+        proj.mkdir()
+        env = {**os.environ, "RUN_BLOCK_DIR": str(self.tmp / "f28_sessions"), "RUN_BLOCK_CWD": str(proj)}
+        r = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s1"],
+            input="Workdir: /nonexistent/evil\nSandbox: strict\nRole: execute\n\nBody text\n",
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        s1_dir = self.tmp / "f28_sessions/s1"
+        parsed = self.mod.parse_bundle_headers(s1_dir)
+        self.assertEqual(Path(parsed["workdir"]).resolve(), proj.resolve())
+        self.assertEqual(parsed["sandbox"], "off")
+        self.assertEqual(parsed["role"], "execute")
+
+        # Legacy session fallback: headers in <session>/0 without meta.json still display
+        legacy_dir = self.tmp / "f28_sessions/s9"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "0").write_text(
+            f"Session: s9\nNext-Block: s9/1\nWorkdir: {proj}\nSandbox: off\n"
+            "Date: 2026-11-16 09:00 UTC\nRole: audit\n\nLegacy body\n",
+            encoding="utf-8",
+        )
+        legacy_lines = self.mod.format_session_header_lines(label="s9/1", sdir=legacy_dir)
+        self.assertTrue(any("Role:" in ln and "audit" in ln for ln in legacy_lines))
+
 
 if __name__ == "__main__":
     unittest.main()

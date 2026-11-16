@@ -75,7 +75,7 @@ def _wrap_labeled_items(items: list[tuple[str, str]], max_width: int, indent: st
 def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None) -> Path | None:
     if path_hint is not None:
         for anc in (path_hint.parent, path_hint.parent.parent):
-            if (anc / "0").is_file():
+            if (anc / "0").is_file() or (anc / "meta.json").is_file():
                 return anc
     if label:
         sess = label.split("/", 1)[0].strip()
