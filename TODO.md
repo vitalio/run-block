@@ -1,3 +1,16 @@
+# 🔵 [WIP] F30: Display plan step numbers in BLOCK PLAN and live progress markers during execution
+
+- Depends on: F29
+- Number top-level operations in `format_safety_box()` (`src/ui.py`) so `BLOCK PLAN` items match live execution step numbers.
+- Execute a temporary instrumented script copy in `run_script()` (`src/runner.py`) during interactive runs (with syntax validation, automatic fallback to the original script, temp-file cleanup, and opt-out via `RUN_BLOCK_PROGRESS=0` in `src/config.py`), while filtering marker lines out of `<session>/<step>/out` so saved output stays consistent with the unmodified script.
+- Document `RUN_BLOCK_PROGRESS` in `src/header.py` and `README.md`, and add end-to-end execution tests in `tests/test_run_block.py`.
+
+# 🎯 [NEXT] F39: Omit redundant Esc label in yes/no confirmation prompt suffixes
+
+- Remove `/Esc` from `_safety_prompt_suffix()` (`[Y/n/v(iew)]:` / `[y/n/v(iew)]:`) and `_build_prompt_yes_no_suffix()` (`[y/N]:`, `[y/N/s(cript)]:`, etc.) in `src/ui.py` where `n` already represents declining/canceling.
+- Keep `/Esc` in `_clipboard_prompt_line()` (`[Enter/e(dit)/Esc]:` and `[Enter/v(iew)/Esc]:`) where no `n` option is shown, and preserve `Esc` (`\x1b`) key handling across all interactive TUI prompts.
+- Update `README.md`, `tests/test_run_block.py`, and rebuild the standalone `run_block` executable via `build.py`.
+
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: vitalio/agents_bundle#F7
@@ -16,13 +29,6 @@
 - Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers from `0.txt`, storage path, total size, and full block list with statuses and action summaries.
 - Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
 - Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_run_block.py`.
-
-# ⚪ [NEW] F30: Display plan step numbers in BLOCK PLAN and live progress markers during execution
-
-- Depends on: F29
-- Number top-level operations in `format_safety_box()` (`src/ui.py`) so `BLOCK PLAN` items match live execution step numbers.
-- Execute a temporary instrumented script copy in `run_script()` (`src/runner.py`) during interactive runs (with syntax validation, automatic fallback to the original script, temp-file cleanup, and opt-out via `RUN_BLOCK_PROGRESS=0` in `src/config.py`), while filtering marker lines out of `<session>/<step>/out` so saved output stays consistent with the unmodified script.
-- Document `RUN_BLOCK_PROGRESS` in `src/header.py` and `README.md`, and add end-to-end execution tests in `tests/test_run_block.py`.
 
 # ⚪ [NEW] F34: Design workspace state fingerprinting and drift detection across steps
 
