@@ -4,6 +4,17 @@
 - Simplify interactive prompt redraws in `prompt_yes_no_box`, `confirm_execution`, and `offer_clipboard_copy` in `src/ui.py` to update the prompt line in place without redrawing a bottom separator line.
 - Update `AGENTS.md` and TUI formatting assertions in `tests/test_run_block.py` to match the plain `[<TITLE>]` section format.
 
+# 🎯 [NEXT] F45: Prefer Workdir from the piped bundle header over the current directory
+
+- First add a test in `tests/test_run_block.py` showing whether
+  `format_start_bundle` in `src/bundle.py` currently ignores a `Workdir`
+  header from `stdin_headers`; it takes the directory from `get_work_dir()`.
+- If ignored, use the `Workdir` value from the stdin preamble (when the
+  directory exists) as `wdir` and write it into `<session>/0`, before the
+  `RUN_BLOCK_CWD` auto resolution in `src/config.py`.
+- Keep `src/header.py`, `README.md`, and the bundled rules in
+  `src/rules/blocks/` in sync.
+
 # 🎯 [NEXT] F43: Brighten Error line, title and border colors, and keep confirmation prompt distinct from Safety warnings
 
 - In `src/ui.py`, `_ERROR_COLOR` uses non-bold `\x1b[31m`, so `Error:` values in `END` and `SYNTAX ERROR` boxes look dim on dark terminal themes compared to bold tags and headers.
@@ -78,14 +89,3 @@
 - Impact on the model: a traceback or diagnostic may be separated from the command that produced it, and `__RB_STEP__` progress markers (stdout) may drift relative to stderr lines of the same step, which can mislead error attribution in long blocks with interleaved output.
 - Reproduce first with a unit test that interleaves `echo` and `echo >&2` in a loop and compares the order in `out` with the write order; then pick an approach (for example keep one shared descriptor for `out` and obtain `err` separately, such as a per-command stderr tee in the instrumented script, or accept and document the ordering limits).
 - After the approach is decided, document the `err` file and the ordering guarantees in `README.md` (step directory contents: `out`, `err`, `error`, `aborted`) and keep `AGENTS.md` in sync in the same commit.
-
-# ⚪ [NEW] F45: Prefer Workdir from the piped bundle header over the current directory
-
-- First add a test in `tests/test_run_block.py` showing whether
-  `format_start_bundle` in `src/bundle.py` currently ignores a `Workdir`
-  header from `stdin_headers`; it takes the directory from `get_work_dir()`.
-- If ignored, use the `Workdir` value from the stdin preamble (when the
-  directory exists) as `wdir` and write it into `<session>/0`, before the
-  `RUN_BLOCK_CWD` auto resolution in `src/config.py`.
-- Keep `src/header.py`, `README.md`, and the bundled rules in
-  `src/rules/blocks/` in sync.
