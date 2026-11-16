@@ -15,6 +15,9 @@
   {prog} --check-update              Check if a newer version is available
   {prog} -V | --version              Print version and exit 0
   {prog} -h | --help                 Print this usage and exit 0
+
+Environment:
+  RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
 """
 from __future__ import annotations
 
@@ -51,7 +54,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.20.13"
+VERSION = "0.21.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -97,6 +100,11 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
     if key == "token_stats":
         if os.environ.get("RUN_BLOCK_TOKEN_STATS"):
             v = os.environ["RUN_BLOCK_TOKEN_STATS"].strip().lower()
+            return ("false" if v in ("0", "false", "no", "off") else "true"), "env"
+        return "true", "default"
+    if key == "progress":
+        if os.environ.get("RUN_BLOCK_PROGRESS"):
+            v = os.environ["RUN_BLOCK_PROGRESS"].strip().lower()
             return ("false" if v in ("0", "false", "no", "off") else "true"), "env"
         return "true", "default"
     if key == "shell":
@@ -1961,14 +1969,59 @@ def read_clipboard_key(tty_r) -> str:
             pass
 
 
-def _wrap_labeled_items(items: list[tuple[str, str]], max_width: int, indent: str = "  ") -> list[str]:
+def _match_operation_step_numbers(
+    items: list[tuple[str, str]],
+    operation_steps: list[dict[str, object]],
+    *,
+    group_dir: str | None = None,
+    step_cursor: int = 0,
+) -> tuple[list[int | None], int]:
+    if not operation_steps:
+        return [None] * len(items), step_cursor
+    result: list[int | None] = []
+    idx = step_cursor
+    n_steps = len(operation_steps)
+    for tag, desc in items:
+        if idx < n_steps:
+            st = operation_steps[idx]
+            st_tag = str(st.get("tag") or "")
+            st_dir = str(st.get("dir") or "")
+            st_desc = str(st.get("desc") or "")
+            if group_dir is not None:
+                matches = st_tag == tag and st_dir == group_dir
+            else:
+                matches = st_tag == tag and st_desc == desc
+            if matches:
+                result.append(int(st.get("step") or (idx + 1)))
+                idx += 1
+                continue
+        result.append(None)
+    return result, idx
+
+
+def _wrap_labeled_items(
+    items: list[tuple[str, str]],
+    max_width: int,
+    indent: str = "  ",
+    step_nums: list[int | None] | None = None,
+    num_width: int | None = None,
+) -> list[str]:
     if not items:
         return []
     tag_w = max(len(f"[{k}]") for k, _ in items)
+    nums = step_nums if step_nums is not None else [None] * len(items)
+    has_nums = num_width is not None or any(n is not None for n in nums)
+    if has_nums:
+        nw = num_width if num_width is not None else max(len(f"{n}.") for n in nums if n is not None)
+    else:
+        nw = 0
     out: list[str] = []
-    for k, v in items:
+    for (k, v), num in zip(items, nums):
+        num_prefix = ""
+        if has_nums:
+            num_prefix = (f"{num}.".rjust(nw) + " ") if num is not None else (" " * (nw + 1))
         tag = f"[{k}]".ljust(tag_w)
-        prefix = f"{indent}{tag}  "
+        prefix = f"{indent}{num_prefix}{tag}  "
         sub_indent = " " * len(prefix)
         avail = max(24, max_width - len(prefix))
         wrapped = textwrap.wrap(v, width=avail, break_long_words=True, break_on_hyphens=False) or [v]
@@ -2090,19 +2143,35 @@ def format_safety_box(
             detail_lines.append(f"Script: {meta_str}")
         ops = list(summary.get("operations") or [])
         op_groups = list(summary.get("operation_groups") or [])
+        op_steps = list(summary.get("operation_steps") or [])
         has_subdirs = any(bool(g_dir) for g_dir, _ in op_groups)
+        max_step_num = max((int(s.get("step") or 0) for s in op_steps), default=0)
+        step_num_w = len(f"{max_step_num}.") if max_step_num > 0 else None
         if ops:
             if detail_lines:
                 detail_lines.append("")
             detail_lines.append(f"{_KEY_COLOR}Operations:{_ANSI_RESET}" if _use_color() else "Operations:")
             op_lines: list[str] = []
             if has_subdirs and op_groups:
+                step_cursor = 0
                 for g_dir, g_items in op_groups:
                     dir_hdr = g_dir if g_dir else (wdir or ".")
                     op_lines.append(f"  {dir_hdr}:")
-                    op_lines.extend(_wrap_labeled_items(g_items, max_row_len, indent="    "))
+                    g_nums, step_cursor = _match_operation_step_numbers(
+                        g_items, op_steps, group_dir=g_dir, step_cursor=step_cursor
+                    )
+                    op_lines.extend(
+                        _wrap_labeled_items(
+                            g_items, max_row_len, indent="    ", step_nums=g_nums, num_width=step_num_w
+                        )
+                    )
             else:
-                op_lines.extend(_wrap_labeled_items(ops, max_row_len, indent="  "))
+                op_nums, _ = _match_operation_step_numbers(ops, op_steps)
+                op_lines.extend(
+                    _wrap_labeled_items(
+                        ops, max_row_len, indent="  ", step_nums=op_nums, num_width=step_num_w
+                    )
+                )
             detail_lines.extend(_colorize_operation_lines(op_lines))
         if detail_lines:
             if content_lines:
@@ -2700,21 +2769,22 @@ def _colorize_operation_lines(lines: list[str]) -> list[str]:
     out: list[str] = []
     last_tag = ""
     for line in lines:
-        m = re.match(r"^(\s*)(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
+        m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
         if m:
-            indent, tag_br, tag, spaces, rest = m.groups()
+            indent, num_part, tag_br, tag, spaces, rest = m.groups()
+            num_str = num_part or ""
             last_tag = tag
             if tag == "read":
                 out.append(line)
             elif tag == "write":
                 t_col = _TAG_COLORS["write"]
-                out.append(f"{indent}{t_col}{tag_br}{_ANSI_RESET}{spaces}{t_col}{rest}{_ANSI_RESET}")
+                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{t_col}{rest}{_ANSI_RESET}")
             elif tag == "python":
                 t_col = _TAG_COLORS["python"]
-                out.append(f"{indent}{t_col}{tag_br}{_ANSI_RESET}{spaces}{_colorize_python_op_rest(rest)}")
+                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{_colorize_python_op_rest(rest)}")
             elif tag in _TAG_COLORS:
                 t_col = _TAG_COLORS[tag]
-                out.append(f"{indent}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
             else:
                 out.append(line)
         elif line.startswith("  ") and not line.lstrip().startswith("[") and not line.rstrip().endswith(":"):
@@ -3362,6 +3432,120 @@ def not_run_exit(
     return rc
 
 
+class _ProgressLineFilter:
+    def __init__(
+        self,
+        step_map: dict[int, dict[str, object]],
+        total_steps: int,
+        marker_prefix: str = "__RB_STEP__:",
+    ) -> None:
+        self.step_map = step_map
+        self.total_steps = total_steps
+        self.marker_prefix = marker_prefix
+        self.buf = ""
+        self._marker_re = re.compile(rf"^{re.escape(marker_prefix)}(\d+)\r?$")
+
+    def _format_step_banner(self, step_num: int) -> str:
+        info = self.step_map.get(step_num)
+        if not info:
+            return ""
+        tag = str(info.get("tag") or "")
+        desc = str(info.get("desc") or "").replace("\n", " ").strip()
+        prefix = f"[{step_num}/{self.total_steps}]"
+        if tag:
+            prefix = f"{prefix} [{tag}]"
+        max_cols = max(40, _hr_width() - 4)
+        avail = max(16, max_cols - len(prefix) - 1)
+        if len(desc) > avail:
+            desc = desc[: avail - 3] + "..."
+        line = f"{prefix} {desc}".rstrip()
+        arrow = "▸" if _supports_utf8() else ">"
+        if _use_color():
+            return f"\x1b[2;36m{arrow} {line}\x1b[0m\n"
+        return f"{arrow} {line}\n"
+
+    def feed(self, text: str) -> tuple[str, str]:
+        self.buf += text
+        out_parts: list[str] = []
+        prog_parts: list[str] = []
+        while "\n" in self.buf:
+            line, rest = self.buf.split("\n", 1)
+            self.buf = rest
+            m = self._marker_re.match(line)
+            if m:
+                banner = self._format_step_banner(int(m.group(1)))
+                if banner:
+                    prog_parts.append(banner)
+            else:
+                out_parts.append(line + "\n")
+        if self.buf:
+            if not (
+                self.marker_prefix.startswith(self.buf)
+                or self.buf.startswith(self.marker_prefix)
+            ):
+                out_parts.append(self.buf)
+                self.buf = ""
+        return "".join(out_parts), "".join(prog_parts)
+
+    def flush(self) -> tuple[str, str]:
+        if not self.buf:
+            return "", ""
+        rem = self.buf
+        self.buf = ""
+        m = self._marker_re.match(rem)
+        if m:
+            banner = self._format_step_banner(int(m.group(1)))
+            return "", banner
+        return rem, ""
+
+
+def _prepare_progress_script(
+    script_text: str,
+    step_dir: Path,
+    step_lines: list[dict[str, object]],
+    shell_bin: str,
+    is_ps: bool,
+    work_dir: Path,
+) -> Path | None:
+    if not step_lines:
+        return None
+    inst_text = instrument_script_for_progress(
+        script_text, step_lines=step_lines, is_powershell=is_ps
+    )
+    if inst_text == script_text:
+        return None
+    ext = ".ps1" if is_ps else ".sh"
+    fd, tmp_name = tempfile.mkstemp(prefix=".progress_", suffix=ext, dir=step_dir)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(inst_text)
+        os.chmod(tmp_path, 0o600)
+        if is_ps:
+            ps_check = (
+                "$err = $null; "
+                "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
+                "if ($err) { exit 1 }"
+            )
+            chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(tmp_path)]
+        else:
+            chk_cmd = [shell_bin, "-n", str(tmp_path)]
+        chk = subprocess.run(
+            chk_cmd,
+            cwd=work_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if chk.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
+            return None
+        return tmp_path
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -3487,62 +3671,112 @@ def run_script(
                 os.close(slave_fd)
                 slave_fd = None
 
+    step_lines = list(summary_obj.get("operation_steps") or [])
+    use_progress = (
+        not headless
+        and not in_run_block()
+        and sys.stdout.isatty()
+        and get_setting("progress")[0] != "false"
+        and bool(step_lines)
+    )
+    tmp_progress_path: Path | None = None
+    progress_filter: _ProgressLineFilter | None = None
+    if use_progress:
+        tmp_progress_path = _prepare_progress_script(
+            script_text, step_dir, step_lines, shell_bin, is_ps, work_dir
+        )
+        if tmp_progress_path is not None:
+            step_map = {int(s["step"]): s for s in step_lines if s.get("step")}
+            progress_filter = _ProgressLineFilter(step_map, len(step_lines))
+            exec_cmd = (
+                [shell_bin, "-NoProfile", "-File", str(tmp_progress_path)]
+                if is_ps
+                else [shell_bin, str(tmp_progress_path)]
+            )
+
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
     child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
-    if master_fd is not None and slave_fd is not None:
-        try:
+    try:
+        if master_fd is not None and slave_fd is not None:
+            try:
+                proc = subprocess.Popen(
+                    exec_cmd,
+                    cwd=work_dir,
+                    stdin=tty_in if tty_in is not None else slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    env=child_env,
+                    close_fds=True,
+                )
+                os.close(slave_fd)
+                slave_fd = None
+                while True:
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", "replace")
+                    if progress_filter is not None:
+                        out_txt, prog_txt = progress_filter.feed(text)
+                        if out_txt:
+                            log_chunks.append(out_txt)
+                        if prog_txt or out_txt:
+                            sys.stdout.write(prog_txt + out_txt)
+                            sys.stdout.flush()
+                    else:
+                        log_chunks.append(text)
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+                rc = proc.wait()
+            finally:
+                if slave_fd is not None:
+                    os.close(slave_fd)
+                if master_fd is not None:
+                    os.close(master_fd)
+                if tty_in is not None:
+                    tty_in.close()
+        else:
             proc = subprocess.Popen(
                 exec_cmd,
                 cwd=work_dir,
-                stdin=tty_in if tty_in is not None else slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 env=child_env,
-                close_fds=True,
             )
-            os.close(slave_fd)
-            slave_fd = None
+            assert proc.stdout is not None
             while True:
-                try:
-                    chunk = os.read(master_fd, 4096)
-                except OSError:
-                    break
+                chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
                 if not chunk:
                     break
                 text = chunk.decode("utf-8", "replace")
-                log_chunks.append(text)
-                sys.stdout.write(text)
-                sys.stdout.flush()
+                if progress_filter is not None:
+                    out_txt, prog_txt = progress_filter.feed(text)
+                    if out_txt:
+                        log_chunks.append(out_txt)
+                    if prog_txt or out_txt:
+                        sys.stdout.write(prog_txt + out_txt)
+                        sys.stdout.flush()
+                else:
+                    log_chunks.append(text)
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+            proc.stdout.close()
             rc = proc.wait()
-        finally:
-            if slave_fd is not None:
-                os.close(slave_fd)
-            if master_fd is not None:
-                os.close(master_fd)
-            if tty_in is not None:
-                tty_in.close()
-    else:
-        proc = subprocess.Popen(
-            exec_cmd,
-            cwd=work_dir,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=child_env,
-        )
-        assert proc.stdout is not None
-        while True:
-            chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
-            if not chunk:
-                break
-            text = chunk.decode("utf-8", "replace")
-            log_chunks.append(text)
-            sys.stdout.write(text)
-            sys.stdout.flush()
-        proc.stdout.close()
-        rc = proc.wait()
+        if progress_filter is not None:
+            rem_out, rem_prog = progress_filter.flush()
+            if rem_out:
+                log_chunks.append(rem_out)
+            if rem_prog or rem_out:
+                sys.stdout.write(rem_prog + rem_out)
+                sys.stdout.flush()
+    finally:
+        if tmp_progress_path is not None:
+            tmp_progress_path.unlink(missing_ok=True)
     if bundle_snapshot is not None:
         if not bundle_file.is_file() or bundle_file.read_bytes() != bundle_snapshot:
             write_private(bundle_file, bundle_snapshot.decode("utf-8", "replace"), overwrite=True)

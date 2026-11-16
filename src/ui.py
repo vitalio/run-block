@@ -61,14 +61,59 @@ def read_clipboard_key(tty_r) -> str:
             pass
 
 
-def _wrap_labeled_items(items: list[tuple[str, str]], max_width: int, indent: str = "  ") -> list[str]:
+def _match_operation_step_numbers(
+    items: list[tuple[str, str]],
+    operation_steps: list[dict[str, object]],
+    *,
+    group_dir: str | None = None,
+    step_cursor: int = 0,
+) -> tuple[list[int | None], int]:
+    if not operation_steps:
+        return [None] * len(items), step_cursor
+    result: list[int | None] = []
+    idx = step_cursor
+    n_steps = len(operation_steps)
+    for tag, desc in items:
+        if idx < n_steps:
+            st = operation_steps[idx]
+            st_tag = str(st.get("tag") or "")
+            st_dir = str(st.get("dir") or "")
+            st_desc = str(st.get("desc") or "")
+            if group_dir is not None:
+                matches = st_tag == tag and st_dir == group_dir
+            else:
+                matches = st_tag == tag and st_desc == desc
+            if matches:
+                result.append(int(st.get("step") or (idx + 1)))
+                idx += 1
+                continue
+        result.append(None)
+    return result, idx
+
+
+def _wrap_labeled_items(
+    items: list[tuple[str, str]],
+    max_width: int,
+    indent: str = "  ",
+    step_nums: list[int | None] | None = None,
+    num_width: int | None = None,
+) -> list[str]:
     if not items:
         return []
     tag_w = max(len(f"[{k}]") for k, _ in items)
+    nums = step_nums if step_nums is not None else [None] * len(items)
+    has_nums = num_width is not None or any(n is not None for n in nums)
+    if has_nums:
+        nw = num_width if num_width is not None else max(len(f"{n}.") for n in nums if n is not None)
+    else:
+        nw = 0
     out: list[str] = []
-    for k, v in items:
+    for (k, v), num in zip(items, nums):
+        num_prefix = ""
+        if has_nums:
+            num_prefix = (f"{num}.".rjust(nw) + " ") if num is not None else (" " * (nw + 1))
         tag = f"[{k}]".ljust(tag_w)
-        prefix = f"{indent}{tag}  "
+        prefix = f"{indent}{num_prefix}{tag}  "
         sub_indent = " " * len(prefix)
         avail = max(24, max_width - len(prefix))
         wrapped = textwrap.wrap(v, width=avail, break_long_words=True, break_on_hyphens=False) or [v]
@@ -190,19 +235,35 @@ def format_safety_box(
             detail_lines.append(f"Script: {meta_str}")
         ops = list(summary.get("operations") or [])
         op_groups = list(summary.get("operation_groups") or [])
+        op_steps = list(summary.get("operation_steps") or [])
         has_subdirs = any(bool(g_dir) for g_dir, _ in op_groups)
+        max_step_num = max((int(s.get("step") or 0) for s in op_steps), default=0)
+        step_num_w = len(f"{max_step_num}.") if max_step_num > 0 else None
         if ops:
             if detail_lines:
                 detail_lines.append("")
             detail_lines.append(f"{_KEY_COLOR}Operations:{_ANSI_RESET}" if _use_color() else "Operations:")
             op_lines: list[str] = []
             if has_subdirs and op_groups:
+                step_cursor = 0
                 for g_dir, g_items in op_groups:
                     dir_hdr = g_dir if g_dir else (wdir or ".")
                     op_lines.append(f"  {dir_hdr}:")
-                    op_lines.extend(_wrap_labeled_items(g_items, max_row_len, indent="    "))
+                    g_nums, step_cursor = _match_operation_step_numbers(
+                        g_items, op_steps, group_dir=g_dir, step_cursor=step_cursor
+                    )
+                    op_lines.extend(
+                        _wrap_labeled_items(
+                            g_items, max_row_len, indent="    ", step_nums=g_nums, num_width=step_num_w
+                        )
+                    )
             else:
-                op_lines.extend(_wrap_labeled_items(ops, max_row_len, indent="  "))
+                op_nums, _ = _match_operation_step_numbers(ops, op_steps)
+                op_lines.extend(
+                    _wrap_labeled_items(
+                        ops, max_row_len, indent="  ", step_nums=op_nums, num_width=step_num_w
+                    )
+                )
             detail_lines.extend(_colorize_operation_lines(op_lines))
         if detail_lines:
             if content_lines:
@@ -800,21 +861,22 @@ def _colorize_operation_lines(lines: list[str]) -> list[str]:
     out: list[str] = []
     last_tag = ""
     for line in lines:
-        m = re.match(r"^(\s*)(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
+        m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
         if m:
-            indent, tag_br, tag, spaces, rest = m.groups()
+            indent, num_part, tag_br, tag, spaces, rest = m.groups()
+            num_str = num_part or ""
             last_tag = tag
             if tag == "read":
                 out.append(line)
             elif tag == "write":
                 t_col = _TAG_COLORS["write"]
-                out.append(f"{indent}{t_col}{tag_br}{_ANSI_RESET}{spaces}{t_col}{rest}{_ANSI_RESET}")
+                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{t_col}{rest}{_ANSI_RESET}")
             elif tag == "python":
                 t_col = _TAG_COLORS["python"]
-                out.append(f"{indent}{t_col}{tag_br}{_ANSI_RESET}{spaces}{_colorize_python_op_rest(rest)}")
+                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{_colorize_python_op_rest(rest)}")
             elif tag in _TAG_COLORS:
                 t_col = _TAG_COLORS[tag]
-                out.append(f"{indent}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
             else:
                 out.append(line)
         elif line.startswith("  ") and not line.lstrip().startswith("[") and not line.rstrip().endswith(":"):

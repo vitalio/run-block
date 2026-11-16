@@ -354,6 +354,120 @@ def not_run_exit(
     return rc
 
 
+class _ProgressLineFilter:
+    def __init__(
+        self,
+        step_map: dict[int, dict[str, object]],
+        total_steps: int,
+        marker_prefix: str = "__RB_STEP__:",
+    ) -> None:
+        self.step_map = step_map
+        self.total_steps = total_steps
+        self.marker_prefix = marker_prefix
+        self.buf = ""
+        self._marker_re = re.compile(rf"^{re.escape(marker_prefix)}(\d+)\r?$")
+
+    def _format_step_banner(self, step_num: int) -> str:
+        info = self.step_map.get(step_num)
+        if not info:
+            return ""
+        tag = str(info.get("tag") or "")
+        desc = str(info.get("desc") or "").replace("\n", " ").strip()
+        prefix = f"[{step_num}/{self.total_steps}]"
+        if tag:
+            prefix = f"{prefix} [{tag}]"
+        max_cols = max(40, _hr_width() - 4)
+        avail = max(16, max_cols - len(prefix) - 1)
+        if len(desc) > avail:
+            desc = desc[: avail - 3] + "..."
+        line = f"{prefix} {desc}".rstrip()
+        arrow = "▸" if _supports_utf8() else ">"
+        if _use_color():
+            return f"\x1b[2;36m{arrow} {line}\x1b[0m\n"
+        return f"{arrow} {line}\n"
+
+    def feed(self, text: str) -> tuple[str, str]:
+        self.buf += text
+        out_parts: list[str] = []
+        prog_parts: list[str] = []
+        while "\n" in self.buf:
+            line, rest = self.buf.split("\n", 1)
+            self.buf = rest
+            m = self._marker_re.match(line)
+            if m:
+                banner = self._format_step_banner(int(m.group(1)))
+                if banner:
+                    prog_parts.append(banner)
+            else:
+                out_parts.append(line + "\n")
+        if self.buf:
+            if not (
+                self.marker_prefix.startswith(self.buf)
+                or self.buf.startswith(self.marker_prefix)
+            ):
+                out_parts.append(self.buf)
+                self.buf = ""
+        return "".join(out_parts), "".join(prog_parts)
+
+    def flush(self) -> tuple[str, str]:
+        if not self.buf:
+            return "", ""
+        rem = self.buf
+        self.buf = ""
+        m = self._marker_re.match(rem)
+        if m:
+            banner = self._format_step_banner(int(m.group(1)))
+            return "", banner
+        return rem, ""
+
+
+def _prepare_progress_script(
+    script_text: str,
+    step_dir: Path,
+    step_lines: list[dict[str, object]],
+    shell_bin: str,
+    is_ps: bool,
+    work_dir: Path,
+) -> Path | None:
+    if not step_lines:
+        return None
+    inst_text = instrument_script_for_progress(
+        script_text, step_lines=step_lines, is_powershell=is_ps
+    )
+    if inst_text == script_text:
+        return None
+    ext = ".ps1" if is_ps else ".sh"
+    fd, tmp_name = tempfile.mkstemp(prefix=".progress_", suffix=ext, dir=step_dir)
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(inst_text)
+        os.chmod(tmp_path, 0o600)
+        if is_ps:
+            ps_check = (
+                "$err = $null; "
+                "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
+                "if ($err) { exit 1 }"
+            )
+            chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(tmp_path)]
+        else:
+            chk_cmd = [shell_bin, "-n", str(tmp_path)]
+        chk = subprocess.run(
+            chk_cmd,
+            cwd=work_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        if chk.returncode != 0:
+            tmp_path.unlink(missing_ok=True)
+            return None
+        return tmp_path
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        return None
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -479,62 +593,112 @@ def run_script(
                 os.close(slave_fd)
                 slave_fd = None
 
+    step_lines = list(summary_obj.get("operation_steps") or [])
+    use_progress = (
+        not headless
+        and not in_run_block()
+        and sys.stdout.isatty()
+        and get_setting("progress")[0] != "false"
+        and bool(step_lines)
+    )
+    tmp_progress_path: Path | None = None
+    progress_filter: _ProgressLineFilter | None = None
+    if use_progress:
+        tmp_progress_path = _prepare_progress_script(
+            script_text, step_dir, step_lines, shell_bin, is_ps, work_dir
+        )
+        if tmp_progress_path is not None:
+            step_map = {int(s["step"]): s for s in step_lines if s.get("step")}
+            progress_filter = _ProgressLineFilter(step_map, len(step_lines))
+            exec_cmd = (
+                [shell_bin, "-NoProfile", "-File", str(tmp_progress_path)]
+                if is_ps
+                else [shell_bin, str(tmp_progress_path)]
+            )
+
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
     child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
-    if master_fd is not None and slave_fd is not None:
-        try:
+    try:
+        if master_fd is not None and slave_fd is not None:
+            try:
+                proc = subprocess.Popen(
+                    exec_cmd,
+                    cwd=work_dir,
+                    stdin=tty_in if tty_in is not None else slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    env=child_env,
+                    close_fds=True,
+                )
+                os.close(slave_fd)
+                slave_fd = None
+                while True:
+                    try:
+                        chunk = os.read(master_fd, 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", "replace")
+                    if progress_filter is not None:
+                        out_txt, prog_txt = progress_filter.feed(text)
+                        if out_txt:
+                            log_chunks.append(out_txt)
+                        if prog_txt or out_txt:
+                            sys.stdout.write(prog_txt + out_txt)
+                            sys.stdout.flush()
+                    else:
+                        log_chunks.append(text)
+                        sys.stdout.write(text)
+                        sys.stdout.flush()
+                rc = proc.wait()
+            finally:
+                if slave_fd is not None:
+                    os.close(slave_fd)
+                if master_fd is not None:
+                    os.close(master_fd)
+                if tty_in is not None:
+                    tty_in.close()
+        else:
             proc = subprocess.Popen(
                 exec_cmd,
                 cwd=work_dir,
-                stdin=tty_in if tty_in is not None else slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 env=child_env,
-                close_fds=True,
             )
-            os.close(slave_fd)
-            slave_fd = None
+            assert proc.stdout is not None
             while True:
-                try:
-                    chunk = os.read(master_fd, 4096)
-                except OSError:
-                    break
+                chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
                 if not chunk:
                     break
                 text = chunk.decode("utf-8", "replace")
-                log_chunks.append(text)
-                sys.stdout.write(text)
-                sys.stdout.flush()
+                if progress_filter is not None:
+                    out_txt, prog_txt = progress_filter.feed(text)
+                    if out_txt:
+                        log_chunks.append(out_txt)
+                    if prog_txt or out_txt:
+                        sys.stdout.write(prog_txt + out_txt)
+                        sys.stdout.flush()
+                else:
+                    log_chunks.append(text)
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+            proc.stdout.close()
             rc = proc.wait()
-        finally:
-            if slave_fd is not None:
-                os.close(slave_fd)
-            if master_fd is not None:
-                os.close(master_fd)
-            if tty_in is not None:
-                tty_in.close()
-    else:
-        proc = subprocess.Popen(
-            exec_cmd,
-            cwd=work_dir,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            env=child_env,
-        )
-        assert proc.stdout is not None
-        while True:
-            chunk = proc.stdout.read1(4096) if hasattr(proc.stdout, "read1") else proc.stdout.read(4096)
-            if not chunk:
-                break
-            text = chunk.decode("utf-8", "replace")
-            log_chunks.append(text)
-            sys.stdout.write(text)
-            sys.stdout.flush()
-        proc.stdout.close()
-        rc = proc.wait()
+        if progress_filter is not None:
+            rem_out, rem_prog = progress_filter.flush()
+            if rem_out:
+                log_chunks.append(rem_out)
+            if rem_prog or rem_out:
+                sys.stdout.write(rem_prog + rem_out)
+                sys.stdout.flush()
+    finally:
+        if tmp_progress_path is not None:
+            tmp_progress_path.unlink(missing_ok=True)
     if bundle_snapshot is not None:
         if not bundle_file.is_file() or bundle_file.read_bytes() != bundle_snapshot:
             write_private(bundle_file, bundle_snapshot.decode("utf-8", "replace"), overwrite=True)

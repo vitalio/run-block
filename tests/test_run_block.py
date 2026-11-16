@@ -48,6 +48,7 @@ class TestRunBlock(unittest.TestCase):
                 "RUN_BLOCK_HEADLESS",
                 "RUN_BLOCK_SANDBOX",
                 "RUN_BLOCK_MAX_FIX_ATTEMPTS",
+                "RUN_BLOCK_PROGRESS",
                 "NO_COLOR",
             )
         }
@@ -915,7 +916,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("  /tmp:", box_cd)
         stripped_lines = [l.strip() for l in box_cd.splitlines()]
         idx_var = stripped_lines.index("│   /var:")
-        self.assertEqual(stripped_lines[idx_var - 1], "│     [read]  ls -la")
+        self.assertEqual(stripped_lines[idx_var - 1], "│     1. [read]  ls -la")
 
 
     def test_fix_ast_validation_and_bundle_tamper_revert(self):
@@ -1468,11 +1469,11 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[2;33m╭─ \x1b[0m\x1b[1;33mBLOCK PLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertIn("\x1b[2mSandbox: off\x1b[0m", box_warn)
-                self.assertIn("  [read]    cat README.md", box_warn)
+                self.assertIn("  1. [read]    cat README.md", box_warn)
                 self.assertNotIn("\x1b[2m[read]", box_warn)
-                self.assertIn("\x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
-                self.assertIn("\x1b[1;33m[write]\x1b[0m   \x1b[1;33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;36m[python]\x1b[0m", box_warn)
+                self.assertIn("2. \x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
+                self.assertIn("3. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
+                self.assertIn("4. \x1b[1;36m[python]\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;33mwrites: b.txt\x1b[0m", box_warn)
                 self.assertIn("reads: a.txt", box_warn)
                 self.assertNotIn("\x1b[2mreads:", box_warn)
@@ -1483,7 +1484,7 @@ class TestRunBlock(unittest.TestCase):
                 box_wrap, _, _ = self.mod.format_safety_box(
                     "s1/2b", [], default_yes=True, summary=sum_wrap
                 )
-                self.assertIn("  [read]  cat ", box_wrap)
+                self.assertIn("  1. [read]  cat ", box_wrap)
                 self.assertNotIn("\x1b[2m[read]", box_wrap)
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
@@ -1733,6 +1734,108 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("__RB_STEP__:4", inst_ps)
         self.assertIn("Write-Output '__RB_STEP__:5'\ncat <<'EOF' > out.txt", inst_ps)
         self.assertIn("Write-Output '__RB_STEP__:6'\nrm -f out.txt", inst_ps)
+
+    def test_f30_numbered_block_plan_and_live_progress_execution(self):
+        # 1. BLOCK PLAN numbers top-level operations and keeps Python AST sub-entries unnumbered
+        many_src = ", ".join(f'"src/f{i}.py"' for i in range(6))
+        many_tests = ", ".join(f'"tests/t{i}.py"' for i in range(6))
+        script_num = (
+            "git status -sb\n"
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            f"for p in ({many_src}):\n"
+            "    Path(p).write_text('x')\n"
+            f"for t in ({many_tests}):\n"
+            "    Path(t).read_text()\n"
+            "PY\n"
+            "rm -f note.txt\n"
+        )
+        sum_num = self.mod.summarize_script_actions(script_num, Path("/tmp/work"))
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
+            box_num, _, _ = self.mod.format_safety_box("s1/1", [], default_yes=True, summary=sum_num)
+        self.assertIn("    1. [git]     git status -sb", box_num)
+        self.assertIn("    2. [python]  5 lines", box_num)
+        self.assertIn("       [write]  f0.py", box_num)
+        self.assertIn("       [read]  t0.py", box_num)
+        self.assertIn("    3. [write]  rm -f note.txt", box_num)
+
+        # 2. RUN_BLOCK_PROGRESS config setting
+        os.environ.pop("RUN_BLOCK_PROGRESS", None)
+        self.assertEqual(self.mod.get_setting("progress"), ("true", "default"))
+        os.environ["RUN_BLOCK_PROGRESS"] = "0"
+        self.assertEqual(self.mod.get_setting("progress"), ("false", "env"))
+        os.environ.pop("RUN_BLOCK_PROGRESS", None)
+
+        # 3. End-to-end interactive execution emits live progress and filters markers from out
+        work = self.tmp / "f30_work"
+        work.mkdir()
+        (work / "a.txt").write_text("alpha\n", encoding="utf-8")
+        (work / "b.txt").write_text("beta\n", encoding="utf-8")
+        sdir = self.tmp / "s30"
+        step1_dir = sdir / "1"
+        step1_dir.mkdir(parents=True)
+        script_p = step1_dir / "block.sh"
+        out_p = step1_dir / "out"
+        script_p.write_text("cat a.txt\ncat b.txt\n", encoding="utf-8")
+        os.environ["RUN_BLOCK_CWD"] = str(work)
+        buf_live = io.StringIO()
+        buf_live.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdout", buf_live), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, "")), \
+             unittest.mock.patch.object(self.mod, "offer_clipboard_copy"):
+            rc_live = self.mod.run_script("s30/1", script_p, out_p, auto_yes=False)
+        self.assertEqual(rc_live, 0)
+        live_stdout = buf_live.getvalue()
+        self.assertIn("[1/2] [read] cat a.txt", live_stdout)
+        self.assertIn("[2/2] [read] cat b.txt", live_stdout)
+        self.assertNotIn("__RB_STEP__:", live_stdout)
+        saved_out = out_p.read_text(encoding="utf-8")
+        self.assertIn("alpha\nbeta\n", saved_out)
+        self.assertNotIn("__RB_STEP__:", saved_out)
+        self.assertNotIn("[1/2]", saved_out)
+        self.assertEqual(list(step1_dir.glob(".progress_*")), [])
+
+        # 4. RUN_BLOCK_PROGRESS=0 opts out of instrumentation
+        step2_dir = sdir / "2"
+        step2_dir.mkdir(parents=True)
+        script_p2 = step2_dir / "block.sh"
+        out_p2 = step2_dir / "out"
+        script_p2.write_text("cat a.txt\n", encoding="utf-8")
+        os.environ["RUN_BLOCK_PROGRESS"] = "0"
+        buf_optout = io.StringIO()
+        buf_optout.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdout", buf_optout), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, "")), \
+             unittest.mock.patch.object(self.mod, "offer_clipboard_copy"):
+            rc_optout = self.mod.run_script("s30/2", script_p2, out_p2, auto_yes=False)
+        self.assertEqual(rc_optout, 0)
+        self.assertNotIn("[1/1]", buf_optout.getvalue())
+        self.assertIn("alpha", out_p2.read_text(encoding="utf-8"))
+        os.environ.pop("RUN_BLOCK_PROGRESS", None)
+
+        # 5. Fallback to original script when instrumented copy fails syntax validation
+        step3_dir = sdir / "3"
+        step3_dir.mkdir(parents=True)
+        script_p3 = step3_dir / "block.sh"
+        out_p3 = step3_dir / "out"
+        script_p3.write_text("cat a.txt\n", encoding="utf-8")
+        buf_fb = io.StringIO()
+        buf_fb.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdout", buf_fb), \
+             unittest.mock.patch.object(self.mod, "instrument_script_for_progress", return_value="if true; then\n"), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, "")), \
+             unittest.mock.patch.object(self.mod, "offer_clipboard_copy"):
+            rc_fb = self.mod.run_script("s30/3", script_p3, out_p3, auto_yes=False)
+        self.assertEqual(rc_fb, 0)
+        self.assertIn("alpha", out_p3.read_text(encoding="utf-8"))
+        self.assertEqual(list(step3_dir.glob(".progress_*")), [])
+
+        # 6. Help and README document RUN_BLOCK_PROGRESS
+        r_help = subprocess.run([str(SCRIPT), "-h"], capture_output=True, text=True, check=False)
+        self.assertEqual(r_help.returncode, 0, r_help.stderr)
+        self.assertIn("RUN_BLOCK_PROGRESS", r_help.stdout)
+        self.assertIn("RUN_BLOCK_PROGRESS", (ROOT / "README.md").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

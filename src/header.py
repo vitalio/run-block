@@ -15,6 +15,9 @@
   {prog} --check-update              Check if a newer version is available
   {prog} -V | --version              Print version and exit 0
   {prog} -h | --help                 Print this usage and exit 0
+
+Environment:
+  RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
 """
 from __future__ import annotations
 

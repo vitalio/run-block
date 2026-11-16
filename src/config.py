@@ -41,6 +41,11 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
             v = os.environ["RUN_BLOCK_TOKEN_STATS"].strip().lower()
             return ("false" if v in ("0", "false", "no", "off") else "true"), "env"
         return "true", "default"
+    if key == "progress":
+        if os.environ.get("RUN_BLOCK_PROGRESS"):
+            v = os.environ["RUN_BLOCK_PROGRESS"].strip().lower()
+            return ("false" if v in ("0", "false", "no", "off") else "true"), "env"
+        return "true", "default"
     if key == "shell":
         if os.environ.get("RUN_BLOCK_SHELL"):
             return os.environ["RUN_BLOCK_SHELL"].strip(), "env"

@@ -1,3 +1,10 @@
+# ✅ [DONE] F30: Display plan step numbers in BLOCK PLAN and live progress markers during execution — *2026-11-16, Numbered BLOCK PLAN operations and added live progress markers during interactive execution*
+
+- Depends on: F29
+- Number top-level operations in `format_safety_box()` (`src/ui.py`) so `BLOCK PLAN` items match live execution step numbers.
+- Execute a temporary instrumented script copy in `run_script()` (`src/runner.py`) during interactive runs (with syntax validation, automatic fallback to the original script, temp-file cleanup, and opt-out via `RUN_BLOCK_PROGRESS=0` in `src/config.py`), while filtering marker lines out of `<session>/<step>/out` so saved output stays consistent with the unmodified script.
+- Document `RUN_BLOCK_PROGRESS` in `src/header.py` and `README.md`, and add end-to-end execution tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F31: Render read operations in neutral foreground instead of dim gray in BLOCK PLAN — *2026-11-16*
 
 - Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so `[read]` operation tags, continuation lines, and `reads:` clauses render in neutral foreground color (normal white/default terminal text) instead of dim gray (`_KEY_COLOR`).
