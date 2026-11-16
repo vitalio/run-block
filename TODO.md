@@ -1,3 +1,12 @@
+# 🎯 [NEXT] F42: Support marking sessions as completed (--done) with confirmation before reopening
+
+- Persist session completion state (`"completed": true`, `"completed_at": "<YYYY-MM-DDTHH:MM:SSZ>"`, optional `"completed_note"`) in `<session>/meta.json` via helpers in `src/config.py` (`is_session_completed`, `set_session_completed`), preserving completion fields in `write_session_meta()` and resetting automatically when a session is recreated (`--start --force`).
+- Add `run_block --done [session] [-m "<note>"]` in `src/cli.py` and `src/runner.py` (allowed both directly in terminal and inside the final block of a session) and display `[DONE]` status badges in `run_block --list` / `-l`.
+- Check session completion before `BLOCK PLAN` across normal runs (`<session>/<step>`), `--fix`, and `--retry`:
+  - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`prompt_yes_no_box`, default `No`); on confirmation (`y`/`Enter`), clear the completion marker in `meta.json` and proceed to `BLOCK PLAN`, otherwise exit with `NOT RUN`.
+  - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
+- Document session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (bundled via `src/bundles/run_block.bundle`), plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
+
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: agents_bundle:F7, agents_bundle:F15

@@ -28,5 +28,11 @@ rules are loaded via `.agents_bundle`.
   blank line) into `<session>/meta.json`, keeping `<session>/0` limited to
   `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
   `Date`) and the prompt body.
+- Session completion state (`--done`): persist `"completed": true` and
+  `"completed_at"` (UTC ISO timestamp) in `<session>/meta.json` without
+  altering `<session>/0` headers. Before running any block (`<session>/<step>`,
+  `--fix`, or `--retry`) on a completed session, warn and prompt for
+  confirmation (`SESSION COMPLETED`, default `No`), clearing the completed flag
+  only when confirmed (or when `-y`/`--yes` is explicitly passed).
 - `src/cli.py` — CLI argument routing and self-update (`--update`,
   `--check-update`).
