@@ -1944,6 +1944,68 @@ class TestRunBlock(unittest.TestCase):
             else:
                 os.environ["NO_COLOR"] = saved_no_color
 
+    def test_b6_multiline_quoted_strings_in_plan_and_instrumentation(self):
+        # 1. Multiline ANSI-C single-quoted ($'...') and double-quoted ("...") arguments
+        #    with escaped quotes/backslashes stay collapsed as single operations.
+        script = (
+            "todo_md edit F1 -b " + chr(36) + "'First line\n"
+            "Second line with \\'quote\\'\n"
+            "Third line'\n"
+            'todo_md add "Title" -b "Line A \\"inner\\"\n'
+            "Line B \\\\\n"
+            'Line C"\n'
+            "git status -sb\n"
+        )
+        summary = self.mod.summarize_script_actions(script, Path("/tmp/work"))
+        steps = summary["operation_steps"]
+        self.assertEqual([s["step"] for s in steps], [1, 2, 3])
+        self.assertEqual([s["tag"] for s in steps], ["exec", "exec", "git"])
+        self.assertEqual([s["line"] for s in steps], [1, 4, 7])
+        self.assertEqual(len(summary["operations"]), 3)
+
+        inst = self.mod.instrument_script_for_progress(script, is_powershell=False)
+        ok_syn, syn_err, _ = self.mod.check_script_syntax(inst, self.tmp)
+        self.assertTrue(ok_syn, syn_err)
+        self.assertEqual(inst.count("__RB_STEP__:"), 3)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:1'\ntodo_md edit F1", inst)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:2'\ntodo_md add", inst)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:3'\ngit status -sb", inst)
+        self.assertNotIn("Second line with 'quote'\nprintf", inst)
+        self.assertNotIn("Line B \\\nprintf", inst)
+
+        # Executing the instrumented script preserves exact multiline string arguments
+        proc = subprocess.run(
+            [
+                "bash",
+                "-c",
+                'todo_md() { printf "ARG:%s\n" "' + chr(36) + '@"; }; git() { echo GIT_OK; }; ' + inst,
+            ],
+            cwd=str(self.tmp),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Second line with 'quote'\nThird line", proc.stdout)
+        self.assertIn('Line A "inner"\nLine B \\\nLine C', proc.stdout)
+
+        # 2. Compound keywords (fi/done) inside multiline quotes do not corrupt depth tracking
+        nested_script = (
+            "if true; then\n"
+            '  echo "if inside quote\n'
+            "fi\n"
+            'done" > out.txt\n'
+            "fi\n"
+            "git status -sb\n"
+        )
+        nested_sum = self.mod.summarize_script_actions(nested_script, Path("/tmp/work"))
+        self.assertEqual([s["tag"] for s in nested_sum["operation_steps"]], ["exec", "git"])
+        nested_inst = self.mod.instrument_script_for_progress(nested_script, is_powershell=False)
+        ok_n, err_n, _ = self.mod.check_script_syntax(nested_inst, self.tmp)
+        self.assertTrue(ok_n, err_n)
+        self.assertIn("printf '%s\\n' '__RB_STEP__:2'\ngit status -sb", nested_inst)
+        self.assertNotIn("__RB_STEP__:1", nested_inst)
+
 
 if __name__ == "__main__":
     unittest.main()

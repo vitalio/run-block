@@ -1,9 +1,3 @@
-# 🎯 [NEXT] B6: Track multiline quoted strings in BLOCK PLAN analyzer and step instrumentation
-
-- When a shell script contains a multiline single-quoted (`'...'`) or double-quoted (`"..."`) argument (such as `todo_md edit ... -b $'...\n...'` or `todo_md add ... -b "..."`), `src/safety.py` (`summarize_script_actions` and `_instrument_bash_script`) splits on physical newlines without tracking open quote state.
-- As a result, `BLOCK PLAN` reports each physical line inside the quoted literal as a separate `[exec]` operation, and live step instrumentation injects `printf '%s\n' '__RB_STEP__:N'` directly inside the user's string literal, corrupting written text.
-- Track multiline single- and double-quote state (respecting backslash escapes inside double quotes) alongside heredoc tracking in `src/safety.py`, and add regression tests in `tests/test_run_block.py`.
-
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: agents_bundle:F7, agents_bundle:F15

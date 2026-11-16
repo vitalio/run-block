@@ -54,7 +54,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.3"
+VERSION = "0.21.4"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -633,11 +633,64 @@ def _has_unquoted_redirect(cmd: str) -> bool:
     return False
 
 
+def _advance_quote_state(
+    line: str,
+    state: str | None,
+    *,
+    is_powershell: bool = False,
+) -> str | None:
+    """Tracks open single/ANSI-C/double quote state across a physical line."""
+    esc = "`" if is_powershell else "\\"
+    n = len(line)
+    i = 0
+    while i < n:
+        ch = line[i]
+        if state is None:
+            if ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";|&()"):
+                break
+            if ch == esc:
+                i += 2
+                continue
+            if not is_powershell and ch == chr(36) and i + 1 < n and line[i + 1] == "'":
+                state = chr(36) + "'"
+                i += 2
+                continue
+            if ch == "'":
+                state = "'"
+                i += 1
+                continue
+            if ch == '"':
+                state = '"'
+                i += 1
+                continue
+            i += 1
+        elif state == "'":
+            if ch == "'":
+                state = None
+            i += 1
+        elif state == chr(36) + "'":
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "'":
+                state = None
+            i += 1
+        else:  # state == '"'
+            if ch == esc:
+                i += 2
+                continue
+            if ch == '"':
+                state = None
+            i += 1
+    return state
+
+
 def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
-    """Joins shell line continuations outside heredocs and multiline python -c blocks."""
+    """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks."""
     out: list[tuple[int, str]] = []
     eof_token: str | None = None
     py_quote: str | None = None
+    quote_state: str | None = None
     cont_buf: list[str] = []
     cont_start: int = 0
 
@@ -654,19 +707,54 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
                 py_quote = None
             continue
 
-        if cont_buf:
+        if quote_state is not None:
+            quote_state = _advance_quote_state(raw, quote_state)
+            if quote_state is not None:
+                if s:
+                    cont_buf.append(s)
+                continue
             if _has_trailing_continuation(raw):
                 piece = raw.rstrip()[:-1].strip()
                 if piece:
                     cont_buf.append(piece)
                 continue
-            tail = raw.strip()
-            if tail:
-                cont_buf.append(tail)
+            if s:
+                cont_buf.append(s)
+            logical = " ".join(cont_buf)
+            logical_idx = cont_start
+            cont_buf = []
+        elif cont_buf:
+            q_after = _advance_quote_state(raw, None)
+            if q_after is not None:
+                quote_state = q_after
+                if s:
+                    cont_buf.append(s)
+                continue
+            if _has_trailing_continuation(raw):
+                piece = raw.rstrip()[:-1].strip()
+                if piece:
+                    cont_buf.append(piece)
+                continue
+            if s:
+                cont_buf.append(s)
             logical = " ".join(cont_buf)
             logical_idx = cont_start
             cont_buf = []
         else:
+            if s and not s.startswith("#"):
+                m_pyc_early = PY_DASH_C_START_RE.match(s)
+                if m_pyc_early:
+                    q_ch, rest = m_pyc_early.group(1), m_pyc_early.group(2)
+                    out.append((idx, raw))
+                    if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
+                        py_quote = q_ch
+                    continue
+                q_after = _advance_quote_state(raw, None)
+                if q_after is not None:
+                    quote_state = q_after
+                    cont_start = idx
+                    cont_buf = [raw.rstrip()]
+                    continue
             if _has_trailing_continuation(raw):
                 cont_start = idx
                 first_piece = raw.rstrip()[:-1].rstrip()
@@ -1394,6 +1482,7 @@ def instrument_script_for_progress(
     py_quote: str | None = None
     ps_here_quote: str | None = None
     in_continuation = False
+    quote_state: str | None = None
     depth = 0
 
     for idx, raw_line in enumerate(script_text.splitlines(keepends=True), start=1):
@@ -1418,8 +1507,23 @@ def instrument_script_for_progress(
                 py_quote = None
             continue
 
+        if quote_state is not None:
+            out.append(raw_line)
+            quote_state = _advance_quote_state(line_no_nl, quote_state, is_powershell=ps_mode)
+            if quote_state is None:
+                if ps_mode:
+                    in_continuation = line_no_nl.rstrip().endswith("`")
+                else:
+                    in_continuation = _has_trailing_continuation(line_no_nl)
+            continue
+
         if in_continuation:
             out.append(raw_line)
+            q_after = _advance_quote_state(line_no_nl, None, is_powershell=ps_mode)
+            if q_after is not None:
+                quote_state = q_after
+                in_continuation = False
+                continue
             if ps_mode:
                 in_continuation = line_no_nl.rstrip().endswith("`")
             else:
@@ -1451,13 +1555,15 @@ def instrument_script_for_progress(
             if s.endswith('@"') and not s.startswith("#"):
                 ps_here_quote = '"@'
                 continue
+            q_after = _advance_quote_state(line_no_nl, None, is_powershell=True)
+            if q_after is not None:
+                quote_state = q_after
+                depth = max(0, depth + opens - closes)
+                continue
             if line_no_nl.rstrip().endswith("`"):
                 in_continuation = True
                 continue
         else:
-            if _has_trailing_continuation(line_no_nl):
-                in_continuation = True
-                continue
             m_py = PY_HEREDOC_START_RE.search(s)
             if m_py:
                 eof_token = m_py.group(1)
@@ -1474,6 +1580,14 @@ def instrument_script_for_progress(
             if m_sh:
                 eof_token = m_sh.group(1)
                 depth = max(0, depth + opens - closes)
+                continue
+            q_after = _advance_quote_state(line_no_nl, None, is_powershell=False)
+            if q_after is not None:
+                quote_state = q_after
+                depth = max(0, depth + opens - closes)
+                continue
+            if _has_trailing_continuation(line_no_nl):
+                in_continuation = True
                 continue
 
         depth = max(0, depth + opens - closes)
