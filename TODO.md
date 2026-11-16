@@ -1,3 +1,8 @@
+# 🔵 [WIP] F32: Unify Esc cancel prompts across interactive TUI boxes
+
+- Update interactive prompt suffixes in `src/ui.py` (`_build_prompt_yes_no_suffix()`, `format_safety_box()`, `confirm_execution()`) so all TUI confirmation boxes (`STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `CLEAN SESSIONS`, `BLOCK PLAN`, `END`) consistently advertise `Esc` for canceling/exiting alongside existing key bindings.
+- Update `README.md` and unit tests in `tests/test_run_block.py` to cover the unified prompt labels and `Esc` handling across TUI boxes.
+
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: vitalio/agents_bundle#F7
@@ -29,7 +34,32 @@
 - Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so `[read]` operation tags, continuation lines, and `reads:` clauses render in neutral foreground color (normal white/default terminal text) instead of dim gray (`_KEY_COLOR`).
 - Add or update unit tests in `tests/test_run_block.py` verifying `[read]` ANSI styling in `BLOCK PLAN` output.
 
-# ⚪ [NEW] F32: Unify Esc cancel prompts across interactive TUI boxes
+# ⚪ [NEW] F34: Design workspace state fingerprinting and drift detection across steps
 
-- Update interactive prompt suffixes in `src/ui.py` (`_build_prompt_yes_no_suffix()`, `format_safety_box()`, `confirm_execution()`) so all TUI confirmation boxes (`STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `CLEAN SESSIONS`, `BLOCK PLAN`, `END`) consistently advertise `Esc` for canceling/exiting alongside existing key bindings.
-- Update `README.md` and unit tests in `tests/test_run_block.py` to cover the unified prompt labels and `Esc` handling across TUI boxes.
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
+- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`BLOCK PLAN` / `END`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_run_block.py`.
+
+# ⚪ [NEW] F35: Design tamper-evident hash chain and parent-step verification for session history
+
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
+- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_run_block.py`.
+
+# ⚪ [NEW] F36: Design pre-flight sandbox dry-run preview via temporary git worktree
+
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
+- Define how actual mutated files and diff summaries are presented in `BLOCK PLAN` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_run_block.py`.
+
+# ⚪ [NEW] F37: Design session execution policies and post-step revert guards
+
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Evaluate declarative session-level execution constraints in `meta.json` / `.agents_bundle` (`src/bundle.py`, `src/config.py`), such as allowed write path globs, maximum modified file count, or network-access restrictions.
+- Define enforcement and rollback semantics in `src/runner.py` and `src/safety.py` (pre-execution policy checks plus post-step diff verification with automatic revert on violation) and cover with `tests/test_run_block.py`.
+
+# ⚪ [NEW] F38: Design explicit parent-step DAG lineage for session branches and retries
+
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
+- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_run_block.py`.
