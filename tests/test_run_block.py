@@ -2048,5 +2048,87 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_out")
 
 
+    def test_f45_stdin_workdir_header_preference(self):
+        target = self.tmp / "piped_target"
+        target.mkdir()
+        other_cwd = self.tmp / "other_cwd"
+        other_cwd.mkdir()
+        saved_cwd_env = os.environ.pop("RUN_BLOCK_CWD", None)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(other_cwd)
+            # 1. Existing Workdir header in stdin preamble is preferred over auto-resolved cwd
+            res = self.mod.format_start_bundle(
+                "s1",
+                stdin_body=f"Workdir: {target}\nRole: execute\n\nPrompt body\n",
+            )
+            self.assertIn(f"Workdir: {target.resolve()}\n", res["full"])
+            self.assertIn(f"Workdir: {target.resolve()}", res["console_lines"])
+
+            # 2. Hyphenated Work-Dir header also resolves when directory exists
+            res_hy = self.mod.format_start_bundle(
+                "s2",
+                stdin_body=f"Work-Dir: {target}\n\nPrompt body\n",
+            )
+            self.assertIn(f"Workdir: {target.resolve()}\n", res_hy["full"])
+
+            # 3. Nonexistent Workdir header is ignored and falls back to get_work_dir()
+            res_bad = self.mod.format_start_bundle(
+                "s3",
+                stdin_body=f"Workdir: {self.tmp / 'missing_dir'}\n\nPrompt body\n",
+            )
+            self.assertIn(f"Workdir: {other_cwd.resolve()}\n", res_bad["full"])
+
+            # 4. Explicit work_dir argument still overrides stdin Workdir header
+            res_arg = self.mod.format_start_bundle(
+                "s4",
+                stdin_body=f"Workdir: {target}\n\nPrompt body\n",
+                work_dir=other_cwd,
+            )
+            self.assertIn(f"Workdir: {other_cwd.resolve()}\n", res_arg["full"])
+
+            # 5. Explicit RUN_BLOCK_CWD overrides stdin Workdir header
+            os.environ["RUN_BLOCK_CWD"] = "cwd"
+            res_env_cwd = self.mod.format_start_bundle(
+                "s5",
+                stdin_body=f"Workdir: {target}\n\nPrompt body\n",
+            )
+            self.assertIn(f"Workdir: {other_cwd.resolve()}\n", res_env_cwd["full"])
+            os.environ.pop("RUN_BLOCK_CWD", None)
+        finally:
+            os.chdir(old_cwd)
+            if saved_cwd_env is not None:
+                os.environ["RUN_BLOCK_CWD"] = saved_cwd_env
+
+        # 6. End-to-end CLI pipe records Workdir in <session>/0 and executes steps there
+        sessions_dir = self.tmp / "f45_sessions"
+        env_auto = {**os.environ, "RUN_BLOCK_DIR": str(sessions_dir)}
+        env_auto.pop("RUN_BLOCK_CWD", None)
+        r_start = subprocess.run(
+            [str(SCRIPT)],
+            input=f"Workdir: {target}\nRole: execute\n\nPrompt body\n",
+            capture_output=True,
+            text=True,
+            cwd=str(other_cwd),
+            env=env_auto,
+            check=False,
+        )
+        self.assertEqual(r_start.returncode, 0, r_start.stderr)
+        self.assertIn(str(target.resolve()), r_start.stdout)
+        bundle_txt = (sessions_dir / "s1" / "0").read_text(encoding="utf-8")
+        self.assertIn(f"Workdir: {target.resolve()}\n", bundle_txt)
+        r_step = subprocess.run(
+            [str(SCRIPT), "-y", "s1/1"],
+            input="pwd\n",
+            capture_output=True,
+            text=True,
+            cwd=str(other_cwd),
+            env=env_auto,
+            check=False,
+        )
+        self.assertEqual(r_step.returncode, 0, r_step.stderr)
+        self.assertIn(str(target.resolve()), r_step.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

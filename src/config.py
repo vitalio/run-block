@@ -321,17 +321,23 @@ def parse_bundle_headers(session_dir: Path | None) -> dict[str, str]:
     return {k.lower(): v for k, v in parse_bundle_header_items(session_dir)}
 
 
+def _resolve_existing_dir(raw: str) -> Path | None:
+    val = raw.strip()
+    if not val:
+        return None
+    try:
+        p = Path(val).expanduser()
+        if p.is_dir():
+            return p.resolve()
+    except OSError:
+        pass
+    return None
+
+
 def _session_bundle_workdir(session_dir: Path | None) -> Path | None:
     headers = parse_bundle_headers(session_dir)
     raw = headers.get("workdir") or headers.get("work-dir") or ""
-    if raw:
-        try:
-            p = Path(raw)
-            if p.is_dir():
-                return p.resolve()
-        except OSError:
-            pass
-    return None
+    return _resolve_existing_dir(raw)
 
 
 def normalize_sandbox_mode(raw: str) -> str:

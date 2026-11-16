@@ -16,12 +16,20 @@ def format_start_bundle(
     now: datetime | None = None,
     sandbox_mode: str | None = None,
 ) -> dict[str, object]:
-    wdir = (work_dir if work_dir is not None else get_work_dir()).resolve()
+    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
+    if work_dir is not None:
+        wdir = work_dir.resolve()
+    else:
+        cwd_setting, _ = get_setting("work_dir")
+        hdr_wdir: Path | None = None
+        if cwd_setting.lower() == "auto":
+            hdr_map = {k.lower(): v for k, v in stdin_headers}
+            hdr_wdir = _resolve_existing_dir(hdr_map.get("workdir") or hdr_map.get("work-dir") or "")
+        wdir = (hdr_wdir if hdr_wdir is not None else get_work_dir()).resolve()
     sb_mode = get_sandbox_mode(override=sandbox_mode)
     sb_hdr = format_sandbox_header(sb_mode)
     dt_utc = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
     ts = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
-    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
     bundle_header_lines = [
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",

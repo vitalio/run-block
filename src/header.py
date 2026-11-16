@@ -17,6 +17,7 @@
   {prog} -h | --help                 Print this usage and exit 0
 
 Environment:
+  RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
 """
 from __future__ import annotations

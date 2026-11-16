@@ -17,6 +17,7 @@
   {prog} -h | --help                 Print this usage and exit 0
 
 Environment:
+  RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
 """
 from __future__ import annotations
@@ -56,7 +57,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.5"
+VERSION = "0.21.6"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -384,17 +385,23 @@ def parse_bundle_headers(session_dir: Path | None) -> dict[str, str]:
     return {k.lower(): v for k, v in parse_bundle_header_items(session_dir)}
 
 
+def _resolve_existing_dir(raw: str) -> Path | None:
+    val = raw.strip()
+    if not val:
+        return None
+    try:
+        p = Path(val).expanduser()
+        if p.is_dir():
+            return p.resolve()
+    except OSError:
+        pass
+    return None
+
+
 def _session_bundle_workdir(session_dir: Path | None) -> Path | None:
     headers = parse_bundle_headers(session_dir)
     raw = headers.get("workdir") or headers.get("work-dir") or ""
-    if raw:
-        try:
-            p = Path(raw)
-            if p.is_dir():
-                return p.resolve()
-        except OSError:
-            pass
-    return None
+    return _resolve_existing_dir(raw)
 
 
 def normalize_sandbox_mode(raw: str) -> str:
@@ -4722,12 +4729,20 @@ def format_start_bundle(
     now: datetime | None = None,
     sandbox_mode: str | None = None,
 ) -> dict[str, object]:
-    wdir = (work_dir if work_dir is not None else get_work_dir()).resolve()
+    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
+    if work_dir is not None:
+        wdir = work_dir.resolve()
+    else:
+        cwd_setting, _ = get_setting("work_dir")
+        hdr_wdir: Path | None = None
+        if cwd_setting.lower() == "auto":
+            hdr_map = {k.lower(): v for k, v in stdin_headers}
+            hdr_wdir = _resolve_existing_dir(hdr_map.get("workdir") or hdr_map.get("work-dir") or "")
+        wdir = (hdr_wdir if hdr_wdir is not None else get_work_dir()).resolve()
     sb_mode = get_sandbox_mode(override=sandbox_mode)
     sb_hdr = format_sandbox_header(sb_mode)
     dt_utc = now.astimezone(timezone.utc) if now is not None else datetime.now(timezone.utc)
     ts = dt_utc.strftime("%Y-%m-%d %H:%M UTC")
-    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
     bundle_header_lines = [
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",

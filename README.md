@@ -30,7 +30,10 @@ Pipe any context bundle on `stdin` into `run_block` to initialize
 Optional leading `Key: Value` header lines on `stdin` (separated from the
 body by a blank line) are parsed into `<session>/meta.json` and displayed in
 TUI headers, while `<session>/0` stores only `run_block`'s own headers
-(`Session`, `Next-Block`, `Workdir`, `Sandbox`, `Date`) and the prompt body:
+(`Session`, `Next-Block`, `Workdir`, `Sandbox`, `Date`) and the prompt body.
+When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
+`Workdir` directory, that path is preferred over the current directory or
+Git root and written to `<session>/0`:
 
 ```bash
 cat context.txt | run_block
@@ -82,7 +85,7 @@ RUN_FIX
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `RUN_BLOCK_DIR` | `~/.local/state/run_block` | Session storage directory (`$XDG_STATE_HOME/run_block` on POSIX; `%LOCALAPPDATA%\run_block\state` on Windows) |
-| `RUN_BLOCK_CWD` | `auto` | `auto` (session `Workdir` from `<session>/0`, nearest `.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
+| `RUN_BLOCK_CWD` | `auto` | `auto` (existing `Workdir` preamble header or session `Workdir` from `<session>/0`, nearest `.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `Enter`/`Esc` prompt), `auto` (copy automatically), `never` |
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |

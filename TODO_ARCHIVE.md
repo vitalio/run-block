@@ -1,3 +1,14 @@
+# ✅ [DONE] F45: Prefer Workdir from the piped bundle header over the current directory — *2026-11-17, Prefer existing Workdir from stdin preamble when RUN_BLOCK_CWD is auto; synced docs, help, rules, and tests.*
+
+- First add a test in `tests/test_run_block.py` showing whether
+  `format_start_bundle` in `src/bundle.py` currently ignores a `Workdir`
+  header from `stdin_headers`; it takes the directory from `get_work_dir()`.
+- If ignored, use the `Workdir` value from the stdin preamble (when the
+  directory exists) as `wdir` and write it into `<session>/0`, before the
+  `RUN_BLOCK_CWD` auto resolution in `src/config.py`.
+- Keep `src/header.py`, `README.md`, and the bundled rules in
+  `src/rules/blocks/` in sync.
+
 # ✅ [DONE] F44: Connect python-stdlib and python-annotations rules in .agents_bundle — *2026-11-16, Connected stack/python-stdlib and stack/python-annotations rules in .agents_bundle*
 
 - In `.agents_bundle`, remove `py_min=3.9` from `stack/python-cli` and add
