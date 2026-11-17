@@ -57,7 +57,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.6"
+VERSION = "0.21.7"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -3138,6 +3138,14 @@ def format_clipboard_box(
     return _render_block(title_kind, body_lines, prompt_line=prompt_line)
 
 
+def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
+    lines = box_text.splitlines()
+    if len(lines) <= 2:
+        return 0
+    cols = max(1, term_cols)
+    return sum(max(1, (display_width(ln) + cols - 1) // cols) for ln in lines[:-2])
+
+
 def offer_clipboard_copy(
     label: str,
     out_path: Path,
@@ -3166,6 +3174,7 @@ def offer_clipboard_copy(
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
         sys.stdout.flush()
         return
+    prev_cols = _hr_width()
     box, rule_width, cursor_offset = format_clipboard_box(
         label,
         out_path,
@@ -3187,7 +3196,40 @@ def offer_clipboard_copy(
             tty_w.flush()
             while True:
                 action = read_clipboard_key(tty_r)
-                if (is_start_bundle and action == "edit") or (not is_start_bundle and action == "view"):
+                if is_start_bundle and action == "edit":
+                    if out_path.is_file():
+                        try:
+                            before_bytes: bytes | None = out_path.read_bytes()
+                        except OSError:
+                            before_bytes = None
+                        open_script_in_editor(out_path, tty_r, tty_w)
+                        try:
+                            after_bytes: bytes | None = out_path.read_bytes() if out_path.is_file() else None
+                        except OSError:
+                            after_bytes = None
+                        if after_bytes is not None and after_bytes != before_bytes:
+                            fn_refresh = globals().get("refresh_bundle_meta")
+                            if callable(fn_refresh):
+                                fn_refresh(out_path)
+                        up_rows = _box_rows_above_prompt(box, prev_cols)
+                        prev_cols = _hr_width()
+                        box, rule_width, cursor_offset = format_clipboard_box(
+                            label,
+                            out_path,
+                            ok=ok,
+                            rc=rc,
+                            stats=stats_line(out_path),
+                            title_kind=title_kind,
+                            extra_lines=extra_lines,
+                            cmd_str=cmd_str,
+                        )
+                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                        prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.flush()
+                    continue
+                if not is_start_bundle and action == "view":
                     if out_path.is_file():
                         open_script_in_editor(out_path, tty_r, tty_w)
                         tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
@@ -4871,6 +4913,17 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
         if not in_run_block():
             offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START BUNDLE", extra_lines=body_lines)
     return 0
+
+
+def refresh_bundle_meta(bundle_path: Path) -> None:
+    if not bundle_path.is_file():
+        return
+    sdir = _resolve_session_dir(path_hint=bundle_path)
+    if sdir is None:
+        return
+    fn_plan = globals().get("refresh_bundle_plan_meta")
+    if callable(fn_plan):
+        fn_plan(sdir, bundle_path)
 
 
 def ensure_session_bundle(

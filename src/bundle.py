@@ -160,6 +160,17 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     return 0
 
 
+def refresh_bundle_meta(bundle_path: Path) -> None:
+    if not bundle_path.is_file():
+        return
+    sdir = _resolve_session_dir(path_hint=bundle_path)
+    if sdir is None:
+        return
+    fn_plan = globals().get("refresh_bundle_plan_meta")
+    if callable(fn_plan):
+        fn_plan(sdir, bundle_path)
+
+
 def ensure_session_bundle(
     sdir: Path, work_dir: Path | None = None, sandbox_mode: str | None = None
 ) -> Path:

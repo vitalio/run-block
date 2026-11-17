@@ -1,3 +1,10 @@
+# ✅ [DONE] F50: Recalculate and redraw bundle statistics after e(dit) in START BUNDLE — *2026-11-17, Recalculate bundle statistics and redraw full START BUNDLE box after edit*
+
+- Recompute `stats_line(out_path)` (line count, byte size, and estimated token range) in `offer_clipboard_copy()` (`src/ui.py`) immediately after `open_script_in_editor(out_path, tty_r, tty_w)` returns from `e(dit)` on `START BUNDLE`.
+- Re-render the full `START BUNDLE` box in place on the TTY (moving the cursor back to the top of the previous box, clearing stale lines, and recalculating box border width and prompt cursor offset) instead of only redrawing the bottom prompt and border lines.
+- Refresh any cached bundle metadata / `bundle_plan` statistics in `<session>/meta.json` (`src/bundle.py`, `src/bundle_plan.py`) when `<session>/0` changes during `e(dit)` so `START BUNDLE` and `--bundle-plan` stay in sync.
+- Add unit tests in `tests/test_run_block.py` covering `e(dit)` in `START BUNDLE` with a stub editor that modifies `<session>/0` and asserting updated `Stats:` output and box alignment.
+
 # ✅ [DONE] F45: Prefer Workdir from the piped bundle header over the current directory — *2026-11-17, Prefer existing Workdir from stdin preamble when RUN_BLOCK_CWD is auto; synced docs, help, rules, and tests.*
 
 - First add a test in `tests/test_run_block.py` showing whether

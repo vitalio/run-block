@@ -2130,5 +2130,109 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn(str(target.resolve()), r_step.stdout)
 
 
+    def test_f50_start_bundle_edit_recalculates_stats_and_redraws_box(self):
+        sdir = self.tmp / "s1"
+        sdir.mkdir(parents=True, exist_ok=True)
+        bundle_file = sdir / "0"
+        initial_text = (
+            "Session: s1\n"
+            "Next-Block: s1/1\n"
+            f"Workdir: {self.tmp}\n"
+            "Sandbox: off\n"
+            "Date: 2026-11-17 13:00 UTC\n\n"
+            "Short prompt\n"
+        )
+        bundle_file.write_text(initial_text, encoding="utf-8")
+        initial_stats = self.mod.stats_line(bundle_file)
+        assert initial_stats is not None
+
+        edited_text = initial_text + ("extra line of context for token growth\n" * 18)
+
+        def stub_editor(p: Path, _r, _w) -> None:
+            p.write_text(edited_text, encoding="utf-8")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = _KeepOpenStringIO()
+        tty_r = io.StringIO("e\n\n")
+        refresh_calls: list[Path] = []
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {bundle_file}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=stub_editor), \
+             unittest.mock.patch.object(self.mod, "refresh_bundle_meta", side_effect=lambda p: refresh_calls.append(p)), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy, \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy(
+                "s1/0",
+                bundle_file,
+                title_kind="START BUNDLE",
+                extra_lines=[f"Bundle: {bundle_file}"],
+            )
+
+        updated_stats = self.mod.stats_line(bundle_file)
+        assert updated_stats is not None
+        self.assertNotEqual(initial_stats, updated_stats)
+        self.assertEqual(refresh_calls, [bundle_file])
+        mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
+
+        tty_out = tty_w.getvalue()
+        self.assertIn(f"Stats:  {initial_stats}", tty_out)
+        self.assertIn(f"Stats:  {updated_stats}", tty_out)
+        self.assertEqual(tty_out.count("╭─ START BUNDLE "), 2)
+
+        initial_box, _, _ = self.mod.format_clipboard_box(
+            "s1/0",
+            bundle_file,
+            stats=initial_stats,
+            title_kind="START BUNDLE",
+            extra_lines=[f"Bundle: {bundle_file}"],
+        )
+        expected_up = self.mod._box_rows_above_prompt(initial_box, 84)
+        self.assertIn(f"\r\033[{expected_up}A\033[J╭─ START BUNDLE ", tty_out)
+        self.assertIn("╭─ START BUNDLE " + "─" * 32, tty_out)
+        self.assertIn("╰" + "─" * 47, tty_out)
+
+        # Terminal resize during e(dit) recalculates border width and final bottom rule
+        tty_w_resize = _KeepOpenStringIO()
+        tty_r_resize = io.StringIO("e\nesc\n")
+        sizes = [
+            os.terminal_size((44, 24)),
+            os.terminal_size((44, 24)),
+            os.terminal_size((76, 24)),
+            os.terminal_size((76, 24)),
+        ]
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {bundle_file}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_resize, tty_r_resize)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=lambda p, _r, _w: p.write_text(initial_text, encoding="utf-8")), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=sizes), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy(
+                "s1/0",
+                bundle_file,
+                title_kind="START BUNDLE",
+                extra_lines=[f"Bundle: {bundle_file}"],
+            )
+        resize_out = tty_w_resize.getvalue()
+        self.assertIn("╭─ START BUNDLE " + "─" * 28, resize_out)
+        self.assertIn("╭─ START BUNDLE " + "─" * 32, resize_out)
+        self.assertTrue(resize_out.endswith("\r\033[K│ Skipped clipboard copy.\n\r\033[K" + ("╰" + "─" * 47) + "\n"))
+
+        # Unchanged <session>/0 does not trigger refresh_bundle_meta; hook in refresh_bundle_meta runs when changed
+        hook_calls: list[tuple[Path, Path]] = []
+        with unittest.mock.patch.dict(self.mod.refresh_bundle_meta.__globals__, {"refresh_bundle_plan_meta": lambda s, b: hook_calls.append((s, b))}):
+            self.mod.refresh_bundle_meta(bundle_file)
+        self.assertEqual(hook_calls, [(sdir, bundle_file)])
+
+
 if __name__ == "__main__":
     unittest.main()
