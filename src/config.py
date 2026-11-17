@@ -267,6 +267,58 @@ def write_session_meta(session_dir: Path, headers: list[tuple[str, str]]) -> Pat
     return meta_file
 
 
+def format_duration(seconds: float) -> str:
+    secs = max(0.0, float(seconds))
+    ms = int(round(secs * 1000.0))
+    if ms < 1000:
+        return f"{ms}ms"
+    if round(secs, 1) < 60.0:
+        return f"{secs:.1f}s"
+    total_s = int(round(secs))
+    mins, rem_s = divmod(total_s, 60)
+    hours, rem_m = divmod(mins, 60)
+    if hours > 0:
+        return f"{hours}h {rem_m}m {rem_s}s"
+    return f"{rem_m}m {rem_s}s"
+
+
+def read_step_meta(step_dir: Path | None) -> dict[str, object]:
+    if step_dir is None:
+        return {}
+    meta_file = step_dir / "meta.json"
+    if not meta_file.is_file():
+        return {}
+    try:
+        data = json.loads(meta_file.read_text(encoding="utf-8", errors="replace"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def write_step_meta(
+    step_dir: Path,
+    *,
+    duration_ms: int,
+    exit_code: int,
+    operations: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
+) -> Path:
+    meta_file = step_dir / "meta.json"
+    data: dict[str, object] = {
+        "duration_ms": max(0, int(duration_ms)),
+        "exit_code": int(exit_code),
+    }
+    if operations:
+        data["operations"] = list(operations)
+    if failed_step is not None and exit_code != 0:
+        data["failed_step"] = int(failed_step)
+    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(payload)
+    return meta_file
+
+
 def _parse_meta_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
     meta = read_session_meta(session_dir)
     raw_headers = meta.get("headers")

@@ -107,13 +107,23 @@ def _wrap_labeled_items(
         nw = num_width if num_width is not None else max(len(f"{n}.") for n in nums if n is not None)
     else:
         nw = 0
+    utf8_ok = _supports_utf8()
     out: list[str] = []
-    for (k, v), num in zip(items, nums):
+    for idx, ((k, v), num) in enumerate(zip(items, nums)):
         num_prefix = ""
+        sub_marker = ""
         if has_nums:
-            num_prefix = (f"{num}.".rjust(nw) + " ") if num is not None else (" " * (nw + 1))
+            if num is not None:
+                num_prefix = f"{num}.".rjust(nw) + " "
+            else:
+                num_prefix = " " * (nw + 1)
+                is_last_sub = idx + 1 >= len(nums) or nums[idx + 1] is not None
+                if utf8_ok:
+                    sub_marker = "└─ " if is_last_sub else "├─ "
+                else:
+                    sub_marker = "`- " if is_last_sub else "|- "
         tag = f"[{k}]".ljust(tag_w)
-        prefix = f"{indent}{num_prefix}{tag}  "
+        prefix = f"{indent}{num_prefix}{sub_marker}{tag}  "
         sub_indent = " " * len(prefix)
         avail = max(24, max_width - len(prefix))
         wrapped = textwrap.wrap(v, width=avail, break_long_words=True, break_on_hyphens=False) or [v]
@@ -121,6 +131,42 @@ def _wrap_labeled_items(
         for cont in wrapped[1:]:
             out.append(sub_indent + cont)
     return out
+
+
+def _group_operations_for_display(
+    ops: list[tuple[str, str]],
+    op_groups: list[tuple[str, list[tuple[str, str]]]],
+    op_steps: list[dict[str, object]],
+) -> list[tuple[str | None, list[tuple[str, str]], list[int | None]]]:
+    if not op_groups:
+        op_nums, _ = _match_operation_step_numbers(ops, op_steps)
+        return [(None, list(ops), op_nums)]
+    has_step_subdirs = (
+        any(bool(s.get("dir")) for s in op_steps)
+        if op_steps
+        else any(bool(g_dir) for g_dir, _ in op_groups)
+    )
+    if not has_step_subdirs:
+        op_nums, _ = _match_operation_step_numbers(ops, op_steps)
+        return [(None, list(ops), op_nums)]
+    merged: list[tuple[str, list[tuple[str, str]], list[int | None]]] = []
+    step_cursor = 0
+    for g_dir, g_items in op_groups:
+        g_nums, step_cursor = _match_operation_step_numbers(
+            g_items, op_steps, group_dir=g_dir, step_cursor=step_cursor
+        )
+        if merged and g_nums and all(n is None for n in g_nums):
+            parent_dir, parent_items, parent_nums = merged[-1]
+            for tag, desc in g_items:
+                disp_desc = f"{g_dir}: {desc}" if (g_dir and g_dir != parent_dir) else desc
+                parent_items.append((tag, disp_desc))
+                parent_nums.append(None)
+        elif merged and merged[-1][0] == g_dir:
+            merged[-1][1].extend(g_items)
+            merged[-1][2].extend(g_nums)
+        else:
+            merged.append((g_dir, list(g_items), list(g_nums)))
+    return [(g_dir, items, nums) for g_dir, items, nums in merged]
 
 
 def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None) -> Path | None:
@@ -240,7 +286,6 @@ def format_safety_box(
         ops = list(summary.get("operations") or [])
         op_groups = list(summary.get("operation_groups") or [])
         op_steps = list(summary.get("operation_steps") or [])
-        has_subdirs = any(bool(g_dir) for g_dir, _ in op_groups)
         max_step_num = max((int(s.get("step") or 0) for s in op_steps), default=0)
         step_num_w = len(f"{max_step_num}.") if max_step_num > 0 else None
         if ops:
@@ -248,24 +293,17 @@ def format_safety_box(
                 detail_lines.append("")
             detail_lines.append(f"{_KEY_COLOR}Operations:{_ANSI_RESET}" if _use_color() else "Operations:")
             op_lines: list[str] = []
-            if has_subdirs and op_groups:
-                step_cursor = 0
-                for g_dir, g_items in op_groups:
+            display_groups = _group_operations_for_display(ops, op_groups, op_steps)
+            for g_dir, g_items, g_nums in display_groups:
+                if g_dir is not None:
                     dir_hdr = g_dir if g_dir else (wdir or ".")
                     op_lines.append(f"  {dir_hdr}:")
-                    g_nums, step_cursor = _match_operation_step_numbers(
-                        g_items, op_steps, group_dir=g_dir, step_cursor=step_cursor
-                    )
-                    op_lines.extend(
-                        _wrap_labeled_items(
-                            g_items, max_row_len, indent="    ", step_nums=g_nums, num_width=step_num_w
-                        )
-                    )
-            else:
-                op_nums, _ = _match_operation_step_numbers(ops, op_steps)
+                    item_indent = "    "
+                else:
+                    item_indent = "  "
                 op_lines.extend(
                     _wrap_labeled_items(
-                        ops, max_row_len, indent="  ", step_nums=op_nums, num_width=step_num_w
+                        g_items, max_row_len, indent=item_indent, step_nums=g_nums, num_width=step_num_w
                     )
                 )
             detail_lines.extend(_colorize_operation_lines(op_lines))
@@ -950,10 +988,12 @@ def _colorize_operation_lines(lines: list[str]) -> list[str]:
     out: list[str] = []
     last_tag = ""
     for line in lines:
-        m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
+        m = re.match(r"^(\s*)(\d+\.\s+|(?:├─|└─|\|-|`-)\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
         if m:
             indent, num_part, tag_br, tag, spaces, rest = m.groups()
             num_str = num_part or ""
+            if num_str and num_str.lstrip().startswith(("├─", "└─", "|-", "`-")):
+                num_str = f"{_KEY_COLOR}{num_str}{_ANSI_RESET}"
             last_tag = tag
             if tag == "write":
                 t_col = _TAG_COLORS["write"]
@@ -1133,6 +1173,27 @@ def _format_end_fix_status(label: str, resolved_sdir: Path | None) -> str:
     return f"{prog_name()} --fix {label} ({used}/{max_attempts} failed attempts)"
 
 
+def _format_step_timings_summary(
+    op_timings: list[dict[str, object]],
+    *,
+    failed_step: int | None = None,
+    rc: int | None = None,
+) -> str:
+    parts: list[str] = []
+    for item in op_timings:
+        step_num = item.get("step")
+        tag = str(item.get("tag") or "exec")
+        try:
+            dur_ms = int(item.get("duration_ms") or 0)
+        except (TypeError, ValueError):
+            dur_ms = 0
+        entry = f"{step_num}. [{tag}] {format_duration(dur_ms / 1000.0)}"
+        if rc is not None and rc != 0 and failed_step is not None and step_num == failed_step:
+            entry += " (failed)"
+        parts.append(entry)
+    return " · ".join(parts)
+
+
 def build_box_body_lines(
     out_path: Path,
     rc: int | None = None,
@@ -1142,10 +1203,27 @@ def build_box_body_lines(
     sdir: Path | None = None,
     edited: bool | None = None,
     error_source: Path | None = None,
+    duration_s: float | None = None,
+    op_timings: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
 ) -> list[str]:
     err_src = error_source if error_source is not None else out_path
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, err_src)
     is_edited = _is_file_edited(err_src) if edited is None else edited
+    if (duration_s is None or op_timings is None) and err_src.name == "out":
+        step_meta = read_step_meta(err_src.parent)
+        if duration_s is None and isinstance(step_meta.get("duration_ms"), (int, float)):
+            duration_s = float(step_meta["duration_ms"]) / 1000.0
+        if op_timings is None and isinstance(step_meta.get("operations"), list):
+            op_timings = [x for x in step_meta["operations"] if isinstance(x, dict)]
+        if failed_step is None and isinstance(step_meta.get("failed_step"), int):
+            failed_step = int(step_meta["failed_step"])
+    duration_str = format_duration(duration_s) if duration_s is not None else None
+    steps_summary = (
+        _format_step_timings_summary(op_timings, failed_step=failed_step, rc=rc)
+        if op_timings
+        else ""
+    )
     if extra_lines is not None:
         detail_lines = list(extra_lines)
     else:
@@ -1159,11 +1237,20 @@ def build_box_body_lines(
                 fix_status = _format_end_fix_status(label, resolved_sdir)
                 if fix_status:
                     detail_lines.append(f"Fix: {fix_status}")
+        if steps_summary:
+            detail_lines.append(f"Steps: {steps_summary}")
         detail_lines.append(f"Output: {out_path}")
-    if stats and not any(line.startswith("Stats:") for line in detail_lines):
-        detail_lines.append(f"Stats: {stats} (edited)" if is_edited else f"Stats: {stats}")
-    elif is_edited and not any(line.startswith("Stats:") for line in detail_lines):
-        detail_lines.append("Stats: (edited)")
+    if not any(line.startswith("Stats:") for line in detail_lines):
+        stats_parts: list[str] = []
+        if stats:
+            stats_parts.append(stats)
+        if duration_str:
+            stats_parts.append(duration_str)
+        if stats_parts:
+            joined_stats = " · ".join(stats_parts)
+            detail_lines.append(f"Stats: {joined_stats} (edited)" if is_edited else f"Stats: {joined_stats}")
+        elif is_edited:
+            detail_lines.append("Stats: (edited)")
     has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
         return _align_kv_lines(detail_lines)
@@ -1190,6 +1277,9 @@ def format_clipboard_box(
     cmd_str: str | None = None,
     edited: bool | None = None,
     error_source: Path | None = None,
+    duration_s: float | None = None,
+    op_timings: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
     body_lines = build_box_body_lines(
@@ -1200,6 +1290,9 @@ def format_clipboard_box(
         label=label,
         edited=edited,
         error_source=error_source,
+        duration_s=duration_s,
+        op_timings=op_timings,
+        failed_step=failed_step,
     )
     prompt_line = _clipboard_prompt_line(title_kind)
     return _render_block(title_kind, body_lines, prompt_line=prompt_line)
@@ -1220,6 +1313,9 @@ def offer_clipboard_copy(
     rc: int | None = None,
     title_kind: str = "END",
     extra_lines: list[str] | None = None,
+    duration_s: float | None = None,
+    op_timings: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
 ) -> None:
     if in_run_block():
         return
@@ -1266,6 +1362,9 @@ def offer_clipboard_copy(
         cmd_str=cmd_str,
         edited=is_edited,
         error_source=edit_target,
+        duration_s=duration_s,
+        op_timings=op_timings,
+        failed_step=failed_step,
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
@@ -1317,6 +1416,9 @@ def offer_clipboard_copy(
                                 cmd_str=cmd_str,
                                 edited=is_edited,
                                 error_source=edit_target,
+                                duration_s=duration_s,
+                                op_timings=op_timings,
+                                failed_step=failed_step,
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
                             prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)

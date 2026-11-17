@@ -58,16 +58,20 @@ python3 -m unittest
 RUN_BLOCK
 ```
 
-Before running, `run_block` displays the `BLOCK PLAN` (working directory, operations, and
-any safety warnings). Press `Enter`/`y` to run, `n`/`Esc` to abort, or `e` (or `v`) to edit
-the script in your terminal editor. The first edit preserves the original script as
+Before running, `run_block` displays the `BLOCK PLAN` (working directory, numbered
+operations with nested AST-expanded sub-items, and any safety warnings). Press
+`Enter`/`y` to run, `n`/`Esc` to abort, or `e` (or `v`) to edit the script in your
+terminal editor. The first edit preserves the original script as
 `<session>/<step>/block.orig.sh` (or `.ps1`), recalculates operations, statistics, and
-safety warnings in place, and re-validates syntax before execution. Across all interactive
-TUI confirmation prompts (`BLOCK PLAN`,
-`END`, `STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and
-`CLEAN SESSIONS`), `Esc` consistently cancels or exits without proceeding. In the `END`
-clipboard prompt (and `START BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out`
-(preserving `<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
+safety warnings in place, and re-validates syntax before execution. During execution,
+`run_block` records wall-clock block duration (excluding confirmation prompts) and
+per-operation elapsed timings in `<session>/<step>/meta.json`, `[<session>/<step>] END
+(<duration>)`, `Stats:`, and live progress output. Across all interactive TUI
+confirmation prompts (`BLOCK PLAN`, `END`, `STEP ALREADY EXISTS`,
+`SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and `CLEAN SESSIONS`), `Esc`
+consistently cancels or exits without proceeding. In the `END` clipboard prompt (and
+`START BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
+`<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
 recalculating line/byte/token statistics, `Error:` lines, and clipboard targets in place.
 
 ### 3. Patching a failed block (`--fix`)
@@ -97,7 +101,7 @@ RUN_FIX
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
 | `RUN_BLOCK_TOKEN_STATS` | `true` | Show byte size and Claude/GPT/Gemini token counts (`true` / `false`) |
-| `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers during interactive execution (`0`/`false` to disable) |
+| `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers and elapsed timings during interactive execution (`0`/`false` to disable) |
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
 | `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash`, `sh`, or `pwsh`/`powershell` on Windows) |

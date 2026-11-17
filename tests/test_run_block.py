@@ -120,7 +120,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(r_headless.returncode, 0)
         self.assertIn("[s1/1] START\n", r_headless.stdout)
         self.assertIn("headless_ok", r_headless.stdout)
-        self.assertIn("[s1/1] END\n", r_headless.stdout)
+        self.assertRegex(r_headless.stdout, r"\[s1/1\] END \([^)\n]+\)\n")
         self.assertNotIn("[END]", r_headless.stdout)
 
         env_reject = {**os.environ, "RUN_BLOCK_APPROVE_CMD": "echo 'Blocked by LLM policy' && exit 1"}
@@ -213,7 +213,7 @@ class TestRunBlock(unittest.TestCase):
         out1 = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
         self.assertIn("hello_world in_rb=1", out1)
         self.assertIn("[s1/1] START\n", out1)
-        self.assertIn("[s1/1] END\n", out1)
+        self.assertRegex(out1, r"\[s1/1\] END \([^)\n]+\)\n")
         self.assertIn("╭─ END ", buf.getvalue())
         self.assertIn("Block:   s1/1", buf.getvalue())
         self.assertIn("╭─ NOT RUN ", buf.getvalue())
@@ -362,7 +362,7 @@ class TestRunBlock(unittest.TestCase):
         r_list = subprocess.run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self.assertEqual(r_list.returncode, 0)
         self.assertIn("s1/1", r_list.stdout)
-        self.assertIn("END)", r_list.stdout)
+        self.assertRegex(r_list.stdout, r"END \([^)\n]+\)")
 
         r_show = subprocess.run([str(SCRIPT), "--show", "s1/1"], capture_output=True, text=True, check=False)
         self.assertEqual(r_show.returncode, 0)
@@ -1235,7 +1235,8 @@ class TestRunBlock(unittest.TestCase):
         out_txt = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
         self.assertIn("[s1/1] <stdin> line 4: compute()", out_txt)
         self.assertIn("[s1/1] <stdin> line 3: return items[5]", out_txt)
-        self.assertLess(out_txt.index("[s1/1] <stdin> line 3: return items[5]"), out_txt.index("[s1/1] END (exit 1)"))
+        self.assertRegex(out_txt, r"\[s1/1\] END \(exit 1, [^)\n]+\)")
+        self.assertLess(out_txt.index("[s1/1] <stdin> line 3: return items[5]"), out_txt.index("[s1/1] END (exit 1,"))
 
         # END box displays Error: <last_error_line> and Fix: status line
         end_rendered = buf_end.getvalue()
@@ -1755,11 +1756,11 @@ class TestRunBlock(unittest.TestCase):
         sum_num = self.mod.summarize_script_actions(script_num, Path("/tmp/work"))
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
             box_num, _, _ = self.mod.format_safety_box("s1/1", [], default_yes=True, summary=sum_num)
-        self.assertIn("    1. [git]     git status -sb", box_num)
-        self.assertIn("    2. [python]  5 lines", box_num)
-        self.assertIn("       [write]  f0.py", box_num)
-        self.assertIn("       [read]  t0.py", box_num)
-        self.assertIn("    3. [write]  rm -f note.txt", box_num)
+        self.assertIn("  1. [git]     git status -sb", box_num)
+        self.assertIn("  2. [python]  5 lines", box_num)
+        self.assertIn("     ├─ [write]   src: f0.py", box_num)
+        self.assertIn("     └─ [read]    tests: t0.py", box_num)
+        self.assertIn("  3. [write]   rm -f note.txt", box_num)
 
         # 2. RUN_BLOCK_PROGRESS config setting
         os.environ.pop("RUN_BLOCK_PROGRESS", None)
@@ -2507,6 +2508,170 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn(f"Script: {b_script}", show1_out)
         self.assertIn(f"(edited) (original: {b_orig})", show1_out)
         self.assertIn(f"Output: {f} (edited) (original: {orig_out})", show1_out)
+
+    def test_f49_block_and_operation_durations_and_sub_items(self):
+        # 1. format_duration covers ms, s, m, and h ranges cleanly
+        self.assertEqual(self.mod.format_duration(0.0), "0ms")
+        self.assertEqual(self.mod.format_duration(0.015), "15ms")
+        self.assertEqual(self.mod.format_duration(0.999), "999ms")
+        self.assertEqual(self.mod.format_duration(0.9996), "1.0s")
+        self.assertEqual(self.mod.format_duration(3.42), "3.4s")
+        self.assertEqual(self.mod.format_duration(65.2), "1m 5s")
+        self.assertEqual(self.mod.format_duration(3665.0), "1h 1m 5s")
+
+        # 2. Wall-clock block duration excludes BLOCK PLAN confirmation wait
+        work = self.tmp / "f49_work"
+        work.mkdir()
+        (work / "a.txt").write_text("alpha\n", encoding="utf-8")
+        (work / "b.txt").write_text("beta\n", encoding="utf-8")
+        os.environ["RUN_BLOCK_CWD"] = str(work)
+
+        sdir = self.tmp / "s49"
+        step1_dir = sdir / "1"
+        step1_dir.mkdir(parents=True)
+        script1 = step1_dir / "block.sh"
+        out1 = step1_dir / "out"
+        script1.write_text("echo ok_step\n", encoding="utf-8")
+
+        fake_clock_vals = iter([1000.0, 1002.4])  # Popen..wait = 2.4s (after confirmation)
+
+        def confirm_with_wait(*_args, **_kwargs):
+            # Even if confirmation takes 100s, exec_started is captured after confirm_execution
+            return True, ""
+
+        buf1 = io.StringIO()
+        with unittest.mock.patch.object(self.mod, "confirm_execution", side_effect=confirm_with_wait), \
+             unittest.mock.patch.object(self.mod.time, "monotonic", side_effect=lambda: next(fake_clock_vals)), \
+             contextlib.redirect_stdout(buf1):
+            rc1 = self.mod.run_script("s49/1", script1, out1, auto_yes=False)
+        self.assertEqual(rc1, 0)
+        out1_txt = out1.read_text(encoding="utf-8")
+        self.assertIn("[s49/1] END (2.4s)\n", out1_txt)
+        self.assertIn("· 2.4s", buf1.getvalue())
+        self.assertIn("Stats:  ", buf1.getvalue())
+        self.assertEqual(self.mod._step_status(sdir, "1"), "END (2.4s)")
+        meta1 = self.mod.read_step_meta(step1_dir)
+        self.assertEqual(meta1.get("duration_ms"), 2400)
+        self.assertEqual(meta1.get("exit_code"), 0)
+
+        # Stats: still shows duration when RUN_BLOCK_TOKEN_STATS=false
+        saved_tok = os.environ.get("RUN_BLOCK_TOKEN_STATS")
+        os.environ["RUN_BLOCK_TOKEN_STATS"] = "false"
+        try:
+            end_no_tok = self.mod.build_box_body_lines(
+                out1, rc=0, stats=self.mod.stats_line(out1), label="s49/1", sdir=sdir
+            )
+            self.assertTrue(any(ln.rstrip().endswith("2.4s") and ln.startswith("Stats:") for ln in end_no_tok))
+        finally:
+            if saved_tok is None:
+                os.environ.pop("RUN_BLOCK_TOKEN_STATS", None)
+            else:
+                os.environ["RUN_BLOCK_TOKEN_STATS"] = saved_tok
+
+        # 3. _ProgressLineFilter tracks per-operation durations and interleaved events deterministically
+        t_seq = iter([10.0, 10.25, 13.65])
+        step_map = {
+            1: {"step": 1, "tag": "read", "desc": "cat a.txt"},
+            2: {"step": 2, "tag": "exec", "desc": "pytest -q"},
+        }
+        pf = self.mod._ProgressLineFilter(step_map, total_steps=2, clock=lambda: next(t_seq))
+        events = pf.feed_events("__RB_STEP__:1\nalpha\n__RB_STEP__:2\nfail\n")
+        self.assertEqual(events[0][0], "prog")
+        self.assertIn("[1/2] [read] cat a.txt", events[0][1])
+        self.assertEqual(events[1], ("out", "alpha\n"))
+        self.assertEqual(events[2][0], "prog")
+        self.assertIn("✓ [1/2] (250ms)", events[2][1])
+        self.assertIn("[2/2] [exec] pytest -q", events[2][1])
+        self.assertEqual(events[3], ("out", "fail\n"))
+        rem_out, rem_prog = pf.flush(rc=1)
+        self.assertEqual(rem_out, "")
+        self.assertIn("✗ [2/2] (3.4s)", rem_prog)
+        self.assertEqual(
+            pf.operation_timings(),
+            [
+                {"step": 1, "tag": "read", "desc": "cat a.txt", "duration_ms": 250},
+                {"step": 2, "tag": "exec", "desc": "pytest -q", "duration_ms": 3400},
+            ],
+        )
+
+        # 4. Interactive run_script records per-op timings in live output, END box, and meta.json, and surfaces in -l
+        step2_dir = sdir / "2"
+        step2_dir.mkdir(parents=True)
+        script2 = step2_dir / "block.sh"
+        out2 = step2_dir / "out"
+        script2.write_text("cat a.txt\ncat missing_file_f49\n", encoding="utf-8")
+        buf2 = io.StringIO()
+        buf2.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdout", buf2), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, "")), \
+             unittest.mock.patch.object(self.mod, "offer_clipboard_copy"):
+            rc2 = self.mod.run_script("s49/2", script2, out2, auto_yes=False)
+        self.assertNotEqual(rc2, 0)
+        live2 = buf2.getvalue()
+        self.assertIn("✓ [1/2] (", live2)
+        self.assertIn("✗ [2/2] (", live2)
+        self.assertIn("Steps:  1. [read] ", live2)
+        self.assertIn("2. [read] ", live2)
+        self.assertIn("(failed)", live2)
+        out2_txt = out2.read_text(encoding="utf-8")
+        self.assertRegex(out2_txt, rf"\[s49/2\] END \(exit {rc2}, [^)\n]+\)\n")
+        meta2 = self.mod.read_step_meta(step2_dir)
+        self.assertEqual(meta2.get("exit_code"), rc2)
+        self.assertEqual(meta2.get("failed_step"), 2)
+        self.assertEqual(len(meta2.get("operations") or []), 2)
+
+        list_buf = io.StringIO()
+        with contextlib.redirect_stdout(list_buf):
+            self.assertEqual(self.mod.cmd_list("s49"), 0)
+        list_out = list_buf.getvalue()
+        self.assertIn("END (2.4s)", list_out)
+        self.assertIn(f"END (exit {rc2},", list_out)
+
+        # 5. BLOCK PLAN visually nests AST-expanded sub-items in both flat, multi-dir, ASCII, and color modes
+        mixed_script = (
+            "cd /tmp\n"
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            + "\n".join(f"Path('src/f{i}.py').write_text('x')" for i in range(6))
+            + "\n"
+            + "\n".join(f"Path('tests/t{i}.py').read_text()" for i in range(5))
+            + "\nPY\n"
+            "cd /var\n"
+            "ls -la\n"
+        )
+        mixed_sum = self.mod.summarize_script_actions(mixed_script, Path("/tmp/work"))
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+            mixed_box, _, _ = self.mod.format_safety_box("s49/3", [], default_yes=True, summary=mixed_sum)
+        self.assertIn("  /tmp:", mixed_box)
+        self.assertIn("    1. [python]  12 lines", mixed_box)
+        self.assertIn("       ├─ [write]   src/f0.py", mixed_box)
+        self.assertIn("       └─ [read]    tests/t0.py", mixed_box)
+        self.assertIn("  /var:", mixed_box)
+        self.assertIn("    2. [read]  ls -la", mixed_box)
+
+        # ASCII fallback uses |- and `- connectors
+        with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+                ascii_box, _, _ = self.mod.format_safety_box("s49/3", [], default_yes=True, summary=mixed_sum)
+        self.assertIn("       |- [write]   src/f0.py", ascii_box)
+        self.assertIn("       `- [read]    tests/t0.py", ascii_box)
+
+        # Colorized sub-items preserve [write] and [read] tag colors
+        tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+        saved_nc = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+                col_box, _, _ = self.mod.format_safety_box("s49/3", [], default_yes=True, summary=mixed_sum)
+            self.assertIn("\x1b[2;33m", col_box)
+            self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m", col_box)
+            self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m", col_box)
+        finally:
+            if saved_nc is not None:
+                os.environ["NO_COLOR"] = saved_nc
+
 
 if __name__ == "__main__":
     unittest.main()

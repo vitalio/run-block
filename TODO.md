@@ -1,11 +1,3 @@
-# 🎯 [NEXT] F49: Record and display execution duration for blocks and numbered operations
-
-- Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.
-- Include formatted duration in the trailing `[<session>/<step>] END` marker written to `out` (e.g. `[s1/1] END (3.4s)` or `[s1/1] END (exit 1, 3.4s)`, keeping `_step_status()` parsing compatible) and append duration to `Stats:` in the `END` box (`src/ui.py`).
-- Track per-operation elapsed durations in `_ProgressLineFilter` (`src/runner.py`) via `__RB_STEP__:N` markers, showing step timing in live progress output and surfacing per-operation timings (plus step `duration_ms` metadata) for `END` diagnostics and `run_block -l` / `--info` (`D1`, `F20`).
-- Visually distinguish unnumbered AST-expanded sub-items (`[read]`, `[write]`) under a numbered parent step (such as `1. [python]`) in `BLOCK PLAN` (`src/ui.py`, `src/safety.py`) with a subordinate marker or nested indent so sub-operations clearly belong to their parent step.
-- Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `src/config.py`, `README.md`, `tests/test_run_block.py`.
-
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
 - Design candidate for `role=design` (coordinates with `F42` and `F48`).

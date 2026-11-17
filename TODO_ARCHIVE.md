@@ -1,3 +1,11 @@
+# ✅ [DONE] F49: Record and display execution duration for blocks and numbered operations — *2026-11-17, Record block/operation durations and nest AST sub-items in BLOCK PLAN*
+
+- Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.
+- Include formatted duration in the trailing `[<session>/<step>] END` marker written to `out` (e.g. `[s1/1] END (3.4s)` or `[s1/1] END (exit 1, 3.4s)`, keeping `_step_status()` parsing compatible) and append duration to `Stats:` in the `END` box (`src/ui.py`).
+- Track per-operation elapsed durations in `_ProgressLineFilter` (`src/runner.py`) via `__RB_STEP__:N` markers, showing step timing in live progress output and surfacing per-operation timings (plus step `duration_ms` metadata) for `END` diagnostics and `run_block -l` / `--info` (`D1`, `F20`).
+- Visually distinguish unnumbered AST-expanded sub-items (`[read]`, `[write]`) under a numbered parent step (such as `1. [python]`) in `BLOCK PLAN` (`src/ui.py`, `src/safety.py`) with a subordinate marker or nested indent so sub-operations clearly belong to their parent step.
+- Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `src/config.py`, `README.md`, `tests/test_run_block.py`.
+
 # ✅ [DONE] F52: Support e(dit) on END output (and 0.orig on START BUNDLE) with original backup and stats recalculation — *2026-11-17*
 
 - Replace `v(iew)` with `e(dit)` in the `END` clipboard prompt (`src/ui.py`, keeping `v` as a compatibility alias) and preserve the unmodified output as `<session>/<step>/out.orig` on the first edit without overwriting it on subsequent edits; also preserve `<session>/0.orig` on the first `e(dit)` in `START BUNDLE`.

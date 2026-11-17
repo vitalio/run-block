@@ -360,12 +360,18 @@ class _ProgressLineFilter:
         step_map: dict[int, dict[str, object]],
         total_steps: int,
         marker_prefix: str = "__RB_STEP__:",
+        clock: object = None,
     ) -> None:
         self.step_map = step_map
         self.total_steps = total_steps
         self.marker_prefix = marker_prefix
         self.buf = ""
         self._marker_re = re.compile(rf"^{re.escape(marker_prefix)}(\d+)\r?$")
+        self._clock = clock if callable(clock) else time.monotonic
+        self.active_step: int | None = None
+        self._active_started: float | None = None
+        self.step_durations: dict[int, float] = {}
+        self.step_order: list[int] = []
 
     def _format_step_banner(self, step_num: int) -> str:
         info = self.step_map.get(step_num)
@@ -386,39 +392,104 @@ class _ProgressLineFilter:
             return f"\x1b[2;36m{arrow} {line}\x1b[0m\n"
         return f"{arrow} {line}\n"
 
-    def feed(self, text: str) -> tuple[str, str]:
+    def _format_step_done(self, step_num: int, elapsed: float, failed: bool = False) -> str:
+        if step_num not in self.step_map:
+            return ""
+        dur_str = format_duration(elapsed)
+        mark = ("✗" if failed else "✓") if _supports_utf8() else ("x" if failed else "+")
+        line = f"  {mark} [{step_num}/{self.total_steps}] ({dur_str})"
+        if _use_color():
+            col = "\x1b[2;31m" if failed else "\x1b[2;32m"
+            return f"{col}{line}\x1b[0m\n"
+        return f"{line}\n"
+
+    def _start_step(self, step_num: int) -> str:
+        now = float(self._clock())
+        parts: list[str] = []
+        if self.active_step is not None and self._active_started is not None:
+            elapsed = max(0.0, now - self._active_started)
+            self.step_durations[self.active_step] = elapsed
+            done_line = self._format_step_done(self.active_step, elapsed)
+            if done_line:
+                parts.append(done_line)
+        self.active_step = step_num
+        self._active_started = now
+        if step_num not in self.step_order:
+            self.step_order.append(step_num)
+        banner = self._format_step_banner(step_num)
+        if banner:
+            parts.append(banner)
+        return "".join(parts)
+
+    def feed_events(self, text: str) -> list[tuple[str, str]]:
         self.buf += text
-        out_parts: list[str] = []
-        prog_parts: list[str] = []
+        events: list[tuple[str, str]] = []
         while "\n" in self.buf:
             line, rest = self.buf.split("\n", 1)
             self.buf = rest
             m = self._marker_re.match(line)
             if m:
-                banner = self._format_step_banner(int(m.group(1)))
-                if banner:
-                    prog_parts.append(banner)
+                prog = self._start_step(int(m.group(1)))
+                if prog:
+                    events.append(("prog", prog))
             else:
-                out_parts.append(line + "\n")
+                events.append(("out", line + "\n"))
         if self.buf:
             if not (
                 self.marker_prefix.startswith(self.buf)
                 or self.buf.startswith(self.marker_prefix)
             ):
-                out_parts.append(self.buf)
+                events.append(("out", self.buf))
                 self.buf = ""
+        return events
+
+    def feed(self, text: str) -> tuple[str, str]:
+        out_parts: list[str] = []
+        prog_parts: list[str] = []
+        for kind, chunk in self.feed_events(text):
+            if kind == "prog":
+                prog_parts.append(chunk)
+            else:
+                out_parts.append(chunk)
         return "".join(out_parts), "".join(prog_parts)
 
-    def flush(self) -> tuple[str, str]:
-        if not self.buf:
-            return "", ""
-        rem = self.buf
-        self.buf = ""
-        m = self._marker_re.match(rem)
-        if m:
-            banner = self._format_step_banner(int(m.group(1)))
-            return "", banner
-        return rem, ""
+    def flush(self, rc: int = 0) -> tuple[str, str]:
+        rem_out = ""
+        prog_parts: list[str] = []
+        if self.buf:
+            rem = self.buf
+            self.buf = ""
+            m = self._marker_re.match(rem)
+            if m:
+                prog = self._start_step(int(m.group(1)))
+                if prog:
+                    prog_parts.append(prog)
+            else:
+                rem_out = rem
+        if self.active_step is not None and self._active_started is not None:
+            elapsed = max(0.0, float(self._clock()) - self._active_started)
+            self.step_durations[self.active_step] = elapsed
+            done_line = self._format_step_done(self.active_step, elapsed, failed=(rc != 0))
+            if done_line:
+                prog_parts.append(done_line)
+            self._active_started = None
+        return rem_out, "".join(prog_parts)
+
+    def operation_timings(self) -> list[dict[str, object]]:
+        timings: list[dict[str, object]] = []
+        for step_num in self.step_order:
+            if step_num not in self.step_durations:
+                continue
+            info = self.step_map.get(step_num) or {}
+            timings.append(
+                {
+                    "step": step_num,
+                    "tag": str(info.get("tag") or ""),
+                    "desc": str(info.get("desc") or "").replace("\n", " ").strip(),
+                    "duration_ms": int(round(self.step_durations[step_num] * 1000.0)),
+                }
+            )
+        return timings
 
 
 def _prepare_progress_script(
@@ -654,11 +725,12 @@ def run_script(
             sys.stdout.flush()
             return
         if progress_filter is not None:
-            out_txt, prog_txt = progress_filter.feed(text)
-            if out_txt:
-                log_chunks.append(out_txt)
-            if prog_txt or out_txt:
-                sys.stdout.write(prog_txt + out_txt)
+            events = progress_filter.feed_events(text)
+            for kind, chunk in events:
+                if kind == "out":
+                    log_chunks.append(chunk)
+                sys.stdout.write(chunk)
+            if events:
                 sys.stdout.flush()
         else:
             log_chunks.append(text)
@@ -731,6 +803,7 @@ def run_script(
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
     child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
+    exec_started = time.monotonic()
     try:
         if (
             master_fd is not None
@@ -781,12 +854,18 @@ def run_script(
             proc.stdout.close()
             proc.stderr.close()
             rc = proc.wait()
+        duration_s = max(0.0, time.monotonic() - exec_started)
         if progress_filter is not None:
-            rem_out, rem_prog = progress_filter.flush()
+            rem_out, rem_prog = progress_filter.flush(rc=rc)
             if rem_out:
                 log_chunks.append(rem_out)
-            if rem_prog or rem_out:
-                sys.stdout.write(rem_prog + rem_out)
+                sys.stdout.write(rem_out)
+                if not rem_out.endswith("\n"):
+                    log_chunks.append("\n")
+                    sys.stdout.write("\n")
+            if rem_prog:
+                sys.stdout.write(rem_prog)
+            if rem_out or rem_prog:
                 sys.stdout.flush()
     finally:
         if tmp_progress_path is not None:
@@ -807,8 +886,23 @@ def run_script(
         stdin_diag_lines = _resolve_python_stdin_tracebacks(label, script_text, clean_so_far)
         for diag in stdin_diag_lines:
             log_chunks.append(diag + "\n")
-    exit_str = f" (exit {rc})" if rc != 0 else ""
-    end_line = f"\n[{label}] END{exit_str}\n"
+    dur_str = format_duration(duration_s)
+    duration_ms = int(round(duration_s * 1000.0))
+    op_timings = progress_filter.operation_timings() if progress_filter is not None else []
+    failed_step = (
+        progress_filter.active_step
+        if (rc != 0 and progress_filter is not None)
+        else None
+    )
+    write_step_meta(
+        step_dir,
+        duration_ms=duration_ms,
+        exit_code=rc,
+        operations=op_timings,
+        failed_step=failed_step,
+    )
+    end_detail = f"exit {rc}, {dur_str}" if rc != 0 else dur_str
+    end_line = f"\n[{label}] END ({end_detail})\n"
     if rc != 0 and footer_on_fail:
         end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
     log_chunks.append(end_line)
@@ -827,11 +921,28 @@ def run_script(
         sys.stdout.write(end_line)
         sys.stdout.flush()
     elif in_run_block() or not sys.stdout.isatty() or clipboard_mode() != "prompt" or clipboard_command(clip_target) is None:
-        end_body = build_box_body_lines(clip_target, rc=rc, stats=stats_line(clip_target), label=label, sdir=sdir)
+        end_body = build_box_body_lines(
+            clip_target,
+            rc=rc,
+            stats=stats_line(clip_target),
+            label=label,
+            sdir=sdir,
+            duration_s=duration_s,
+            op_timings=op_timings,
+            failed_step=failed_step,
+        )
         sys.stdout.write("\n" + format_info_box("END", end_body) + "\n")
         sys.stdout.flush()
     if not headless:
-        offer_clipboard_copy(label, out_path, ok=(rc == 0), rc=rc)
+        offer_clipboard_copy(
+            label,
+            out_path,
+            ok=(rc == 0),
+            rc=rc,
+            duration_s=duration_s,
+            op_timings=op_timings,
+            failed_step=failed_step,
+        )
     return rc
 
 
@@ -928,6 +1039,7 @@ def cmd_normal(
     overwrite = aborted_marker.exists()
     if overwrite:
         out_path.unlink(missing_ok=True)
+        (step_dir / "meta.json").unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
         for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
             orig_p.unlink(missing_ok=True)
@@ -953,6 +1065,7 @@ def cmd_normal(
             ):
                 overwrite = True
                 out_path.unlink(missing_ok=True)
+                (step_dir / "meta.json").unlink(missing_ok=True)
                 for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
                     orig_p.unlink(missing_ok=True)
             else:
@@ -1284,6 +1397,7 @@ def cmd_retry(
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     out_path.unlink(missing_ok=True)
     (step_dir / "out.orig").unlink(missing_ok=True)
+    (step_dir / "meta.json").unlink(missing_ok=True)
     (step_dir / "error").unlink(missing_ok=True)
     (step_dir / "aborted").unlink(missing_ok=True)
     return run_script(
