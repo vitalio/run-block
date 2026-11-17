@@ -1,3 +1,18 @@
+# 🎯 [NEXT] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks
+
+- Remove the `Steps: 1. [tag] ...` summary line from the main `END` box in `build_box_body_lines()` (`src/ui.py`), keeping `END` focused on `Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
+- Add an interactive `i(nfo)` action across all interactive TUI prompts (`START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation dialogs such as `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `SESSION COMPLETED`) in `src/ui.py` and `src/runner.py`:
+  - Update prompt hints to include `i(nfo)` without conflicting with existing hotkeys (`[Enter/e(dit)/i(nfo)/Esc]:` on `START BUNDLE` and `END`, `[Y/n/e(dit)/i(nfo)]:` / `[y/n/e(dit)/i(nfo)]:` on `BLOCK PLAN`).
+  - Pressing `i` opens a styled alternate-screen TUI info panel showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/byte/token counts, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and the original pre-execution `BLOCK PLAN` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
+  - Support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), returning cleanly to the active block prompt on `q`/`Esc`/`Enter`/`i`, and opening the plain-text report in the configured viewer/editor (`resolve_editor_command()`) when pressing `v` (`v(iew)`).
+- Acceptance criteria: `END` box omits `Steps:`; pressing `i` in `START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation boxes displays complete headers, stats, operation timings, and original plan in the TUI info screen; pressing `v` inside `i(nfo)` opens the report in the external viewer/editor; closing returns cleanly to the prompt; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+
+# 🎯 [NEXT] F53: Hide Sandbox: off in TUI boxes and show Sandbox only when enabled
+
+- Omit the `Sandbox:` header line in `format_session_header_lines()` (`src/ui.py`) when the normalized sandbox mode is `off` (or empty), so `START BUNDLE`, `BLOCK PLAN`, `END`, `NOT RUN`, and `SYNTAX ERROR` boxes only display `Sandbox: <mode>` when sandboxing is enabled (`strict`, `nonet`, or a custom wrapper).
+- Preserve `Sandbox: off` in `<session>/0` bundle headers (`src/bundle.py`), explicit `run_block --sandbox` status output (`src/runner.py`), and the full `i(nfo)` metadata view.
+- Acceptance criteria: `Sandbox: off` is hidden across standard TUI boxes; active sandbox modes (`strict`, `nonet`, custom) still render with full details; `<session>/0` and `run_block --sandbox` remain unchanged; offline unit tests in `tests/test_run_block.py` cover both `off` and active sandbox rendering.
+
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
 - Design candidate for `role=design` (coordinates with `F42` and `F48`).
