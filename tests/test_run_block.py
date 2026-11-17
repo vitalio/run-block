@@ -174,7 +174,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
         self.assertIn("│ Block:   s1/2", box)
-        self.assertIn("│ Sandbox: off", box)
+        self.assertNotIn("Sandbox:", box)
         self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/e(dit)]:"))
         self.assertNotIn("BLOCK PLAN (", box)
         self.assertIn("Script: 7 lines, bash", box)
@@ -288,13 +288,13 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("╭─ END ────", box)
         self.assertIn("│ Block:   s2/1", box)
         self.assertIn("│ Workdir: ", box)
-        self.assertIn("│ Sandbox: off", box)
+        self.assertNotIn("Sandbox:", box)
         self.assertNotIn("END (", box)
         self.assertIn(f"│ Output: {f}", box)
         self.assertIn("│ Stats:  1 line · 6 B · ~2 tokens", box)
         self.assertIn("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:", box)
         lines = box.splitlines()
-        self.assertEqual(len(lines), 10)
+        self.assertEqual(len(lines), 9)
         self.assertEqual(len(lines[0]), 48)
         self.assertTrue(lines[0].startswith("╭─ END ────"))
         self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Enter/e(dit)/Esc]:")
@@ -397,7 +397,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("╭─ START BUNDLE ", r_pipe.stdout)
         self.assertIn("Session:        s1", r_pipe.stdout)
         self.assertIn("Next-Block:     s1/1", r_pipe.stdout)
-        self.assertIn("Sandbox:        off", r_pipe.stdout)
+        self.assertNotIn("Sandbox:", r_pipe.stdout)
         self.assertIn("Bundle-Command: agents_bundle role=execute task=F14", r_pipe.stdout)
         self.assertIn("Chat-Lang:      Russian", r_pipe.stdout)
         self.assertIn("Role:           execute", r_pipe.stdout)
@@ -405,6 +405,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("Date:", r_pipe.stdout)
         bundle1 = (self.tmp / "sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
+        self.assertIn("\nSandbox: off\n", bundle1)
         self.assertNotIn("Bundle-Command:", bundle1)
         self.assertNotIn("Chat-Lang:", bundle1)
         self.assertNotIn("Role:", bundle1)
@@ -1449,7 +1450,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[91m╭─ \x1b[0m\x1b[1;91mEND\x1b[0m", end_err)
                 self.assertIn("\x1b[91m│\x1b[0m", end_err)
 
-                # 2. BLOCK PLAN with matching Workdir (dimmed), Sandbox: off (dimmed),
+                # 2. BLOCK PLAN with matching Workdir (dimmed), Sandbox: off omitted,
                 #    Operations color-coding, and Safety warnings + prompt highlight
                 cwd_now = os.getcwd()
                 script_warn = (
@@ -1469,7 +1470,7 @@ class TestRunBlock(unittest.TestCase):
                 )
                 self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mBLOCK PLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
-                self.assertIn("\x1b[2mSandbox: off\x1b[0m", box_warn)
+                self.assertNotIn("Sandbox:", box_warn)
                 self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    cat README.md", box_warn)
                 self.assertNotIn("\x1b[2m[read]", box_warn)
                 self.assertIn("2. \x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
@@ -2715,6 +2716,123 @@ class TestRunBlock(unittest.TestCase):
         finally:
             if saved_nc is not None:
                 os.environ["NO_COLOR"] = saved_nc
+
+
+    def test_f53_conditional_sandbox_header_visibility(self):
+        # 1. Disabled / empty sandbox modes omit Sandbox: in format_session_header_lines
+        sdir_off = self.tmp / "s_off"
+        sdir_off.mkdir(parents=True, exist_ok=True)
+        (sdir_off / "0").write_text(
+            f"Session: s_off\nNext-Block: s_off/1\nWorkdir: {self.tmp}\nSandbox: off\nDate: 2026-11-17 21:00 UTC\n",
+            encoding="utf-8",
+        )
+        for mode in (None, "", "off", "0", "false", "disabled"):
+            with self.subTest(mode=mode):
+                hdrs = self.mod.format_session_header_lines(
+                    label="s_off/1", sdir=sdir_off, work_dir=self.tmp, sandbox_mode=mode
+                )
+                self.assertFalse(any(line.startswith("Sandbox:") for line in hdrs), hdrs)
+
+        # 2. Active sandbox modes render Sandbox: with full details
+        expected_active = {
+            "strict": "Sandbox: strict (rw: Workdir, /tmp; secrets: hidden; net: on)",
+            "nonet": "Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)",
+            "custom-wrap --ro": "Sandbox: custom-wrap --ro",
+        }
+        for mode, expected_line in expected_active.items():
+            with self.subTest(active_mode=mode):
+                hdrs = self.mod.format_session_header_lines(
+                    label="s_off/1", sdir=sdir_off, work_dir=self.tmp, sandbox_mode=mode
+                )
+                self.assertIn(expected_line, hdrs)
+
+        # 3. Standard TUI boxes hide Sandbox: off and show active sandbox modes
+        proj = self.tmp / "f53_proj"
+        proj.mkdir()
+        sessions = self.tmp / "f53_sessions"
+        env = {**os.environ, "RUN_BLOCK_DIR": str(sessions), "RUN_BLOCK_CWD": str(proj)}
+        r_start_off = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s1"],
+            input="Role: execute\n\nPrompt\n",
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_start_off.returncode, 0, r_start_off.stderr)
+        self.assertNotIn("Sandbox:", r_start_off.stdout)
+        self.assertIn("\nSandbox: off\n", (sessions / "s1" / "0").read_text(encoding="utf-8"))
+
+        r_sb_status = subprocess.run(
+            [str(SCRIPT), "--sandbox", "s1"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_sb_status.returncode, 0, r_sb_status.stderr)
+        self.assertIn("Sandbox: off", r_sb_status.stdout)
+
+        # NOT RUN and SYNTAX ERROR boxes omit Sandbox: when off
+        buf_nr = io.StringIO()
+        with contextlib.redirect_stdout(buf_nr):
+            self.assertEqual(self.mod.cmd_normal("s_off/2", "echo skip\n"), 2)
+        self.assertIn("╭─ NOT RUN ", buf_nr.getvalue())
+        self.assertNotIn("Sandbox:", buf_nr.getvalue())
+
+        buf_syn = io.StringIO()
+        with contextlib.redirect_stdout(buf_syn):
+            self.assertNotEqual(self.mod.cmd_normal("s_off/1", "if true; then\n"), 0)
+        self.assertIn("╭─ SYNTAX ERROR ", buf_syn.getvalue())
+        self.assertNotIn("Sandbox:", buf_syn.getvalue())
+
+        # Active sandbox mode shows full Sandbox: line in START BUNDLE, BLOCK PLAN, END, NOT RUN, SYNTAX ERROR
+        r_start_strict = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s2", "--sandbox", "strict"],
+            input="Role: execute\n\nPrompt\n",
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_start_strict.returncode, 0, r_start_strict.stderr)
+        self.assertIn(
+            "Sandbox:    strict (rw: Workdir, /tmp; secrets: hidden; net: on)",
+            r_start_strict.stdout,
+        )
+
+        sdir_strict = self.tmp / "s_strict"
+        sdir_strict.mkdir()
+        (sdir_strict / "0").write_text(
+            f"Session: s_strict\nNext-Block: s_strict/1\nWorkdir: {self.tmp}\n"
+            "Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)\n"
+            "Date: 2026-11-17 21:00 UTC\n",
+            encoding="utf-8",
+        )
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
+            plan_box, _, _ = self.mod.format_safety_box(
+                "s_strict/1", [], default_yes=True, summary={"work_dir": str(self.tmp), "sandbox": "nonet", "meta": "1 line, bash"}
+            )
+        self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", plan_box)
+
+        buf_nr_act = io.StringIO()
+        with contextlib.redirect_stdout(buf_nr_act):
+            self.assertEqual(self.mod.cmd_normal("s_strict/2", "echo skip\n", sandbox_override="nonet"), 2)
+        self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", buf_nr_act.getvalue())
+
+        buf_syn_act = io.StringIO()
+        with contextlib.redirect_stdout(buf_syn_act):
+            self.assertNotEqual(self.mod.cmd_normal("s_strict/1", "if true; then\n", sandbox_override="nonet"), 0)
+        self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", buf_syn_act.getvalue())
+
+        end_box_act, _, _ = self.mod.format_clipboard_box(
+            "s_strict/1", sdir_strict / "1" / "out", ok=True, rc=0
+        )
+        self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", end_box_act)
 
 
 if __name__ == "__main__":

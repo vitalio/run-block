@@ -1,3 +1,9 @@
+# ✅ [DONE] F53: Hide Sandbox: off in TUI boxes and show Sandbox only when enabled — *2026-11-18, Omit Sandbox: off in TUI boxes while keeping it in session bundles and --sandbox status*
+
+- Omit the `Sandbox:` header line in `format_session_header_lines()` (`src/ui.py`) when the normalized sandbox mode is `off` (or empty), so `START BUNDLE`, `BLOCK PLAN`, `END`, `NOT RUN`, and `SYNTAX ERROR` boxes only display `Sandbox: <mode>` when sandboxing is enabled (`strict`, `nonet`, or a custom wrapper).
+- Preserve `Sandbox: off` in `<session>/0` bundle headers (`src/bundle.py`), explicit `run_block --sandbox` status output (`src/runner.py`), and the full `i(nfo)` metadata view.
+- Acceptance criteria: `Sandbox: off` is hidden across standard TUI boxes; active sandbox modes (`strict`, `nonet`, custom) still render with full details; `<session>/0` and `run_block --sandbox` remain unchanged; offline unit tests in `tests/test_run_block.py` cover both `off` and active sandbox rendering.
+
 # ✅ [DONE] F43: Brighten Error line, title and border colors, and keep confirmation prompt distinct from Safety warnings — *2026-11-17, Brighten Error, title, and border colors and keep confirmation prompt distinct from safety warnings*
 
 - In `src/ui.py`, `_ERROR_COLOR` uses non-bold `\x1b[31m`, so `Error:` values in `END` and `SYNTAX ERROR` boxes look dim on dark terminal themes compared to bold tags and headers.

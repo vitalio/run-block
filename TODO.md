@@ -7,12 +7,6 @@
   - Support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), returning cleanly to the active block prompt on `q`/`Esc`/`Enter`/`i`, and opening the plain-text report in the configured viewer/editor (`resolve_editor_command()`) when pressing `v` (`v(iew)`).
 - Acceptance criteria: `END` box omits `Steps:`; pressing `i` in `START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation boxes displays complete headers, stats, operation timings, and original plan in the TUI info screen; pressing `v` inside `i(nfo)` opens the report in the external viewer/editor; closing returns cleanly to the prompt; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
-# 🎯 [NEXT] F53: Hide Sandbox: off in TUI boxes and show Sandbox only when enabled
-
-- Omit the `Sandbox:` header line in `format_session_header_lines()` (`src/ui.py`) when the normalized sandbox mode is `off` (or empty), so `START BUNDLE`, `BLOCK PLAN`, `END`, `NOT RUN`, and `SYNTAX ERROR` boxes only display `Sandbox: <mode>` when sandboxing is enabled (`strict`, `nonet`, or a custom wrapper).
-- Preserve `Sandbox: off` in `<session>/0` bundle headers (`src/bundle.py`), explicit `run_block --sandbox` status output (`src/runner.py`), and the full `i(nfo)` metadata view.
-- Acceptance criteria: `Sandbox: off` is hidden across standard TUI boxes; active sandbox modes (`strict`, `nonet`, custom) still render with full details; `<session>/0` and `run_block --sandbox` remain unchanged; offline unit tests in `tests/test_run_block.py` cover both `off` and active sandbox rendering.
-
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
 - Design candidate for `role=design` (coordinates with `F42` and `F48`).

@@ -225,8 +225,9 @@ def format_session_header_lines(
     lines.append(wline)
 
     sb_val = sandbox_mode if (sandbox_mode is not None and str(sandbox_mode)) else get_sandbox_mode(resolved_sdir)
-    sb_line = f"Sandbox: {format_sandbox_header(sb_val)}"
-    lines.append(sb_line)
+    norm_sb = normalize_sandbox_mode(sb_val)
+    if norm_sb and norm_sb != "off":
+        lines.append(f"Sandbox: {format_sandbox_header(sb_val)}")
 
     for raw_k, val in hdr_items:
         if raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or not val:
