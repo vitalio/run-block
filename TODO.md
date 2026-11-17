@@ -1,3 +1,15 @@
+# 🎯 [NEXT] F59: Redraw active TUI box in place on terminal resize (SIGWINCH)
+
+- Monitor terminal window resize events (`SIGWINCH` via a self-pipe registered in `select()`) while waiting for user input in `read_clipboard_key()` and `read_confirm_key()` in `src/ui.py`, debouncing rapid resize events (~25ms) and restoring the previous `SIGWINCH` handler cleanly on exit.
+- When terminal width (`_hr_width()`) changes during `offer_clipboard_copy()`, `confirm_execution()`, or `prompt_yes_no_box()` in `src/ui.py`, recalculate the visual row count of the previously rendered box under the new width (`_box_rows_above_prompt()`), erase the old box in place, and re-render the active box (`START BUNDLE`, `BLOCK PLAN`, `END`, or confirmation dialog) for the new width with the cursor restored at the prompt.
+- Acceptance criteria: shrinking or widening a POSIX TTY while an interactive TUI prompt is waiting redraws the active box cleanly in place without broken `│ ` borders or duplicate lines, and subsequent `e(dit)` redraws remain aligned; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
+
+# 🎯 [NEXT] F58: Wrap long lines inside all TUI boxes while preserving hanging indents
+
+- Enforce terminal-width wrapping (`_hr_width() - 2`) inside `_render_block()` in `src/ui.py` for all rendered TUI boxes (`START BUNDLE`, `BLOCK PLAN`, `END`, `NOT RUN`, `SYNTAX ERROR`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`, and `prompt_yes_no_box`), so no content or prompt line exceeds the terminal width and breaks the left `│ ` border.
+- Preserve hanging indentation on wrapped lines: align continuation lines under the value column for `Key:   value` rows, preserve leading list/tree indentation (`  `, `    `, `├─ `, `└─ `) on already-indented items without double-wrapping lines that already fit, and clamp `_extract_last_error_line()` in `src/ui.py` to the available box content width.
+- Acceptance criteria: on narrow terminals (40–70 columns), long `Workdir:`, `Output:`, `Error:`, `Stats:`, `Steps:`, headers, and prompt lines wrap cleanly with `│ ` on every visual row and aligned continuation indents across all TUI box types; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
+
 # 🎯 [NEXT] F57: Add a(ppend) prompt editor action in START BUNDLE — *Commit backlog task for START BUNDLE prompt append*
 
 - Add an `a(ppend)` action to the `START BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.
