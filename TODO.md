@@ -1,8 +1,13 @@
-# 🎯 [NEXT] F60: Unify [python] operation tree expansion in BLOCK PLAN
+# 🔵 [WIP] F60: Unify [python] operation tree expansion in BLOCK PLAN
 
 - Update `_emit_py_op()` in `src/safety.py` so `[python]` operations expand into nested child items (`├─` / `└─`) consistently whenever a Python block touches multiple files or combines reads and writes (`total_paths > 1`), regardless of whether those files live in different subdirectories (`len(dir_buckets) > 1`) or in the same directory / repository root (such as `build.py, run_block`), keeping the single-line summary only for trivial 0–1 file Python blocks.
 - Ensure `_group_operations_for_display()` in `src/ui.py` preserves `├─` / `└─` tree markers for expanded `[python]` child `[write]` / `[read]` entries even when all operations are in the repository root (`dir == ""`).
 - Acceptance criteria: multi-file `[python]` blocks in the same directory or root render with `├─` / `└─` child `[write]` / `[read]` rows matching cross-directory `[python]` blocks; single-file `[python]` blocks remain compact; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
+
+# 🎯 [NEXT] F61: Auto-detect existing step number collisions in run_block and offer interactive renumbering to the next free step
+
+- When starting a step that already exists on disk (e.g., trying to run s154/8 when it already ran), prompt the user in the interactive TUI block confirmation: `Step s154/8 already exists. r(enumber) to next free step / r(estart) / Esc [r/R/Esc]:` (or similar prompt).
+- On `r` / renumber, automatically scan session directory for the next available step index (e.g. s154/9), update the block script header / metadata, and proceed without losing work.
 
 # 🎯 [NEXT] F59: Redraw active TUI box in place on terminal resize (SIGWINCH)
 
