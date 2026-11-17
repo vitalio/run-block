@@ -1,3 +1,10 @@
+# 🎯 [NEXT] F50: Recalculate and redraw bundle statistics after e(dit) in START BUNDLE
+
+- Recompute `stats_line(out_path)` (line count, byte size, and estimated token range) in `offer_clipboard_copy()` (`src/ui.py`) immediately after `open_script_in_editor(out_path, tty_r, tty_w)` returns from `e(dit)` on `START BUNDLE`.
+- Re-render the full `START BUNDLE` box in place on the TTY (moving the cursor back to the top of the previous box, clearing stale lines, and recalculating box border width and prompt cursor offset) instead of only redrawing the bottom prompt and border lines.
+- Refresh any cached bundle metadata / `bundle_plan` statistics in `<session>/meta.json` (`src/bundle.py`, `src/bundle_plan.py`) when `<session>/0` changes during `e(dit)` so `START BUNDLE` and `--bundle-plan` stay in sync.
+- Add unit tests in `tests/test_run_block.py` covering `e(dit)` in `START BUNDLE` with a stub editor that modifies `<session>/0` and asserting updated `Stats:` output and box alignment.
+
 # 🎯 [NEXT] B9: Fix false-positive [exec] and [remote-exec] on quoted variable assignments and --exclude-dir=eval flags
 
 - Update variable assignment matching in `src/safety.py` (`VAR_ASSIGN_RE` / assignment helper) to recognize `[export|local|readonly] VAR=...` when the value is a single- or double-quoted string containing spaces or a parenthesized array literal without trailing commands or command substitutions (`$(...)` / backticks).
@@ -130,10 +137,3 @@
 - Design candidate for `role=design` to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
 - Evaluate structured `--json` execution output for `<session>/<step>` (status: `ok`/`syntax_error`/`not_run`/`completed`, `exit_code`, safety findings, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` non-TTY handshake, and env sanitization so client LLM API keys do not leak into executed step scripts.
 - Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
-
-# ⚪ [NEW] F50: Recalculate and redraw bundle statistics after e(dit) in START BUNDLE
-
-- Recompute `stats_line(out_path)` (line count, byte size, and estimated token range) in `offer_clipboard_copy()` (`src/ui.py`) immediately after `open_script_in_editor(out_path, tty_r, tty_w)` returns from `e(dit)` on `START BUNDLE`.
-- Re-render the full `START BUNDLE` box in place on the TTY (moving the cursor back to the top of the previous box, clearing stale lines, and recalculating box border width and prompt cursor offset) instead of only redrawing the bottom prompt and border lines.
-- Refresh any cached bundle metadata / `bundle_plan` statistics in `<session>/meta.json` (`src/bundle.py`, `src/bundle_plan.py`) when `<session>/0` changes during `e(dit)` so `START BUNDLE` and `--bundle-plan` stay in sync.
-- Add unit tests in `tests/test_run_block.py` covering `e(dit)` in `START BUNDLE` with a stub editor that modifies `<session>/0` and asserting updated `Stats:` output and box alignment.
