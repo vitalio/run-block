@@ -38,6 +38,13 @@
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
 - Document session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (bundled via `src/bundles/run_block.bundle`), plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
 
+# 🎯 [NEXT] F55: Hide Bundle-* transport headers from TUI boxes and clamp long Title headers
+
+- Depends on: F46
+- Ensure `Bundle-*` transport headers (`Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) are excluded from TUI boxes (`START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation dialogs) while remaining available in `meta.json`, `--info`, and the `i(nfo)` screen (`src/bundle_plan.py`, `src/config.py`, `src/ui.py`).
+- Truncate overly long exposed header values (such as `Title:`) with an ellipsis (`…`) in `format_session_header_lines` (`src/ui.py`) so long task titles stay single-line without wrapping or overflowing box width.
+- Sync `README.md` and unit tests in `tests/test_run_block.py`.
+
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
 - Depends on: agents_bundle:F7, agents_bundle:F15
