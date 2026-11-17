@@ -1,3 +1,13 @@
+# ✅ [DONE] F43: Brighten Error line, title and border colors, and keep confirmation prompt distinct from Safety warnings — *2026-11-17, Brighten Error, title, and border colors and keep confirmation prompt distinct from safety warnings*
+
+- In `src/ui.py`, `_ERROR_COLOR` uses non-bold `\x1b[31m`, so `Error:` values in `END` and `SYNTAX ERROR` boxes look dim on dark terminal themes compared to bold tags and headers.
+- `_TITLE_COLORS` (`START BUNDLE`, `BLOCK PLAN`, `END`, `SYNTAX ERROR`, `NOT RUN`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`) use the regular-intensity bold palette (`1;36`, `1;33`, `1;32`, `1;31`), and the fallback for unknown titles in `src/ui.py` is `\x1b[1;36m`. Make them brighter (`1;96`, `1;93`, `1;92`, `1;91`).
+- `_BORDER_COLOR` (`\x1b[2;36m`) is dim, and the box builder derives border color from the title color by replacing the bold prefix with `2;` (`"\x1b[2;" + t_col[4:]`). Change the derivation so the border keeps the brightness of the title color instead of being forced to dim, and make the default `_BORDER_COLOR` non-dim.
+- In `format_safety_box` and `confirm_execution` (`src/ui.py`), when `findings` is non-empty, `-> Execute this block?` is wrapped in `_WARN_COLOR` (`\x1b[1;31m`), which is the same color as the `Safety warnings` header. Keep the prompt visually distinct from `_WARN_COLOR`.
+- Update `_ERROR_COLOR` to bright bold red (`\x1b[1;91m`).
+- Update the ANSI styling unit tests in `tests/test_run_block.py` to match the new codes, including a check that the border of a bold title is not dim.
+- Out of scope: `_KEY_COLOR` (metadata keys) and `_TAG_COLORS` (operation tags).
+
 # ✅ [DONE] F49: Record and display execution duration for blocks and numbered operations — *2026-11-17, Record block/operation durations and nest AST sub-items in BLOCK PLAN*
 
 - Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.

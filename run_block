@@ -58,7 +58,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.11"
+VERSION = "0.21.12"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -2664,7 +2664,7 @@ def format_safety_box(
             )
 
     if findings and _use_color():
-        prompt_line = f"{_WARN_COLOR}{prompt_line}{_ANSI_RESET}"
+        prompt_line = f"{_PROMPT_WARN_COLOR}{prompt_line}{_ANSI_RESET}"
     return _render_block(title, content_lines, prompt_line=prompt_line)
 
 
@@ -2941,7 +2941,7 @@ def _is_file_edited(file_path: Path | None, orig_path: Path | None = None) -> bo
 def _safety_prompt_prefix(default_yes: bool, has_findings: bool, border_color: str) -> str:
     raw_prompt = f"-> Execute this block? {_safety_prompt_suffix(default_yes)}"
     if has_findings and _use_color():
-        raw_prompt = f"{_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"
+        raw_prompt = f"{_PROMPT_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"
     return _prefix_block_line(raw_prompt, border_color=border_color)
 
 
@@ -3190,19 +3190,20 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
 
 _KV_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*:)\s+(.*\S.*)$")
 _TITLE_COLORS = {
-    "START BUNDLE": "\x1b[1;36m",
-    "BLOCK PLAN": "\x1b[1;33m",
-    "END": "\x1b[1;32m",
-    "SYNTAX ERROR": "\x1b[1;31m",
-    "NOT RUN": "\x1b[1;31m",
-    "MISSING PREVIOUS STEP": "\x1b[1;33m",
-    "STEP ALREADY EXISTS": "\x1b[1;33m",
+    "START BUNDLE": "\x1b[1;96m",
+    "BLOCK PLAN": "\x1b[1;93m",
+    "END": "\x1b[1;92m",
+    "SYNTAX ERROR": "\x1b[1;91m",
+    "NOT RUN": "\x1b[1;91m",
+    "MISSING PREVIOUS STEP": "\x1b[1;93m",
+    "STEP ALREADY EXISTS": "\x1b[1;93m",
 }
-_BORDER_COLOR = "\x1b[2;36m"
+_BORDER_COLOR = "\x1b[96m"
 _KEY_COLOR = "\x1b[2m"
-_ERROR_COLOR = "\x1b[31m"
+_ERROR_COLOR = "\x1b[1;91m"
 _WARN_COLOR = "\x1b[1;31m"
 _HIGHLIGHT_COLOR = "\x1b[1;33m"
+_PROMPT_WARN_COLOR = "\x1b[1;93m"
 _TAG_COLORS = {
     "read": "\x1b[1;94m",
     "write": "\x1b[1;33m",
@@ -3216,11 +3217,11 @@ _ANSI_RESET = "\x1b[0m"
 def _block_colors(title: str, has_exit: bool = False) -> tuple[str, str]:
     clean_title = title.strip()
     if clean_title == "END" and has_exit:
-        t_col = "\x1b[1;31m"
+        t_col = "\x1b[1;91m"
     else:
-        t_col = _TITLE_COLORS.get(clean_title, "\x1b[1;36m")
+        t_col = _TITLE_COLORS.get(clean_title, "\x1b[1;96m")
     if t_col.startswith("\x1b[1;"):
-        b_col = "\x1b[2;" + t_col[4:]
+        b_col = "\x1b[" + t_col[4:]
     else:
         b_col = _BORDER_COLOR
     return t_col, b_col

@@ -1415,8 +1415,8 @@ class TestRunBlock(unittest.TestCase):
                     ["Block: s1/1", "Workdir: /tmp/proj"],
                     "-> Execute? [Y/n]:",
                 )
-            self.assertIn("\x1b[2;33m╭─ ", colored_box)
-            self.assertIn("\x1b[1;33mBLOCK PLAN\x1b[0m", colored_box)
+            self.assertIn("\x1b[93m╭─ ", colored_box)
+            self.assertIn("\x1b[1;93mBLOCK PLAN\x1b[0m", colored_box)
             self.assertIn("\x1b[2mBlock:\x1b[0m   s1/1", colored_box)
             self.assertIn("\x1b[2mWorkdir:\x1b[0m \x1b[1;33m/tmp/proj\x1b[0m", colored_box)
             self.assertEqual(c_off, len("│ -> Execute? [Y/n]:"))
@@ -1439,15 +1439,15 @@ class TestRunBlock(unittest.TestCase):
         try:
             with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
-                # 1. Matching dim border colors per block title (END green vs END with Exit red)
+                # 1. Matching non-dim border colors per block title (END green vs END with Exit red)
                 end_ok = self.mod.format_info_box("END", ["Block: s1/1"])
-                self.assertIn("\x1b[2;32m╭─ \x1b[0m\x1b[1;32mEND\x1b[0m", end_ok)
-                self.assertIn("\x1b[2;32m│\x1b[0m", end_ok)
-                self.assertIn("\x1b[2;32m╰", end_ok)
+                self.assertIn("\x1b[92m╭─ \x1b[0m\x1b[1;92mEND\x1b[0m", end_ok)
+                self.assertIn("\x1b[92m│\x1b[0m", end_ok)
+                self.assertIn("\x1b[92m╰", end_ok)
 
                 end_err = self.mod.format_info_box("END", ["Block: s1/1", "Exit: 2"])
-                self.assertIn("\x1b[2;31m╭─ \x1b[0m\x1b[1;31mEND\x1b[0m", end_err)
-                self.assertIn("\x1b[2;31m│\x1b[0m", end_err)
+                self.assertIn("\x1b[91m╭─ \x1b[0m\x1b[1;91mEND\x1b[0m", end_err)
+                self.assertIn("\x1b[91m│\x1b[0m", end_err)
 
                 # 2. BLOCK PLAN with matching Workdir (dimmed), Sandbox: off (dimmed),
                 #    Operations color-coding, and Safety warnings + prompt highlight
@@ -1467,7 +1467,7 @@ class TestRunBlock(unittest.TestCase):
                 box_warn, _, _ = self.mod.format_safety_box(
                     "s1/2", findings, default_yes=False, summary=summary
                 )
-                self.assertIn("\x1b[2;33m╭─ \x1b[0m\x1b[1;33mBLOCK PLAN\x1b[0m", box_warn)
+                self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mBLOCK PLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertIn("\x1b[2mSandbox: off\x1b[0m", box_warn)
                 self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    cat README.md", box_warn)
@@ -1490,9 +1490,10 @@ class TestRunBlock(unittest.TestCase):
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;31m-> Execute this block? [y/n/e(dit)]:\x1b[0m", box_warn)
+                self.assertIn("\x1b[1;93m-> Execute this block? [y/n/e(dit)]:\x1b[0m", box_warn)
+                self.assertNotIn("\x1b[1;31m-> Execute this block?", box_warn)
 
-                # 3. BLOCK PLAN with differing Workdir (highlighted) and no safety warnings (prompt not red)
+                # 3. BLOCK PLAN with differing Workdir (highlighted) and no safety warnings (prompt uncolored)
                 other_dir = self.tmp / "other_workdir"
                 other_dir.mkdir()
                 sum_clean = self.mod.summarize_script_actions("ls -la\n", work_dir=other_dir)
@@ -1502,6 +1503,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn(f"\x1b[2mWorkdir:\x1b[0m \x1b[1;33m{other_dir}\x1b[0m", box_clean)
                 self.assertIn("-> Execute this block? [Y/n/e(dit)]:", box_clean)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_clean)
+                self.assertNotIn("\x1b[1;93m-> Execute this block?", box_clean)
         finally:
             if saved_no_color is None:
                 os.environ.pop("NO_COLOR", None)
@@ -1864,7 +1866,7 @@ class TestRunBlock(unittest.TestCase):
                     ],
                 )
                 self.assertIn("\x1b[2mExit:\x1b[0m   \x1b[1;31m2\x1b[0m", end_box)
-                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31mboom\x1b[0m", end_box)
+                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[1;91mboom\x1b[0m", end_box)
                 self.assertIn("\x1b[2mFix:    run_block --fix s1/1 (0/2 failed attempts)\x1b[0m", end_box)
                 self.assertIn("\x1b[2mOutput: /tmp/s1/1/out\x1b[0m", end_box)
                 self.assertIn("\x1b[2mStats:  1 line · 5 B · ~2 tokens\x1b[0m", end_box)
@@ -1880,7 +1882,7 @@ class TestRunBlock(unittest.TestCase):
                     ],
                 )
                 self.assertIn("\x1b[2mExit:\x1b[0m   \x1b[1;31m2\x1b[0m", syn_box)
-                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31munexpected EOF\x1b[0m", syn_box)
+                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[1;91munexpected EOF\x1b[0m", syn_box)
                 self.assertIn("\x1b[2mOutput: /tmp/s1/2/out\x1b[0m", syn_box)
                 self.assertIn("\x1b[2mStats:  1 line · 15 B · ~4 tokens\x1b[0m", syn_box)
 
@@ -1894,7 +1896,7 @@ class TestRunBlock(unittest.TestCase):
                         "Stats: 1 line · 20 B · ~5 tokens",
                     ],
                 )
-                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[31mfile not found\x1b[0m", not_run_box)
+                self.assertIn("\x1b[2mError:\x1b[0m  \x1b[1;91mfile not found\x1b[0m", not_run_box)
                 self.assertIn("\x1b[2mOutput: /tmp/s1/3/out\x1b[0m", not_run_box)
                 self.assertIn("\x1b[2mStats:  1 line · 20 B · ~5 tokens\x1b[0m", not_run_box)
         finally:
@@ -2665,9 +2667,51 @@ class TestRunBlock(unittest.TestCase):
             with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
                 col_box, _, _ = self.mod.format_safety_box("s49/3", [], default_yes=True, summary=mixed_sum)
-            self.assertIn("\x1b[2;33m", col_box)
+            self.assertIn("\x1b[93m", col_box)
             self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m", col_box)
             self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m", col_box)
+        finally:
+            if saved_nc is not None:
+                os.environ["NO_COLOR"] = saved_nc
+
+
+    def test_f43_bright_error_title_border_and_distinct_prompt(self):
+        self.assertEqual(self.mod._ERROR_COLOR, "\x1b[1;91m")
+        self.assertFalse(self.mod._BORDER_COLOR.startswith("\x1b[2;"))
+        self.assertEqual(self.mod._BORDER_COLOR, "\x1b[96m")
+
+        expected_titles = {
+            "START BUNDLE": ("\x1b[1;96m", "\x1b[96m"),
+            "BLOCK PLAN": ("\x1b[1;93m", "\x1b[93m"),
+            "END": ("\x1b[1;92m", "\x1b[92m"),
+            "SYNTAX ERROR": ("\x1b[1;91m", "\x1b[91m"),
+            "NOT RUN": ("\x1b[1;91m", "\x1b[91m"),
+            "MISSING PREVIOUS STEP": ("\x1b[1;93m", "\x1b[93m"),
+            "STEP ALREADY EXISTS": ("\x1b[1;93m", "\x1b[93m"),
+            "CUSTOM TITLE": ("\x1b[1;96m", "\x1b[96m"),
+        }
+        for title, (exp_t, exp_b) in expected_titles.items():
+            with self.subTest(title=title):
+                t_col, b_col = self.mod._block_colors(title)
+                self.assertEqual((t_col, b_col), (exp_t, exp_b))
+                self.assertTrue(t_col.startswith("\x1b[1;9"))
+                self.assertFalse(b_col.startswith("\x1b[2;"))
+
+        self.assertEqual(self.mod._block_colors("END", has_exit=True), ("\x1b[1;91m", "\x1b[91m"))
+        self.assertNotEqual(self.mod._PROMPT_WARN_COLOR, self.mod._WARN_COLOR)
+
+        tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+        saved_nc = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
+                pref_warn = self.mod._safety_prompt_prefix(False, True, "\x1b[93m")
+                self.assertIn(self.mod._PROMPT_WARN_COLOR + "-> Execute this block?", pref_warn)
+                self.assertNotIn(self.mod._WARN_COLOR + "-> Execute this block?", pref_warn)
+
+                pref_clean = self.mod._safety_prompt_prefix(True, False, "\x1b[93m")
+                self.assertNotIn(self.mod._PROMPT_WARN_COLOR, pref_clean)
+                self.assertNotIn(self.mod._WARN_COLOR, pref_clean)
         finally:
             if saved_nc is not None:
                 os.environ["NO_COLOR"] = saved_nc
