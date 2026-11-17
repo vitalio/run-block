@@ -1,3 +1,10 @@
+# 🎯 [NEXT] F56: Align operation progress lines, update status colors, and collapse silent steps
+
+- Remove the 2-space leading indentation on step completion lines in `_ProgressLineFilter._format_step_done()` (`src/runner.py`) so `✓` and `✗` (plus ASCII `+` and `x`) align at column 0 directly beneath `▸` and `>`.
+- Update `_ProgressLineFilter` ANSI styling in `src/runner.py`: render start banners (`▸`) and successful completion lines (`✓`) in neutral gray (`\x1b[90m`), and failed completion lines (`✗`) in red (`\x1b[31m`).
+- Track in `_ProgressLineFilter` (`src/runner.py`) whether any `out` text was emitted while a step was active: when a step finishes without output on a TTY, overwrite the start banner line in place (`\033[1A\r\033[2K`) with a single-line summary `✓ [N/M] [tag] desc (dur)` (truncated to `_hr_width()`); when output was emitted, keep the `▸` header above the output and print `✓ [N/M] (dur)` or `✗ [N/M] (dur)` below at column 0.
+- Acceptance criteria: silent steps collapse into a single column-0 line with duration on TTY; steps with output keep `▸` above and `✓`/`✗` at column 0 below; colors use gray for normal progress and red for failures; `README.md` and unit tests in `tests/test_run_block.py` are updated.
+
 # 🎯 [NEXT] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks
 
 - Remove the `Steps: 1. [tag] ...` summary line from the main `END` box in `build_box_body_lines()` (`src/ui.py`), keeping `END` focused on `Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
