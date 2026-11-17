@@ -4,6 +4,7 @@
 - Skip pure variable assignments in `summarize_script_actions()` so lines like `EX='--exclude-dir=bumps ... --exclude-dir=eval ...'` are recorded in `sh_vars` instead of emitting a false-positive `[exec]` operation.
 - Tighten `remote-exec` (`\beval\s+`) and command-level risk matching in `src/safety.py` (`RISK_RULES` and `scan_script_risks()`) so `eval` only triggers in command position (not after `=`, `-`, or `/` such as `--exclude-dir=eval`) and single-quoted string literals without shell execution do not trigger command risk rules while still scanning for `unicode-spoof` and `secrets-exposure`.
 - Add unit tests in `tests/test_run_block.py` covering multiline quoted `EX='--exclude-dir=eval ...'` assignments, `--exclude-dir=eval` arguments in `grep`, and true-positive `eval` invocations (`eval "$cmd"`, `FOO=1; eval "$cmd"`).
+
 # 🎯 [NEXT] F49: Record and display execution duration for blocks and numbered operations
 
 - Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.
@@ -129,3 +130,10 @@
 - Design candidate for `role=design` to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
 - Evaluate structured `--json` execution output for `<session>/<step>` (status: `ok`/`syntax_error`/`not_run`/`completed`, `exit_code`, safety findings, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` non-TTY handshake, and env sanitization so client LLM API keys do not leak into executed step scripts.
 - Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
+
+# ⚪ [NEW] F50: Recalculate and redraw bundle statistics after e(dit) in START BUNDLE
+
+- Recompute `stats_line(out_path)` (line count, byte size, and estimated token range) in `offer_clipboard_copy()` (`src/ui.py`) immediately after `open_script_in_editor(out_path, tty_r, tty_w)` returns from `e(dit)` on `START BUNDLE`.
+- Re-render the full `START BUNDLE` box in place on the TTY (moving the cursor back to the top of the previous box, clearing stale lines, and recalculating box border width and prompt cursor offset) instead of only redrawing the bottom prompt and border lines.
+- Refresh any cached bundle metadata / `bundle_plan` statistics in `<session>/meta.json` (`src/bundle.py`, `src/bundle_plan.py`) when `<session>/0` changes during `e(dit)` so `START BUNDLE` and `--bundle-plan` stay in sync.
+- Add unit tests in `tests/test_run_block.py` covering `e(dit)` in `START BUNDLE` with a stub editor that modifies `<session>/0` and asserting updated `Stats:` output and box alignment.
