@@ -1,3 +1,11 @@
+# 🎯 [NEXT] F57: Add a(ppend) prompt editor action in START BUNDLE — *Commit backlog task for START BUNDLE prompt append*
+
+- Add an `a(ppend)` action to the `START BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.
+- On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying `<session>/0` or creating `<session>/0.orig` when the entered text is empty or whitespace-only.
+- Before the first non-empty append, preserve the original bundle in `<session>/0.orig` via `_write_orig_backup_once()`, then append the prompt text to `<session>/0` in `src/ui.py` / `src/bundle.py` (appending into the trailing `===== Prompt =====` section when already present so repeated `a(ppend)` calls do not duplicate the header, or creating `===== Prompt =====` at the end otherwise).
+- Refresh bundle metadata (`refresh_bundle_meta()`), recalculate line/byte/token `Stats:` with the `(edited)` marker, and redraw `START BUNDLE` in place so pressing `Enter` copies the updated bundle to the clipboard.
+- Acceptance criteria: `a(ppend)` opens an empty temp file and appends non-empty prompt text into `===== Prompt =====` in `<session>/0`; empty input leaves `<session>/0` and `<session>/0.orig` untouched; `0.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+
 # 🎯 [NEXT] F56: Align operation progress lines, update status colors, and collapse silent steps
 
 - Remove the 2-space leading indentation on step completion lines in `_ProgressLineFilter._format_step_done()` (`src/runner.py`) so `✓` and `✗` (plus ASCII `+` and `x`) align at column 0 directly beneath `▸` and `>`.
