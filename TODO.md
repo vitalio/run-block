@@ -15,6 +15,8 @@
   3. Headless / machine-readable (`--json` in `F48`) interaction when a step spawns a child session.
 - Target files for downstream implementation: `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/cli.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_run_block.py`.
 
+- Concrete reproduction scenario: running a nested session initializer inside an active step (`todo_md <ID> | agents_bundle role=execute | run_block`) prints the inner `START BUNDLE` box (`<child>/0`) inside the outer `[sN/k] START ... [sN/k] END` block output, skips copying `<child>/0` to the clipboard because `IN_RUN_BLOCK=1`, and then triggers the outer `END` box's `-> Copy to clipboard?` prompt for the outer step log (with `[sN/k]` wrappers) instead of copying the clean `<child>/0` bundle and suppressing the outer clipboard prompt.
+
 # 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
 
 - Design candidate for `role=design` (coordinates with `F42` `--done` session completion and `F20` session inspection CLI).
