@@ -1,3 +1,9 @@
+# 🎯 [NEXT] F60: Unify [python] operation tree expansion in BLOCK PLAN
+
+- Update `_emit_py_op()` in `src/safety.py` so `[python]` operations expand into nested child items (`├─` / `└─`) consistently whenever a Python block touches multiple files or combines reads and writes (`total_paths > 1`), regardless of whether those files live in different subdirectories (`len(dir_buckets) > 1`) or in the same directory / repository root (such as `build.py, run_block`), keeping the single-line summary only for trivial 0–1 file Python blocks.
+- Ensure `_group_operations_for_display()` in `src/ui.py` preserves `├─` / `└─` tree markers for expanded `[python]` child `[write]` / `[read]` entries even when all operations are in the repository root (`dir == ""`).
+- Acceptance criteria: multi-file `[python]` blocks in the same directory or root render with `├─` / `└─` child `[write]` / `[read]` rows matching cross-directory `[python]` blocks; single-file `[python]` blocks remain compact; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
+
 # 🎯 [NEXT] F59: Redraw active TUI box in place on terminal resize (SIGWINCH)
 
 - Monitor terminal window resize events (`SIGWINCH` via a self-pipe registered in `select()`) while waiting for user input in `read_clipboard_key()` and `read_confirm_key()` in `src/ui.py`, debouncing rapid resize events (~25ms) and restoring the previous `SIGWINCH` handler cleanly on exit.
