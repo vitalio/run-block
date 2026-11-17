@@ -284,7 +284,7 @@ class TestRunBlock(unittest.TestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
-        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Enter/v(iew)/Esc]:"))
+        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:"))
         self.assertIn("╭─ END ────", box)
         self.assertIn("│ Block:   s2/1", box)
         self.assertIn("│ Workdir: ", box)
@@ -292,12 +292,12 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("END (", box)
         self.assertIn(f"│ Output: {f}", box)
         self.assertIn("│ Stats:  1 line · 6 B · ~2 tokens", box)
-        self.assertIn("│ -> Copy to clipboard? [Enter/v(iew)/Esc]:", box)
+        self.assertIn("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 10)
         self.assertEqual(len(lines[0]), 48)
         self.assertTrue(lines[0].startswith("╭─ END ────"))
-        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Enter/v(iew)/Esc]:")
+        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Enter/e(dit)/Esc]:")
         self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
@@ -1578,7 +1578,9 @@ class TestRunBlock(unittest.TestCase):
             self.assertNotIn("[Enter/v(iew)/Esc]:", sb_box)
             self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:"))
 
-            for kind in ("END", "NOT RUN", "SYNTAX ERROR"):
+            end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END")
+            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", end_box)
+            for kind in ("NOT RUN", "SYNTAX ERROR"):
                 with self.subTest(title_kind=kind):
                     other_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind=kind)
                     self.assertIn("-> Copy to clipboard? [Enter/v(iew)/Esc]:", other_box)
@@ -2376,7 +2378,7 @@ class TestRunBlock(unittest.TestCase):
         with contextlib.redirect_stdout(buf_show):
             rc_show = self.mod.cmd_show("s1/1")
         self.assertEqual(rc_show, 0)
-        self.assertIn(f"edited, original: {orig_path}", buf_show.getvalue())
+        self.assertIn(f"(edited) (original: {orig_path})", buf_show.getvalue())
 
         # 3. Post-edit syntax error shows SYNTAX ERROR and aborts execution
         step2 = sdir / "2"
@@ -2401,6 +2403,110 @@ class TestRunBlock(unittest.TestCase):
         # 4. PowerShell backup uses .orig.ps1
         ps_path = step2 / "block.ps1"
         self.assertEqual(self.mod._orig_backup_path(ps_path), step2 / "block.orig.ps1")
+
+    def test_f52_end_output_edit_backup_recalc_and_show_markers(self):
+        # 1. END prompt shows e(dit), keeping NOT RUN and SYNTAX ERROR on v(iew)
+        f = self.tmp / "s1" / "1" / "out"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        initial_out = "[s1/1] START\nnoisy stderr line\n\n[s1/1] END (exit 2)\n"
+        f.write_text(initial_out, encoding="utf-8")
+        err_f = f.with_name("err")
+        err_f.write_text("noisy stderr line\n", encoding="utf-8")
+
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
+            end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
+            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", end_box)
+            self.assertIn("Error:  noisy stderr line", end_box)
+
+        # 2. First edit in END creates out.orig; second edit via 'v' alias preserves out.orig;
+        #    recomputes stats_line(), re-extracts Error: from edited out (not stale err),
+        #    refreshes resolve_clipboard_target(), and redraws END with (edited)
+        attach_file = self.tmp / "attached_report.txt"
+        attach_file.write_text("attached report body\nline 2\n", encoding="utf-8")
+        edit_1_out = "[s1/1] START\ntrimmed detail\ncleaned failure reason\n\n[s1/1] END (exit 2)\n"
+        edit_2_out = (
+            "[s1/1] START\ntrimmed detail\n"
+            f"Bundle: {attach_file}\nupdated final error\n\n[s1/1] END (exit 2)\n"
+        )
+        edits_iter = iter([edit_1_out, edit_2_out])
+
+        def fake_end_editor(p: Path, _r, _w) -> None:
+            p.write_text(next(edits_iter), encoding="utf-8")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = _KeepOpenStringIO()
+        tty_r = io.StringIO("e\nv\n\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_end_editor), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy, \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy("s1/1", f, ok=False, rc=2)
+
+        orig_out = f.with_name("out.orig")
+        self.assertTrue(orig_out.is_file())
+        self.assertEqual(orig_out.read_text(encoding="utf-8"), initial_out)
+        self.assertEqual(f.read_text(encoding="utf-8"), edit_2_out)
+        mock_copy.assert_called_once_with(["pbcopy"], attach_file)
+
+        tty_out = tty_w.getvalue()
+        self.assertEqual(tty_out.count("╭─ END "), 3)
+        self.assertIn("Error:  noisy stderr line", tty_out)
+        self.assertIn("Error:  cleaned failure reason", tty_out)
+        self.assertIn("Error:  updated final error", tty_out)
+        self.assertIn(f"Output: {attach_file}", tty_out)
+        attach_stats = self.mod.stats_line(attach_file)
+        assert attach_stats is not None
+        self.assertIn(f"Stats:  {attach_stats} (edited)", tty_out)
+        self.assertIn(f"✓ Copied {attach_file} to clipboard.", tty_out)
+
+        # 3. START BUNDLE preserves 0.orig on first e(dit) without overwriting on subsequent edits
+        b0 = self.tmp / "s1" / "0"
+        initial_0 = "Session: s1\nNext-Block: s1/1\n\nInitial bundle\n"
+        b0.write_text(initial_0, encoding="utf-8")
+        b0_edits = iter([initial_0 + "Edit 1\n", initial_0 + "Edit 2\n"])
+        tty_w0 = _KeepOpenStringIO()
+        tty_r0 = io.StringIO("e\ne\nesc\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w0, tty_r0)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=lambda p, _r, _w: p.write_text(next(b0_edits), encoding="utf-8")), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy("s1/0", b0, title_kind="START BUNDLE", extra_lines=[f"Bundle: {b0}"])
+
+        orig_0 = self.tmp / "s1" / "0.orig"
+        self.assertTrue(orig_0.is_file())
+        self.assertEqual(orig_0.read_text(encoding="utf-8"), initial_0)
+        self.assertIn("(edited)", tty_w0.getvalue())
+
+        # 4. --show surfaces (edited) markers for 0.orig, block.orig.*, and out.orig
+        buf_show0 = io.StringIO()
+        with contextlib.redirect_stdout(buf_show0):
+            self.assertEqual(self.mod.cmd_show("s1/0"), 0)
+        self.assertIn(f"(edited) (original: {orig_0})", buf_show0.getvalue())
+
+        b_script = self.tmp / "s1" / "1" / "block.sh"
+        b_script.write_text("echo edited\n", encoding="utf-8")
+        b_orig = self.tmp / "s1" / "1" / "block.orig.sh"
+        b_orig.write_text("echo orig\n", encoding="utf-8")
+        buf_show1 = io.StringIO()
+        with contextlib.redirect_stdout(buf_show1):
+            self.assertEqual(self.mod.cmd_show("s1/1"), 0)
+        show1_out = buf_show1.getvalue()
+        self.assertIn(f"Script: {b_script}", show1_out)
+        self.assertIn(f"(edited) (original: {b_orig})", show1_out)
+        self.assertIn(f"Output: {f} (edited) (original: {orig_out})", show1_out)
 
 if __name__ == "__main__":
     unittest.main()

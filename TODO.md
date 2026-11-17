@@ -1,9 +1,3 @@
-# 🎯 [NEXT] F52: Support e(dit) on END output (and 0.orig on START BUNDLE) with original backup and stats recalculation
-
-- Replace `v(iew)` with `e(dit)` in the `END` clipboard prompt (`src/ui.py`, keeping `v` as a compatibility alias) and preserve the unmodified output as `<session>/<step>/out.orig` on the first edit without overwriting it on subsequent edits; also preserve `<session>/0.orig` on the first `e(dit)` in `START BUNDLE`.
-- Recompute `stats_line()` (lines, bytes, and Claude/GPT/Gemini token counts), re-extract `Error:` when `rc != 0`, refresh the clipboard copy target (`resolve_clipboard_target`), and redraw the full `END` box in place with an explicit `(edited)` indicator (`src/ui.py`, `src/runner.py`).
-- Surface `(edited)` markers in `run_block --show` when `block.orig.*`, `out.orig`, or `0.orig` exists (`src/runner.py`), sync `README.md` and `src/header.py`, and add unit tests in `tests/test_run_block.py`.
-
 # 🎯 [NEXT] F49: Record and display execution duration for blocks and numbered operations
 
 - Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.

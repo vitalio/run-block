@@ -831,7 +831,7 @@ def run_script(
         sys.stdout.write("\n" + format_info_box("END", end_body) + "\n")
         sys.stdout.flush()
     if not headless:
-        offer_clipboard_copy(label, clip_target, ok=(rc == 0), rc=rc)
+        offer_clipboard_copy(label, out_path, ok=(rc == 0), rc=rc)
     return rc
 
 
@@ -929,7 +929,7 @@ def cmd_normal(
     if overwrite:
         out_path.unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
-        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
             orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
@@ -953,7 +953,7 @@ def cmd_normal(
             ):
                 overwrite = True
                 out_path.unlink(missing_ok=True)
-                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
                     orig_p.unlink(missing_ok=True)
             else:
                 return 2
@@ -1241,7 +1241,9 @@ def cmd_show(ref: str | None = None) -> int:
     if step == "0":
         bundle_path = sdir / "0"
         if bundle_path.is_file():
-            sys.stdout.write(f"=== [{session}/0] Bundle: {bundle_path} ===\n")
+            orig_bundle = _orig_file_backup_path(bundle_path)
+            b_suffix = f" (edited) (original: {orig_bundle})" if orig_bundle.is_file() else ""
+            sys.stdout.write(f"=== [{session}/0] Bundle: {bundle_path}{b_suffix} ===\n")
             sys.stdout.write(bundle_path.read_text(encoding="utf-8", errors="replace"))
             return 0
         raise SystemExit(f"{prog_name()}: bundle {session}/0 not found ({bundle_path})")
@@ -1253,12 +1255,13 @@ def cmd_show(ref: str | None = None) -> int:
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     orig_path = _orig_backup_path(script_path)
     status_str = _step_status(sdir, step)
-    if orig_path.is_file():
-        status_str = f"{status_str}; edited, original: {orig_path}"
-    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({status_str}) ===\n")
+    script_edited = f" (edited) (original: {orig_path})" if orig_path.is_file() else ""
+    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({status_str}){script_edited} ===\n")
     sys.stdout.write(script_path.read_text(encoding="utf-8", errors="replace"))
     if out_path.is_file():
-        sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path} ===\n")
+        out_orig = _orig_file_backup_path(out_path)
+        out_edited = f" (edited) (original: {out_orig})" if out_orig.is_file() else ""
+        sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path}{out_edited} ===\n")
         sys.stdout.write(out_path.read_text(encoding="utf-8", errors="replace"))
     if err_path.is_file():
         sys.stdout.write(f"\n=== [{session}/{step}] Error: {err_path} ===\n")
@@ -1280,6 +1283,7 @@ def cmd_retry(
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     out_path.unlink(missing_ok=True)
+    (step_dir / "out.orig").unlink(missing_ok=True)
     (step_dir / "error").unlink(missing_ok=True)
     (step_dir / "aborted").unlink(missing_ok=True)
     return run_script(

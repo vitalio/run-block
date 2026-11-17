@@ -1,3 +1,9 @@
+# ✅ [DONE] F52: Support e(dit) on END output (and 0.orig on START BUNDLE) with original backup and stats recalculation — *2026-11-17*
+
+- Replace `v(iew)` with `e(dit)` in the `END` clipboard prompt (`src/ui.py`, keeping `v` as a compatibility alias) and preserve the unmodified output as `<session>/<step>/out.orig` on the first edit without overwriting it on subsequent edits; also preserve `<session>/0.orig` on the first `e(dit)` in `START BUNDLE`.
+- Recompute `stats_line()` (lines, bytes, and Claude/GPT/Gemini token counts), re-extract `Error:` when `rc != 0`, refresh the clipboard copy target (`resolve_clipboard_target`), and redraw the full `END` box in place with an explicit `(edited)` indicator (`src/ui.py`, `src/runner.py`).
+- Surface `(edited)` markers in `run_block --show` when `block.orig.*`, `out.orig`, or `0.orig` exists (`src/runner.py`), sync `README.md` and `src/header.py`, and add unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F51: Support e(dit) on BLOCK PLAN script with original backup and plan/token recalculation — *2026-11-17*
 
 - Replace `v(iew)` with `e(dit)` in the `BLOCK PLAN` confirmation prompt (`src/ui.py`, keeping `v` as a compatibility alias) and preserve the unmodified script as `<session>/<step>/block.orig.sh` (or `.ps1`) on the first edit without overwriting it on subsequent edits.

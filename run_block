@@ -7,7 +7,7 @@
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
   {prog} --list | -l [session]       List sessions or blocks in a session
-  {prog} --show [session/step]       Show script, original backup note, and output of a block (or <session>/0 bundle)
+  {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
   {prog} --start [opts]              Start session with explicit options (--session NAME, --sandbox MODE, --force)
@@ -19,7 +19,7 @@
 Environment:
   RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
-  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN / START BUNDLE (keeps block.orig.sh/.ps1)
+  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN, END, and START BUNDLE (keeps *.orig backups)
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.9"
+VERSION = "0.21.10"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -190,6 +190,10 @@ def _find_step_script(sdir: Path, step: str, shell_bin: str | None = None) -> Pa
 def _orig_backup_path(script_path: Path) -> Path:
     ext = script_path.suffix or _script_ext()
     return script_path.with_name(f"block.orig{ext}")
+
+
+def _orig_file_backup_path(target_path: Path) -> Path:
+    return target_path.with_name(f"{target_path.name}.orig")
 
 
 def _iter_session_scripts(sdir: Path) -> list[Path]:
@@ -2832,13 +2836,14 @@ def _write_orig_backup_once(orig_path: Path, raw_bytes: bytes) -> None:
         f_orig.write(raw_bytes)
 
 
-def _is_script_edited(script_path: Path | None, orig_path: Path | None) -> bool:
-    if script_path is None or orig_path is None:
+def _is_file_edited(file_path: Path | None, orig_path: Path | None = None) -> bool:
+    if file_path is None:
         return False
-    if not orig_path.is_file() or not script_path.is_file():
+    resolved_orig = orig_path if orig_path is not None else _orig_file_backup_path(file_path)
+    if not resolved_orig.is_file() or not file_path.is_file():
         return False
     try:
-        return script_path.read_bytes() != orig_path.read_bytes()
+        return file_path.read_bytes() != resolved_orig.read_bytes()
     except OSError:
         return False
 
@@ -2883,7 +2888,7 @@ def confirm_execution(
             sys.stdout.flush()
         return True, note
     orig_path = _orig_backup_path(script_path) if script_path is not None else None
-    is_edited = _is_script_edited(script_path, orig_path)
+    is_edited = _is_file_edited(script_path, orig_path)
     default_yes = (len(findings) == 0 and approve_decision != "prompt")
     prev_cols = _hr_width()
     box, rule_width, cursor_offset = format_safety_box(
@@ -2936,7 +2941,7 @@ def confirm_execution(
                                     tty_w.flush()
                                     return False, reject_msg
                             default_yes = (len(findings) == 0 and approve_decision != "prompt")
-                            is_edited = _is_script_edited(script_path, orig_path)
+                            is_edited = _is_file_edited(script_path, orig_path)
                             up_rows = _box_rows_above_prompt(box, prev_cols)
                             prev_cols = _hr_width()
                             box, rule_width, cursor_offset = format_safety_box(
@@ -3379,7 +3384,7 @@ def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
             f"[{label}] SECURITY WARNING:",
         )
     max_len = max(60, _hr_width() - 8)
-    if out_path.name == "out":
+    if out_path.name == "out" and not _is_file_edited(out_path):
         err_line = _last_nonempty_line(out_path.with_name("err"), skip_prefixes, max_len)
         if err_line:
             return err_line
@@ -3415,15 +3420,19 @@ def build_box_body_lines(
     extra_lines: list[str] | None = None,
     label: str | None = None,
     sdir: Path | None = None,
+    edited: bool | None = None,
+    error_source: Path | None = None,
 ) -> list[str]:
-    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path)
+    err_src = error_source if error_source is not None else out_path
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, err_src)
+    is_edited = _is_file_edited(err_src) if edited is None else edited
     if extra_lines is not None:
         detail_lines = list(extra_lines)
     else:
         detail_lines = []
         if rc is not None and rc != 0:
             detail_lines.append(f"Exit: {rc}")
-            last_err = _extract_last_error_line(out_path, label=label)
+            last_err = _extract_last_error_line(err_src, label=label)
             if last_err:
                 detail_lines.append(f"Error: {last_err}")
             if label:
@@ -3432,7 +3441,9 @@ def build_box_body_lines(
                     detail_lines.append(f"Fix: {fix_status}")
         detail_lines.append(f"Output: {out_path}")
     if stats and not any(line.startswith("Stats:") for line in detail_lines):
-        detail_lines.append(f"Stats: {stats}")
+        detail_lines.append(f"Stats: {stats} (edited)" if is_edited else f"Stats: {stats}")
+    elif is_edited and not any(line.startswith("Stats:") for line in detail_lines):
+        detail_lines.append("Stats: (edited)")
     has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
         return _align_kv_lines(detail_lines)
@@ -3443,7 +3454,7 @@ def build_box_body_lines(
 
 
 def _clipboard_prompt_line(title_kind: str) -> str:
-    if title_kind.strip() == "START BUNDLE":
+    if title_kind.strip() in ("START BUNDLE", "END"):
         return "-> Copy to clipboard? [Enter/e(dit)/Esc]:"
     return "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
 
@@ -3457,9 +3468,19 @@ def format_clipboard_box(
     title_kind: str = "END",
     extra_lines: list[str] | None = None,
     cmd_str: str | None = None,
+    edited: bool | None = None,
+    error_source: Path | None = None,
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
-    body_lines = build_box_body_lines(out_path, rc=rc, stats=stats, extra_lines=extra_lines, label=label)
+    body_lines = build_box_body_lines(
+        out_path,
+        rc=rc,
+        stats=stats,
+        extra_lines=extra_lines,
+        label=label,
+        edited=edited,
+        error_source=error_source,
+    )
     prompt_line = _clipboard_prompt_line(title_kind)
     return _render_block(title_kind, body_lines, prompt_line=prompt_line)
 
@@ -3485,13 +3506,24 @@ def offer_clipboard_copy(
     mode = clipboard_mode()
     if mode == "never":
         return
-    clip = clipboard_command(out_path)
+    is_start_bundle = title_kind.strip() == "START BUNDLE"
+    is_end_box = title_kind.strip() == "END"
+    edit_target = out_path
+    copy_target = edit_target
+    if is_end_box and edit_target.is_file():
+        try:
+            copy_target = resolve_clipboard_target(
+                edit_target, edit_target.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            copy_target = edit_target
+    clip = clipboard_command(copy_target)
     if clip is None:
         return
     cmd, cmd_str = clip
     if mode == "auto":
-        if copy_file_to_clipboard(cmd, out_path):
-            sys.stdout.write(f"✓ Copied {out_path} to clipboard.\n")
+        if copy_file_to_clipboard(cmd, copy_target):
+            sys.stdout.write(f"✓ Copied {copy_target} to clipboard.\n")
         else:
             sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
         sys.stdout.flush()
@@ -3500,20 +3532,23 @@ def offer_clipboard_copy(
         sys.stdout.write(f"[{label}] clipboard: {cmd_str}\n")
         sys.stdout.flush()
         return
+    orig_path = _orig_file_backup_path(edit_target)
+    is_edited = _is_file_edited(edit_target, orig_path)
     prev_cols = _hr_width()
     box, rule_width, cursor_offset = format_clipboard_box(
         label,
-        out_path,
+        copy_target,
         ok=ok,
         rc=rc,
-        stats=stats_line(out_path),
+        stats=stats_line(copy_target),
         title_kind=title_kind,
         extra_lines=extra_lines,
         cmd_str=cmd_str,
+        edited=is_edited,
+        error_source=edit_target,
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    is_start_bundle = title_kind.strip() == "START BUNDLE"
     prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
     try:
         tty_w, tty_r = open_tty()
@@ -3522,50 +3557,67 @@ def offer_clipboard_copy(
             tty_w.flush()
             while True:
                 action = read_clipboard_key(tty_r)
-                if is_start_bundle and action == "edit":
-                    if out_path.is_file():
+                if (is_start_bundle and action == "edit") or (is_end_box and action in ("edit", "view")):
+                    if edit_target.is_file():
                         try:
-                            before_bytes: bytes | None = out_path.read_bytes()
+                            before_bytes: bytes | None = edit_target.read_bytes()
                         except OSError:
                             before_bytes = None
-                        open_script_in_editor(out_path, tty_r, tty_w)
+                        open_script_in_editor(edit_target, tty_r, tty_w)
                         try:
-                            after_bytes: bytes | None = out_path.read_bytes() if out_path.is_file() else None
+                            after_bytes: bytes | None = edit_target.read_bytes() if edit_target.is_file() else None
                         except OSError:
                             after_bytes = None
-                        if after_bytes is not None and after_bytes != before_bytes:
-                            fn_refresh = globals().get("refresh_bundle_meta")
-                            if callable(fn_refresh):
-                                fn_refresh(out_path)
-                        up_rows = _box_rows_above_prompt(box, prev_cols)
-                        prev_cols = _hr_width()
-                        box, rule_width, cursor_offset = format_clipboard_box(
-                            label,
-                            out_path,
-                            ok=ok,
-                            rc=rc,
-                            stats=stats_line(out_path),
-                            title_kind=title_kind,
-                            extra_lines=extra_lines,
-                            cmd_str=cmd_str,
-                        )
-                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                        tty_w.flush()
+                        changed = before_bytes is not None and after_bytes is not None and after_bytes != before_bytes
+                        if changed:
+                            assert before_bytes is not None and after_bytes is not None
+                            _write_orig_backup_once(orig_path, before_bytes)
+                            if is_start_bundle:
+                                fn_refresh = globals().get("refresh_bundle_meta")
+                                if callable(fn_refresh):
+                                    fn_refresh(edit_target)
+                            elif is_end_box:
+                                after_text = after_bytes.decode("utf-8", errors="replace")
+                                copy_target = resolve_clipboard_target(edit_target, after_text)
+                                new_clip = clipboard_command(copy_target)
+                                if new_clip is not None:
+                                    cmd, cmd_str = new_clip
+                        if is_start_bundle or changed:
+                            is_edited = _is_file_edited(edit_target, orig_path)
+                            up_rows = _box_rows_above_prompt(box, prev_cols)
+                            prev_cols = _hr_width()
+                            box, rule_width, cursor_offset = format_clipboard_box(
+                                label,
+                                copy_target,
+                                ok=ok,
+                                rc=rc,
+                                stats=stats_line(copy_target),
+                                title_kind=title_kind,
+                                extra_lines=extra_lines,
+                                cmd_str=cmd_str,
+                                edited=is_edited,
+                                error_source=edit_target,
+                            )
+                            bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                            prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                            move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                            tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                            tty_w.flush()
+                        else:
+                            tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                            tty_w.flush()
                     continue
-                if not is_start_bundle and action == "view":
-                    if out_path.is_file():
-                        open_script_in_editor(out_path, tty_r, tty_w)
+                if not is_start_bundle and not is_end_box and action == "view":
+                    if edit_target.is_file():
+                        open_script_in_editor(edit_target, tty_r, tty_w)
                         tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if action in ("view", "edit"):
                     continue
                 if action == "copy":
-                    if copy_file_to_clipboard(cmd, out_path):
-                        status_line = f"✓ Copied {out_path} to clipboard."
+                    if copy_file_to_clipboard(cmd, copy_target):
+                        status_line = f"✓ Copied {copy_target} to clipboard."
                     else:
                         status_line = f"✗ Clipboard copy failed; run: {cmd_str}"
                 else:
@@ -4412,7 +4464,7 @@ def run_script(
         sys.stdout.write("\n" + format_info_box("END", end_body) + "\n")
         sys.stdout.flush()
     if not headless:
-        offer_clipboard_copy(label, clip_target, ok=(rc == 0), rc=rc)
+        offer_clipboard_copy(label, out_path, ok=(rc == 0), rc=rc)
     return rc
 
 
@@ -4510,7 +4562,7 @@ def cmd_normal(
     if overwrite:
         out_path.unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
-        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
             orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
@@ -4534,7 +4586,7 @@ def cmd_normal(
             ):
                 overwrite = True
                 out_path.unlink(missing_ok=True)
-                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
                     orig_p.unlink(missing_ok=True)
             else:
                 return 2
@@ -4822,7 +4874,9 @@ def cmd_show(ref: str | None = None) -> int:
     if step == "0":
         bundle_path = sdir / "0"
         if bundle_path.is_file():
-            sys.stdout.write(f"=== [{session}/0] Bundle: {bundle_path} ===\n")
+            orig_bundle = _orig_file_backup_path(bundle_path)
+            b_suffix = f" (edited) (original: {orig_bundle})" if orig_bundle.is_file() else ""
+            sys.stdout.write(f"=== [{session}/0] Bundle: {bundle_path}{b_suffix} ===\n")
             sys.stdout.write(bundle_path.read_text(encoding="utf-8", errors="replace"))
             return 0
         raise SystemExit(f"{prog_name()}: bundle {session}/0 not found ({bundle_path})")
@@ -4834,12 +4888,13 @@ def cmd_show(ref: str | None = None) -> int:
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     orig_path = _orig_backup_path(script_path)
     status_str = _step_status(sdir, step)
-    if orig_path.is_file():
-        status_str = f"{status_str}; edited, original: {orig_path}"
-    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({status_str}) ===\n")
+    script_edited = f" (edited) (original: {orig_path})" if orig_path.is_file() else ""
+    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({status_str}){script_edited} ===\n")
     sys.stdout.write(script_path.read_text(encoding="utf-8", errors="replace"))
     if out_path.is_file():
-        sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path} ===\n")
+        out_orig = _orig_file_backup_path(out_path)
+        out_edited = f" (edited) (original: {out_orig})" if out_orig.is_file() else ""
+        sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path}{out_edited} ===\n")
         sys.stdout.write(out_path.read_text(encoding="utf-8", errors="replace"))
     if err_path.is_file():
         sys.stdout.write(f"\n=== [{session}/{step}] Error: {err_path} ===\n")
@@ -4861,6 +4916,7 @@ def cmd_retry(
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     out_path.unlink(missing_ok=True)
+    (step_dir / "out.orig").unlink(missing_ok=True)
     (step_dir / "error").unlink(missing_ok=True)
     (step_dir / "aborted").unlink(missing_ok=True)
     return run_script(

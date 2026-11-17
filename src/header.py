@@ -7,7 +7,7 @@
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
   {prog} --list | -l [session]       List sessions or blocks in a session
-  {prog} --show [session/step]       Show script, original backup note, and output of a block (or <session>/0 bundle)
+  {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
   {prog} --start [opts]              Start session with explicit options (--session NAME, --sandbox MODE, --force)
@@ -19,7 +19,7 @@
 Environment:
   RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
-  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN / START BUNDLE (keeps block.orig.sh/.ps1)
+  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN, END, and START BUNDLE (keeps *.orig backups)
 """
 from __future__ import annotations
 

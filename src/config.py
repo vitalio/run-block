@@ -127,6 +127,10 @@ def _orig_backup_path(script_path: Path) -> Path:
     return script_path.with_name(f"block.orig{ext}")
 
 
+def _orig_file_backup_path(target_path: Path) -> Path:
+    return target_path.with_name(f"{target_path.name}.orig")
+
+
 def _iter_session_scripts(sdir: Path) -> list[Path]:
     by_step: dict[str, Path] = {}
     if not sdir.is_dir():
