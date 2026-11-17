@@ -59,8 +59,11 @@ RUN_BLOCK
 ```
 
 Before running, `run_block` displays the `BLOCK PLAN` (working directory, operations, and
-any safety warnings). Press `Enter`/`y` to run, `n`/`Esc` to abort, or `v` to inspect the
-script in your terminal editor. Across all interactive TUI confirmation prompts (`BLOCK PLAN`,
+any safety warnings). Press `Enter`/`y` to run, `n`/`Esc` to abort, or `e` (or `v`) to edit
+the script in your terminal editor. The first edit preserves the original script as
+`<session>/<step>/block.orig.sh` (or `.ps1`), recalculates operations, statistics, and
+safety warnings in place, and re-validates syntax before execution. Across all interactive
+TUI confirmation prompts (`BLOCK PLAN`,
 `END`, `STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and
 `CLEAN SESSIONS`), `Esc` consistently cancels or exits without proceeding.
 
@@ -95,7 +98,7 @@ RUN_FIX
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
 | `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash`, `sh`, or `pwsh`/`powershell` on Windows) |
-| `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `v` in `BLOCK PLAN` |
+| `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e` in `BLOCK PLAN` and `START BUNDLE` |
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |
 

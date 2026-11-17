@@ -122,6 +122,11 @@ def _find_step_script(sdir: Path, step: str, shell_bin: str | None = None) -> Pa
     return step_d / f"block{_script_ext(shell_bin)}"
 
 
+def _orig_backup_path(script_path: Path) -> Path:
+    ext = script_path.suffix or _script_ext()
+    return script_path.with_name(f"block.orig{ext}")
+
+
 def _iter_session_scripts(sdir: Path) -> list[Path]:
     by_step: dict[str, Path] = {}
     if not sdir.is_dir():

@@ -1098,6 +1098,12 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         meta += f", {sh_tag} + {py_blocks} python block{'s' if py_blocks != 1 else ''}"
     else:
         meta += f", {sh_tag}"
+    if get_setting("token_stats")[0] != "false":
+        fn_stats = globals().get("format_stats")
+        if callable(fn_stats):
+            stats_s = str(fn_stats(script_text.encode("utf-8")))
+            if " · " in stats_s:
+                meta += " · " + stats_s.split(" · ", 1)[1]
     return {
         "meta": meta,
         "rows": rows,

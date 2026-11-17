@@ -170,18 +170,18 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
         self.assertEqual(box_lines[0], "╭─ BLOCK PLAN " + "─" * 34)
-        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/v(iew)]:")
+        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/e(dit)]:")
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
         self.assertIn("│ Block:   s1/2", box)
         self.assertIn("│ Sandbox: off", box)
-        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/v(iew)]:"))
+        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/e(dit)]:"))
         self.assertNotIn("BLOCK PLAN (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
         self.assertIn("Safety warnings (6):", box)
         self.assertNotIn("Line ", box)
-        self.assertIn("[y/n/v(iew)]:", box)
+        self.assertIn("[y/n/e(dit)]:", box)
 
     def test_bundle_and_rules_files_exist(self):
         b_txt = (ROOT / "src/bundles/run_block.bundle").read_text(encoding="utf-8")
@@ -1489,7 +1489,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;31m-> Execute this block? [y/n/v(iew)]:\x1b[0m", box_warn)
+                self.assertIn("\x1b[1;31m-> Execute this block? [y/n/e(dit)]:\x1b[0m", box_warn)
 
                 # 3. BLOCK PLAN with differing Workdir (highlighted) and no safety warnings (prompt not red)
                 other_dir = self.tmp / "other_workdir"
@@ -1499,7 +1499,7 @@ class TestRunBlock(unittest.TestCase):
                     "s1/3", [], default_yes=True, summary=sum_clean
                 )
                 self.assertIn(f"\x1b[2mWorkdir:\x1b[0m \x1b[1;33m{other_dir}\x1b[0m", box_clean)
-                self.assertIn("-> Execute this block? [Y/n/v(iew)]:", box_clean)
+                self.assertIn("-> Execute this block? [Y/n/e(dit)]:", box_clean)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_clean)
         finally:
             if saved_no_color is None:
@@ -2303,6 +2303,104 @@ class TestRunBlock(unittest.TestCase):
                 ev_risks = self.mod.scan_script_risks(ev_cmd)
                 self.assertEqual([r["category"] for r in ev_risks], ["remote-exec"])
 
+
+    def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
+        # 1. BLOCK PLAN prompt shows e(dit), keeps v(iew) as compatibility alias
+        self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/e(dit)]:")
+        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/e(dit)]:")
+        self.assertEqual(self.mod.read_confirm_key(io.StringIO("e\n"), default_yes=True), "edit")
+        self.assertEqual(self.mod.read_confirm_key(io.StringIO("v\n"), default_yes=True), "view")
+
+        # 2. First edit creates block.orig.sh, subsequent edit preserves block.orig.sh,
+        #    recomputes operations/stats/warnings/default_yes, and redraws BLOCK PLAN with (edited)
+        work = self.tmp / "f51_work"
+        work.mkdir()
+        sdir = self.tmp / "s1"
+        step1 = sdir / "1"
+        step1.mkdir(parents=True)
+        script_path = step1 / "block.sh"
+        orig_path = step1 / "block.orig.sh"
+        initial_script = "echo safe\nls -la\n"
+        script_path.write_text(initial_script, encoding="utf-8")
+
+        initial_summary = self.mod.summarize_script_actions(initial_script, work_dir=work)
+        initial_summary["sandbox"] = "off"
+        edit_1_script = "cat README.md\nrm -rf /tmp/f51_danger\n"
+        edit_2_script = "cat README.md\ngit status -sb\nrm -rf /tmp/f51_danger_2\n"
+        edits_iter = iter([edit_1_script, edit_2_script])
+
+        def fake_editor(p: Path, _r, _w) -> None:
+            p.write_text(next(edits_iter), encoding="utf-8")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = _KeepOpenStringIO()
+        # Press 'e' (edit 1 -> adds rm -rf warning, so default_yes flips to False),
+        # press 'v' (compat alias, edit 2 -> preserves block.orig.sh),
+        # press 'y' to approve.
+        tty_r = io.StringIO("e\nv\ny\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_editor), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            approved, reason = self.mod.confirm_execution(
+                "s1/1", initial_script, summary=initial_summary, script_path=script_path
+            )
+        self.assertTrue(approved)
+        self.assertEqual(reason, "")
+        self.assertTrue(orig_path.is_file())
+        self.assertEqual(orig_path.read_text(encoding="utf-8"), initial_script)
+        self.assertEqual(script_path.read_text(encoding="utf-8"), edit_2_script)
+
+        tty_out = tty_w.getvalue()
+        self.assertEqual(tty_out.count("╭─ BLOCK PLAN "), 3)
+        self.assertIn("-> Execute this block? [Y/n/e(dit)]:", tty_out)
+        self.assertIn("-> Execute this block? [y/n/e(dit)]:", tty_out)
+        self.assertIn("Safety warnings (1):", tty_out)
+        self.assertIn("[fs-destructive]", tty_out)
+        self.assertIn("rm -rf /tmp/f51_danger_2", tty_out)
+        self.assertIn("(edited)", tty_out)
+
+        sum1 = self.mod.summarize_script_actions(edit_1_script, work_dir=work)
+        sum2 = self.mod.summarize_script_actions(edit_2_script, work_dir=work)
+        self.assertIn(str(sum1["meta"]), tty_out)
+        self.assertIn(f"{sum2['meta']} (edited)", tty_out)
+
+        # --show notes the original backup
+        buf_show = io.StringIO()
+        with contextlib.redirect_stdout(buf_show):
+            rc_show = self.mod.cmd_show("s1/1")
+        self.assertEqual(rc_show, 0)
+        self.assertIn(f"edited, original: {orig_path}", buf_show.getvalue())
+
+        # 3. Post-edit syntax error shows SYNTAX ERROR and aborts execution
+        step2 = sdir / "2"
+        step2.mkdir(parents=True)
+        bad_script_p = step2 / "block.sh"
+        bad_out_p = step2 / "out"
+        bad_script_p.write_text("echo ok\n", encoding="utf-8")
+
+        def inject_syntax_error(_label, _txt, summary=None, script_path=None, auto_yes=False):
+            script_path.write_text("if true; then\n", encoding="utf-8")
+            return True, ""
+
+        os.environ["RUN_BLOCK_CWD"] = str(work)
+        buf_syn = io.StringIO()
+        with unittest.mock.patch.object(self.mod, "confirm_execution", side_effect=inject_syntax_error), \
+             contextlib.redirect_stdout(buf_syn):
+            rc_syn = self.mod.run_script("s1/2", bad_script_p, bad_out_p, auto_yes=False)
+        self.assertNotEqual(rc_syn, 0)
+        self.assertIn("╭─ SYNTAX ERROR ", buf_syn.getvalue())
+        self.assertIn("END (syntax error", bad_out_p.read_text(encoding="utf-8"))
+
+        # 4. PowerShell backup uses .orig.ps1
+        ps_path = step2 / "block.ps1"
+        self.assertEqual(self.mod._orig_backup_path(ps_path), step2 / "block.orig.ps1")
 
 if __name__ == "__main__":
     unittest.main()

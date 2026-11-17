@@ -1,3 +1,10 @@
+# ✅ [DONE] F51: Support e(dit) on BLOCK PLAN script with original backup and plan/token recalculation — *2026-11-17*
+
+- Replace `v(iew)` with `e(dit)` in the `BLOCK PLAN` confirmation prompt (`src/ui.py`, keeping `v` as a compatibility alias) and preserve the unmodified script as `<session>/<step>/block.orig.sh` (or `.ps1`) on the first edit without overwriting it on subsequent edits.
+- Re-validate script syntax after editing (`bash -n` / PowerShell parser in `src/runner.py`), showing `SYNTAX ERROR` and aborting execution if the edited script fails syntax validation.
+- Recompute `summarize_script_actions()` (operations list and `Script:` line/byte/token statistics), `scan_script_risks()` warnings, and default confirmation prompt (`src/ui.py`, `src/runner.py`), and redraw the full `BLOCK PLAN` box in place with an explicit `(edited)` indicator (and note original backup in `--show`).
+- Sync `README.md` and `src/header.py` help text and add unit tests in `tests/test_run_block.py` covering `e(dit)` in `BLOCK PLAN`, `block.orig.*` preservation, statistics/risks recalculation, and post-edit syntax error handling.
+
 # ✅ [DONE] B9: Fix false-positive [exec] and [remote-exec] on quoted variable assignments and --exclude-dir=eval flags — *2026-11-17, Fix false-positive [exec] and [remote-exec] on quoted variable assignments and --exclude-dir=eval flags*
 
 - Update variable assignment matching in `src/safety.py` (`VAR_ASSIGN_RE` / assignment helper) to recognize `[export|local|readonly] VAR=...` when the value is a single- or double-quoted string containing spaces or a parenthesized array literal without trailing commands or command substitutions (`$(...)` / backticks).

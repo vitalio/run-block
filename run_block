@@ -7,7 +7,7 @@
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
   {prog} --list | -l [session]       List sessions or blocks in a session
-  {prog} --show [session/step]       Show script and output of a block (or <session>/0 bundle)
+  {prog} --show [session/step]       Show script, original backup note, and output of a block (or <session>/0 bundle)
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
   {prog} --start [opts]              Start session with explicit options (--session NAME, --sandbox MODE, --force)
@@ -19,6 +19,7 @@
 Environment:
   RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
+  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN / START BUNDLE (keeps block.orig.sh/.ps1)
 """
 from __future__ import annotations
 
@@ -57,7 +58,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.21.8"
+VERSION = "0.21.9"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -184,6 +185,11 @@ def _find_step_script(sdir: Path, step: str, shell_bin: str | None = None) -> Pa
         if p.exists():
             return p
     return step_d / f"block{_script_ext(shell_bin)}"
+
+
+def _orig_backup_path(script_path: Path) -> Path:
+    ext = script_path.suffix or _script_ext()
+    return script_path.with_name(f"block.orig{ext}")
 
 
 def _iter_session_scripts(sdir: Path) -> list[Path]:
@@ -1559,6 +1565,12 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         meta += f", {sh_tag} + {py_blocks} python block{'s' if py_blocks != 1 else ''}"
     else:
         meta += f", {sh_tag}"
+    if get_setting("token_stats")[0] != "false":
+        fn_stats = globals().get("format_stats")
+        if callable(fn_stats):
+            stats_s = str(fn_stats(script_text.encode("utf-8")))
+            if " · " in stats_s:
+                meta += " · " + stats_s.split(" · ", 1)[1]
     return {
         "meta": meta,
         "rows": rows,
@@ -2463,7 +2475,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
+    return "[Y/n/e(dit)]:" if default_yes else "[y/n/e(dit)]:"
 
 
 def format_safety_box(
@@ -2473,6 +2485,7 @@ def format_safety_box(
     summary: dict[str, object] | None = None,
     note: str = "",
     script_path: Path | None = None,
+    edited: bool = False,
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
     title = " BLOCK PLAN "
@@ -2496,7 +2509,10 @@ def format_safety_box(
     if summary:
         detail_lines: list[str] = []
         if meta_str:
-            detail_lines.append(f"Script: {meta_str}")
+            script_line = f"Script: {meta_str} (edited)" if edited else f"Script: {meta_str}"
+            detail_lines.append(script_line)
+        elif edited:
+            detail_lines.append("Script: (edited)")
         ops = list(summary.get("operations") or [])
         op_groups = list(summary.get("operation_groups") or [])
         op_steps = list(summary.get("operation_steps") or [])
@@ -2669,7 +2685,7 @@ def prompt_yes_no_box(
                     tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
                     continue
-                if action == "view" and (has_output or has_script):
+                if action in ("view", "edit") and (has_output or has_script):
                     view_target = out_path if (has_output and out_path is not None) else script_path
                     if view_target is not None:
                         open_script_in_editor(view_target, tty_r, tty_w)
@@ -2739,7 +2755,9 @@ def _parse_confirm_line(
     ans = line.strip().lower()
     if extra_keys and ans in extra_keys:
         return extra_keys[ans]
-    if ans in ("v", "view", "e", "edit"):
+    if ans in ("e", "edit"):
+        return "edit"
+    if ans in ("v", "view"):
         return "view"
     if default_yes and ans in ("", "y", "yes"):
         return "yes"
@@ -2780,7 +2798,9 @@ def read_confirm_key(
             ch_low = ch.decode("latin1").lower()
             if extra_keys and ch_low in extra_keys:
                 return extra_keys[ch_low]
-            if ch in (b"v", b"V", b"e", b"E"):
+            if ch in (b"e", b"E"):
+                return "edit"
+            if ch in (b"v", b"V"):
                 return "view"
             if ch in (b"y", b"Y"):
                 return "yes"
@@ -2804,6 +2824,32 @@ def read_confirm_key(
             pass
 
 
+def _write_orig_backup_once(orig_path: Path, raw_bytes: bytes) -> None:
+    if orig_path.exists():
+        return
+    fd = os.open(orig_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f_orig:
+        f_orig.write(raw_bytes)
+
+
+def _is_script_edited(script_path: Path | None, orig_path: Path | None) -> bool:
+    if script_path is None or orig_path is None:
+        return False
+    if not orig_path.is_file() or not script_path.is_file():
+        return False
+    try:
+        return script_path.read_bytes() != orig_path.read_bytes()
+    except OSError:
+        return False
+
+
+def _safety_prompt_prefix(default_yes: bool, has_findings: bool, border_color: str) -> str:
+    raw_prompt = f"-> Execute this block? {_safety_prompt_suffix(default_yes)}"
+    if has_findings and _use_color():
+        raw_prompt = f"{_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"
+    return _prefix_block_line(raw_prompt, border_color=border_color)
+
+
 def confirm_execution(
     label: str,
     script_text: str,
@@ -2817,8 +2863,9 @@ def confirm_execution(
     note = ""
     approve_decision = ""
     approve_cmd, _ = get_setting("approve_cmd")
+    wdir = Path(str(summary.get("work_dir"))) if summary and summary.get("work_dir") else get_work_dir()
+    orig_sandbox = str(summary.get("sandbox") or "") if summary else ""
     if approve_cmd:
-        wdir = Path(str(summary.get("work_dir"))) if summary and summary.get("work_dir") else get_work_dir()
         plan_obj = analyze_script(script_text, work_dir=wdir, label=label, check_syntax=False)
         approve_decision, note = run_approve_cmd(approve_cmd, label, script_text, plan_obj, script_path=script_path)
         if approve_decision == "reject":
@@ -2835,7 +2882,10 @@ def confirm_execution(
                 sys.stdout.write(f"[{label}] safety warning [{f['category']}]: {f['snippet']}\n")
             sys.stdout.flush()
         return True, note
+    orig_path = _orig_backup_path(script_path) if script_path is not None else None
+    is_edited = _is_script_edited(script_path, orig_path)
     default_yes = (len(findings) == 0 and approve_decision != "prompt")
+    prev_cols = _hr_width()
     box, rule_width, cursor_offset = format_safety_box(
         label,
         findings,
@@ -2843,14 +2893,11 @@ def confirm_execution(
         summary=summary,
         note=note,
         script_path=script_path,
+        edited=is_edited,
     )
     _, border_col = _block_colors("BLOCK PLAN")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prompt_suffix = _safety_prompt_suffix(default_yes)
-    raw_prompt = f"-> Execute this block? {prompt_suffix}"
-    if findings and _use_color():
-        raw_prompt = f"{_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"
-    prefixed_prompt = _prefix_block_line(raw_prompt, border_color=border_col)
+    prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -2858,11 +2905,57 @@ def confirm_execution(
             tty_w.flush()
             while True:
                 action = read_confirm_key(tty_r, default_yes=default_yes)
-                if action == "view":
+                if action in ("edit", "view"):
                     if script_path is not None and script_path.is_file():
+                        try:
+                            before_bytes: bytes | None = script_path.read_bytes()
+                        except OSError:
+                            before_bytes = None
                         open_script_in_editor(script_path, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                        tty_w.flush()
+                        try:
+                            after_bytes: bytes | None = script_path.read_bytes() if script_path.is_file() else None
+                        except OSError:
+                            after_bytes = None
+                        if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
+                            if orig_path is not None:
+                                _write_orig_backup_once(orig_path, before_bytes)
+                            script_text = after_bytes.decode("utf-8", errors="replace")
+                            summary = summarize_script_actions(script_text, work_dir=wdir)
+                            if orig_sandbox:
+                                summary["sandbox"] = orig_sandbox
+                            findings = scan_script_risks(script_text)
+                            if approve_cmd:
+                                plan_obj = analyze_script(script_text, work_dir=wdir, label=label, check_syntax=False)
+                                approve_decision, note = run_approve_cmd(
+                                    approve_cmd, label, script_text, plan_obj, script_path=script_path
+                                )
+                                if approve_decision == "reject":
+                                    reject_msg = note or "rejected by RUN_BLOCK_APPROVE_CMD"
+                                    prefixed_rej = _prefix_block_line(f"✗ {reject_msg}", border_color=border_col)
+                                    tty_w.write(f"\r\033[K{prefixed_rej}\n\r\033[K{bottom}\n")
+                                    tty_w.flush()
+                                    return False, reject_msg
+                            default_yes = (len(findings) == 0 and approve_decision != "prompt")
+                            is_edited = _is_script_edited(script_path, orig_path)
+                            up_rows = _box_rows_above_prompt(box, prev_cols)
+                            prev_cols = _hr_width()
+                            box, rule_width, cursor_offset = format_safety_box(
+                                label,
+                                findings,
+                                default_yes=default_yes,
+                                summary=summary,
+                                note=note,
+                                script_path=script_path,
+                                edited=is_edited,
+                            )
+                            bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                            prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                            move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                            tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                            tty_w.flush()
+                        else:
+                            tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                            tty_w.flush()
                     continue
                 if action == "yes":
                     approved = True
@@ -3988,6 +4081,74 @@ def _iter_child_streams(out_fd, err_fd):
         th.join()
 
 
+def _validate_step_script_syntax(
+    label: str,
+    script_path: Path,
+    out_path: Path,
+    work_dir: Path,
+    shell_bin: str,
+    is_ps: bool,
+    sdir: Path,
+    headless: bool = False,
+    footer_on_fail: str | None = None,
+) -> int:
+    if is_ps:
+        ps_check = (
+            "$err = $null; "
+            "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
+            "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
+        )
+        chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(script_path)]
+    else:
+        chk_cmd = [shell_bin, "-n", str(script_path)]
+    chk = subprocess.run(
+        chk_cmd,
+        cwd=work_dir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if chk.returncode == 0:
+        return 0
+    start_line = f"[{label}] START\n\n"
+    msg = chk.stdout or "syntax check failed\n"
+    end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
+    if footer_on_fail:
+        end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
+    full_output = start_line + msg + end_line
+    write_private(out_path, full_output, overwrite=True)
+    if headless:
+        sys.stdout.write(full_output)
+        sys.stdout.flush()
+        return chk.returncode
+    err_lines = msg.rstrip("\n").splitlines() or ["syntax check failed"]
+    box_lines = [
+        f"Exit: {chk.returncode}",
+        f"Script: {script_path}",
+        f"Output: {out_path}",
+        f"Error: {err_lines[0]}",
+        *(f"  {eline}" for eline in err_lines[1:]),
+    ]
+    can_prompt_clip = (
+        not in_run_block()
+        and sys.stdout.isatty()
+        and clipboard_mode() == "prompt"
+        and clipboard_command(out_path) is not None
+    )
+    if can_prompt_clip:
+        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+    else:
+        full_body = build_box_body_lines(
+            out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
+        )
+        sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
+        sys.stdout.flush()
+        if not in_run_block():
+            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+    return chk.returncode
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -4006,64 +4167,25 @@ def run_script(
     shell_bin, _ = get_setting("shell")
     is_ps = _is_powershell(shell_bin)
     script_text = script_path.read_text(encoding="utf-8")
-
-    if is_ps:
-        ps_check = (
-            "$err = $null; "
-            "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-            "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
-        )
-        chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(script_path)]
-        exec_cmd = [shell_bin, "-NoProfile", "-File", str(script_path)]
-    else:
-        chk_cmd = [shell_bin, "-n", str(script_path)]
-        exec_cmd = [shell_bin, str(script_path)]
-
-    chk = subprocess.run(
-        chk_cmd,
-        cwd=work_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
+    exec_cmd = (
+        [shell_bin, "-NoProfile", "-File", str(script_path)]
+        if is_ps
+        else [shell_bin, str(script_path)]
     )
-    if chk.returncode != 0:
-        start_line = f"[{label}] START\n\n"
-        msg = chk.stdout or "syntax check failed\n"
-        end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
-        if footer_on_fail:
-            end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
-        full_output = start_line + msg + end_line
-        write_private(out_path, full_output)
-        if headless:
-            sys.stdout.write(full_output)
-            sys.stdout.flush()
-            return chk.returncode
-        err_lines = msg.rstrip("\n").splitlines() or ["syntax check failed"]
-        box_lines = [
-            f"Exit: {chk.returncode}",
-            f"Script: {script_path}",
-            f"Output: {out_path}",
-            f"Error: {err_lines[0]}",
-            *(f"  {eline}" for eline in err_lines[1:]),
-        ]
-        can_prompt_clip = (
-            not in_run_block()
-            and sys.stdout.isatty()
-            and clipboard_mode() == "prompt"
-            and clipboard_command(out_path) is not None
-        )
-        if can_prompt_clip:
-            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
-        else:
-            full_body = build_box_body_lines(
-                out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
-            )
-            sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
-            sys.stdout.flush()
-            if not in_run_block():
-                offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
-        return chk.returncode
+
+    rc_syn = _validate_step_script_syntax(
+        label,
+        script_path,
+        out_path,
+        work_dir,
+        shell_bin,
+        is_ps,
+        sdir,
+        headless=headless,
+        footer_on_fail=footer_on_fail,
+    )
+    if rc_syn != 0:
+        return rc_syn
 
     aborted_marker = step_dir / "aborted"
     summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
@@ -4080,6 +4202,26 @@ def run_script(
             label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless
         )
     aborted_marker.unlink(missing_ok=True)
+
+    if script_path.is_file():
+        updated_text = script_path.read_text(encoding="utf-8")
+        if updated_text != script_text:
+            script_text = updated_text
+            rc_syn = _validate_step_script_syntax(
+                label,
+                script_path,
+                out_path,
+                work_dir,
+                shell_bin,
+                is_ps,
+                sdir,
+                headless=headless,
+                footer_on_fail=footer_on_fail,
+            )
+            if rc_syn != 0:
+                return rc_syn
+            summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
+            summary_obj["sandbox"] = sandbox_mode
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
@@ -4368,6 +4510,8 @@ def cmd_normal(
     if overwrite:
         out_path.unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
+        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+            orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
             existing_lines = []
@@ -4390,6 +4534,8 @@ def cmd_normal(
             ):
                 overwrite = True
                 out_path.unlink(missing_ok=True)
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+                    orig_p.unlink(missing_ok=True)
             else:
                 return 2
         if not overwrite:
@@ -4686,7 +4832,11 @@ def cmd_show(ref: str | None = None) -> int:
     err_path = step_dir / "error"
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
-    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({_step_status(sdir, step)}) ===\n")
+    orig_path = _orig_backup_path(script_path)
+    status_str = _step_status(sdir, step)
+    if orig_path.is_file():
+        status_str = f"{status_str}; edited, original: {orig_path}"
+    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({status_str}) ===\n")
     sys.stdout.write(script_path.read_text(encoding="utf-8", errors="replace"))
     if out_path.is_file():
         sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path} ===\n")

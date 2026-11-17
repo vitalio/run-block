@@ -4,13 +4,6 @@
 - Recompute `stats_line()` (lines, bytes, and Claude/GPT/Gemini token counts), re-extract `Error:` when `rc != 0`, refresh the clipboard copy target (`resolve_clipboard_target`), and redraw the full `END` box in place with an explicit `(edited)` indicator (`src/ui.py`, `src/runner.py`).
 - Surface `(edited)` markers in `run_block --show` when `block.orig.*`, `out.orig`, or `0.orig` exists (`src/runner.py`), sync `README.md` and `src/header.py`, and add unit tests in `tests/test_run_block.py`.
 
-# 🎯 [NEXT] F51: Support e(dit) on BLOCK PLAN script with original backup and plan/token recalculation
-
-- Replace `v(iew)` with `e(dit)` in the `BLOCK PLAN` confirmation prompt (`src/ui.py`, keeping `v` as a compatibility alias) and preserve the unmodified script as `<session>/<step>/block.orig.sh` (or `.ps1`) on the first edit without overwriting it on subsequent edits.
-- Re-validate script syntax after editing (`bash -n` / PowerShell parser in `src/runner.py`), showing `SYNTAX ERROR` and aborting execution if the edited script fails syntax validation.
-- Recompute `summarize_script_actions()` (operations list and `Script:` line/byte/token statistics), `scan_script_risks()` warnings, and default confirmation prompt (`src/ui.py`, `src/runner.py`), and redraw the full `BLOCK PLAN` box in place with an explicit `(edited)` indicator (and note original backup in `--show`).
-- Sync `README.md` and `src/header.py` help text and add unit tests in `tests/test_run_block.py` covering `e(dit)` in `BLOCK PLAN`, `block.orig.*` preservation, statistics/risks recalculation, and post-edit syntax error handling.
-
 # 🎯 [NEXT] F49: Record and display execution duration for blocks and numbered operations
 
 - Measure wall-clock block execution duration (`time.monotonic()`) around child process execution (`subprocess.Popen` to `wait()`, excluding `BLOCK PLAN` confirmation wait) in `src/runner.py`.

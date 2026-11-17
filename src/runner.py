@@ -500,6 +500,74 @@ def _iter_child_streams(out_fd, err_fd):
         th.join()
 
 
+def _validate_step_script_syntax(
+    label: str,
+    script_path: Path,
+    out_path: Path,
+    work_dir: Path,
+    shell_bin: str,
+    is_ps: bool,
+    sdir: Path,
+    headless: bool = False,
+    footer_on_fail: str | None = None,
+) -> int:
+    if is_ps:
+        ps_check = (
+            "$err = $null; "
+            "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
+            "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
+        )
+        chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(script_path)]
+    else:
+        chk_cmd = [shell_bin, "-n", str(script_path)]
+    chk = subprocess.run(
+        chk_cmd,
+        cwd=work_dir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    if chk.returncode == 0:
+        return 0
+    start_line = f"[{label}] START\n\n"
+    msg = chk.stdout or "syntax check failed\n"
+    end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
+    if footer_on_fail:
+        end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
+    full_output = start_line + msg + end_line
+    write_private(out_path, full_output, overwrite=True)
+    if headless:
+        sys.stdout.write(full_output)
+        sys.stdout.flush()
+        return chk.returncode
+    err_lines = msg.rstrip("\n").splitlines() or ["syntax check failed"]
+    box_lines = [
+        f"Exit: {chk.returncode}",
+        f"Script: {script_path}",
+        f"Output: {out_path}",
+        f"Error: {err_lines[0]}",
+        *(f"  {eline}" for eline in err_lines[1:]),
+    ]
+    can_prompt_clip = (
+        not in_run_block()
+        and sys.stdout.isatty()
+        and clipboard_mode() == "prompt"
+        and clipboard_command(out_path) is not None
+    )
+    if can_prompt_clip:
+        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+    else:
+        full_body = build_box_body_lines(
+            out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
+        )
+        sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
+        sys.stdout.flush()
+        if not in_run_block():
+            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+    return chk.returncode
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -518,64 +586,25 @@ def run_script(
     shell_bin, _ = get_setting("shell")
     is_ps = _is_powershell(shell_bin)
     script_text = script_path.read_text(encoding="utf-8")
-
-    if is_ps:
-        ps_check = (
-            "$err = $null; "
-            "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-            "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
-        )
-        chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(script_path)]
-        exec_cmd = [shell_bin, "-NoProfile", "-File", str(script_path)]
-    else:
-        chk_cmd = [shell_bin, "-n", str(script_path)]
-        exec_cmd = [shell_bin, str(script_path)]
-
-    chk = subprocess.run(
-        chk_cmd,
-        cwd=work_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        check=False,
+    exec_cmd = (
+        [shell_bin, "-NoProfile", "-File", str(script_path)]
+        if is_ps
+        else [shell_bin, str(script_path)]
     )
-    if chk.returncode != 0:
-        start_line = f"[{label}] START\n\n"
-        msg = chk.stdout or "syntax check failed\n"
-        end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
-        if footer_on_fail:
-            end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
-        full_output = start_line + msg + end_line
-        write_private(out_path, full_output)
-        if headless:
-            sys.stdout.write(full_output)
-            sys.stdout.flush()
-            return chk.returncode
-        err_lines = msg.rstrip("\n").splitlines() or ["syntax check failed"]
-        box_lines = [
-            f"Exit: {chk.returncode}",
-            f"Script: {script_path}",
-            f"Output: {out_path}",
-            f"Error: {err_lines[0]}",
-            *(f"  {eline}" for eline in err_lines[1:]),
-        ]
-        can_prompt_clip = (
-            not in_run_block()
-            and sys.stdout.isatty()
-            and clipboard_mode() == "prompt"
-            and clipboard_command(out_path) is not None
-        )
-        if can_prompt_clip:
-            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
-        else:
-            full_body = build_box_body_lines(
-                out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
-            )
-            sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
-            sys.stdout.flush()
-            if not in_run_block():
-                offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
-        return chk.returncode
+
+    rc_syn = _validate_step_script_syntax(
+        label,
+        script_path,
+        out_path,
+        work_dir,
+        shell_bin,
+        is_ps,
+        sdir,
+        headless=headless,
+        footer_on_fail=footer_on_fail,
+    )
+    if rc_syn != 0:
+        return rc_syn
 
     aborted_marker = step_dir / "aborted"
     summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
@@ -592,6 +621,26 @@ def run_script(
             label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless
         )
     aborted_marker.unlink(missing_ok=True)
+
+    if script_path.is_file():
+        updated_text = script_path.read_text(encoding="utf-8")
+        if updated_text != script_text:
+            script_text = updated_text
+            rc_syn = _validate_step_script_syntax(
+                label,
+                script_path,
+                out_path,
+                work_dir,
+                shell_bin,
+                is_ps,
+                sdir,
+                headless=headless,
+                footer_on_fail=footer_on_fail,
+            )
+            if rc_syn != 0:
+                return rc_syn
+            summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
+            summary_obj["sandbox"] = sandbox_mode
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
@@ -880,6 +929,8 @@ def cmd_normal(
     if overwrite:
         out_path.unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
+        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+            orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
             existing_lines = []
@@ -902,6 +953,8 @@ def cmd_normal(
             ):
                 overwrite = True
                 out_path.unlink(missing_ok=True)
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1"):
+                    orig_p.unlink(missing_ok=True)
             else:
                 return 2
         if not overwrite:
@@ -1198,7 +1251,11 @@ def cmd_show(ref: str | None = None) -> int:
     err_path = step_dir / "error"
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
-    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({_step_status(sdir, step)}) ===\n")
+    orig_path = _orig_backup_path(script_path)
+    status_str = _step_status(sdir, step)
+    if orig_path.is_file():
+        status_str = f"{status_str}; edited, original: {orig_path}"
+    sys.stdout.write(f"=== [{session}/{step}] Script: {script_path} ({status_str}) ===\n")
     sys.stdout.write(script_path.read_text(encoding="utf-8", errors="replace"))
     if out_path.is_file():
         sys.stdout.write(f"\n=== [{session}/{step}] Output: {out_path} ===\n")

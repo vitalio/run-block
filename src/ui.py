@@ -199,7 +199,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/v(iew)]:" if default_yes else "[y/n/v(iew)]:"
+    return "[Y/n/e(dit)]:" if default_yes else "[y/n/e(dit)]:"
 
 
 def format_safety_box(
@@ -209,6 +209,7 @@ def format_safety_box(
     summary: dict[str, object] | None = None,
     note: str = "",
     script_path: Path | None = None,
+    edited: bool = False,
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
     title = " BLOCK PLAN "
@@ -232,7 +233,10 @@ def format_safety_box(
     if summary:
         detail_lines: list[str] = []
         if meta_str:
-            detail_lines.append(f"Script: {meta_str}")
+            script_line = f"Script: {meta_str} (edited)" if edited else f"Script: {meta_str}"
+            detail_lines.append(script_line)
+        elif edited:
+            detail_lines.append("Script: (edited)")
         ops = list(summary.get("operations") or [])
         op_groups = list(summary.get("operation_groups") or [])
         op_steps = list(summary.get("operation_steps") or [])
@@ -405,7 +409,7 @@ def prompt_yes_no_box(
                     tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
                     continue
-                if action == "view" and (has_output or has_script):
+                if action in ("view", "edit") and (has_output or has_script):
                     view_target = out_path if (has_output and out_path is not None) else script_path
                     if view_target is not None:
                         open_script_in_editor(view_target, tty_r, tty_w)
@@ -475,7 +479,9 @@ def _parse_confirm_line(
     ans = line.strip().lower()
     if extra_keys and ans in extra_keys:
         return extra_keys[ans]
-    if ans in ("v", "view", "e", "edit"):
+    if ans in ("e", "edit"):
+        return "edit"
+    if ans in ("v", "view"):
         return "view"
     if default_yes and ans in ("", "y", "yes"):
         return "yes"
@@ -516,7 +522,9 @@ def read_confirm_key(
             ch_low = ch.decode("latin1").lower()
             if extra_keys and ch_low in extra_keys:
                 return extra_keys[ch_low]
-            if ch in (b"v", b"V", b"e", b"E"):
+            if ch in (b"e", b"E"):
+                return "edit"
+            if ch in (b"v", b"V"):
                 return "view"
             if ch in (b"y", b"Y"):
                 return "yes"
@@ -540,6 +548,32 @@ def read_confirm_key(
             pass
 
 
+def _write_orig_backup_once(orig_path: Path, raw_bytes: bytes) -> None:
+    if orig_path.exists():
+        return
+    fd = os.open(orig_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f_orig:
+        f_orig.write(raw_bytes)
+
+
+def _is_script_edited(script_path: Path | None, orig_path: Path | None) -> bool:
+    if script_path is None or orig_path is None:
+        return False
+    if not orig_path.is_file() or not script_path.is_file():
+        return False
+    try:
+        return script_path.read_bytes() != orig_path.read_bytes()
+    except OSError:
+        return False
+
+
+def _safety_prompt_prefix(default_yes: bool, has_findings: bool, border_color: str) -> str:
+    raw_prompt = f"-> Execute this block? {_safety_prompt_suffix(default_yes)}"
+    if has_findings and _use_color():
+        raw_prompt = f"{_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"
+    return _prefix_block_line(raw_prompt, border_color=border_color)
+
+
 def confirm_execution(
     label: str,
     script_text: str,
@@ -553,8 +587,9 @@ def confirm_execution(
     note = ""
     approve_decision = ""
     approve_cmd, _ = get_setting("approve_cmd")
+    wdir = Path(str(summary.get("work_dir"))) if summary and summary.get("work_dir") else get_work_dir()
+    orig_sandbox = str(summary.get("sandbox") or "") if summary else ""
     if approve_cmd:
-        wdir = Path(str(summary.get("work_dir"))) if summary and summary.get("work_dir") else get_work_dir()
         plan_obj = analyze_script(script_text, work_dir=wdir, label=label, check_syntax=False)
         approve_decision, note = run_approve_cmd(approve_cmd, label, script_text, plan_obj, script_path=script_path)
         if approve_decision == "reject":
@@ -571,7 +606,10 @@ def confirm_execution(
                 sys.stdout.write(f"[{label}] safety warning [{f['category']}]: {f['snippet']}\n")
             sys.stdout.flush()
         return True, note
+    orig_path = _orig_backup_path(script_path) if script_path is not None else None
+    is_edited = _is_script_edited(script_path, orig_path)
     default_yes = (len(findings) == 0 and approve_decision != "prompt")
+    prev_cols = _hr_width()
     box, rule_width, cursor_offset = format_safety_box(
         label,
         findings,
@@ -579,14 +617,11 @@ def confirm_execution(
         summary=summary,
         note=note,
         script_path=script_path,
+        edited=is_edited,
     )
     _, border_col = _block_colors("BLOCK PLAN")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prompt_suffix = _safety_prompt_suffix(default_yes)
-    raw_prompt = f"-> Execute this block? {prompt_suffix}"
-    if findings and _use_color():
-        raw_prompt = f"{_WARN_COLOR}{raw_prompt}{_ANSI_RESET}"
-    prefixed_prompt = _prefix_block_line(raw_prompt, border_color=border_col)
+    prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -594,11 +629,57 @@ def confirm_execution(
             tty_w.flush()
             while True:
                 action = read_confirm_key(tty_r, default_yes=default_yes)
-                if action == "view":
+                if action in ("edit", "view"):
                     if script_path is not None and script_path.is_file():
+                        try:
+                            before_bytes: bytes | None = script_path.read_bytes()
+                        except OSError:
+                            before_bytes = None
                         open_script_in_editor(script_path, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                        tty_w.flush()
+                        try:
+                            after_bytes: bytes | None = script_path.read_bytes() if script_path.is_file() else None
+                        except OSError:
+                            after_bytes = None
+                        if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
+                            if orig_path is not None:
+                                _write_orig_backup_once(orig_path, before_bytes)
+                            script_text = after_bytes.decode("utf-8", errors="replace")
+                            summary = summarize_script_actions(script_text, work_dir=wdir)
+                            if orig_sandbox:
+                                summary["sandbox"] = orig_sandbox
+                            findings = scan_script_risks(script_text)
+                            if approve_cmd:
+                                plan_obj = analyze_script(script_text, work_dir=wdir, label=label, check_syntax=False)
+                                approve_decision, note = run_approve_cmd(
+                                    approve_cmd, label, script_text, plan_obj, script_path=script_path
+                                )
+                                if approve_decision == "reject":
+                                    reject_msg = note or "rejected by RUN_BLOCK_APPROVE_CMD"
+                                    prefixed_rej = _prefix_block_line(f"✗ {reject_msg}", border_color=border_col)
+                                    tty_w.write(f"\r\033[K{prefixed_rej}\n\r\033[K{bottom}\n")
+                                    tty_w.flush()
+                                    return False, reject_msg
+                            default_yes = (len(findings) == 0 and approve_decision != "prompt")
+                            is_edited = _is_script_edited(script_path, orig_path)
+                            up_rows = _box_rows_above_prompt(box, prev_cols)
+                            prev_cols = _hr_width()
+                            box, rule_width, cursor_offset = format_safety_box(
+                                label,
+                                findings,
+                                default_yes=default_yes,
+                                summary=summary,
+                                note=note,
+                                script_path=script_path,
+                                edited=is_edited,
+                            )
+                            bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                            prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                            move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                            tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                            tty_w.flush()
+                        else:
+                            tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                            tty_w.flush()
                     continue
                 if action == "yes":
                     approved = True
