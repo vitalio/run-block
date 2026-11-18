@@ -73,7 +73,8 @@ RUN_BLOCK
 ```
 
 Before running, `run_block` displays the `BLOCK PLAN` (working directory, numbered
-operations with nested AST-expanded sub-items, and any safety warnings). Press
+operations with nested AST-expanded sub-items for multi-file or read+write
+Python blocks, and any safety warnings). Press
 `Enter`/`y` to run, `n`/`Esc` to abort, or `e` (or `v`) to edit the script in your
 terminal editor. The first edit preserves the original script as
 `<session>/<step>/block.orig.sh` (or `.ps1`), recalculates operations, statistics, and

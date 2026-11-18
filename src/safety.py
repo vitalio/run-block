@@ -883,24 +883,24 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
     py_start = 0
     sh_eof: str | None = None
 
-    def _py_item_dir_and_rel(item: str) -> tuple[str, str]:
+    def _py_item_dir_and_rel(item: str) -> tuple[str, str, bool]:
         m_del = re.match(r"^([a-z_]+)\((.+)\)$", item)
         prefix = f"{m_del.group(1)}(" if m_del else ""
         suffix = ")" if m_del else ""
         raw_p = m_del.group(2) if m_del else item
         if raw_p in ("file (python)", "open(..., 'w')", "..."):
-            return cur_group_dir, item
+            return cur_group_dir, item, False
         ext_dir = _resolve_external_repo_dir(raw_p)
         if ext_dir:
             rel = raw_p[len(ext_dir) :].lstrip("/") or "."
-            return ext_dir, f"{prefix}{rel}{suffix}"
+            return ext_dir, f"{prefix}{rel}{suffix}", True
         if cur_group_dir:
-            return cur_group_dir, item
+            return cur_group_dir, item, False
         p_norm = raw_p.removeprefix("./")
         if "/" in p_norm and not p_norm.startswith("/"):
             parent, name = p_norm.rsplit("/", 1)
-            return parent, f"{prefix}{name}{suffix}"
-        return "", item
+            return parent, f"{prefix}{name}{suffix}", False
+        return "", item, False
 
     def _format_py_items(items: list[str], max_shown: int = 8) -> str:
         if len(items) <= max_shown:
@@ -922,17 +922,19 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             _add_unique(exec_cmds, x)
 
         dir_buckets: dict[str, dict[str, list[str]]] = {}
+        has_external = False
         for kind, raw_list in (("write", pw), ("read", pr)):
             for entry in raw_list:
-                g_dir, rel_entry = _py_item_dir_and_rel(entry)
+                g_dir, rel_entry, is_ext = _py_item_dir_and_rel(entry)
+                if is_ext:
+                    has_external = True
                 bucket = dir_buckets.setdefault(g_dir, {"write": [], "read": []})
                 if rel_entry not in bucket[kind]:
                     bucket[kind].append(rel_entry)
 
         n_lines = len([ln for ln in buf_lines if ln.strip()]) or len(buf_lines) or 1
         total_paths = len(pw) + len(pr)
-        has_external = any(bool(d) and d != cur_group_dir for d in dir_buckets)
-        if len(dir_buckets) > 1 or has_external or total_paths > 8:
+        if len(dir_buckets) > 1 or has_external or total_paths > 1:
             head_desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (
                 f" — calls: {', '.join(pe)}" if pe else ""
             )

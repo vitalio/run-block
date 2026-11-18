@@ -1475,10 +1475,10 @@ class TestRunBlock(unittest.TestCase):
                 self.assertNotIn("\x1b[2m[read]", box_warn)
                 self.assertIn("2. \x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
                 self.assertIn("3. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
-                self.assertIn("4. \x1b[1;32m[python]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;33mwrites: b.txt\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;94mreads:\x1b[0m a.txt", box_warn)
-                self.assertNotIn("\x1b[2mreads:", box_warn)
+                self.assertIn("4. \x1b[1;32m[python]\x1b[0m  3 lines", box_warn)
+                self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m   \x1b[1;33mb.txt\x1b[0m", box_warn)
+                self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m    a.txt", box_warn)
+                self.assertNotIn("\x1b[2m[read]", box_warn)
 
                 # Wrapped [read] continuation lines also render in neutral foreground
                 long_read = "cat " + "/".join(["segment"] * 12) + "/file.txt\n"
@@ -1941,9 +1941,18 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("2. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mtouch out.txt\x1b[0m", box)
                 self.assertIn("3. \x1b[1;35m[exec]\x1b[0m    pytest -q", box)
                 self.assertIn("4. \x1b[1;36m[git]\x1b[0m     git status -sb", box)
-                self.assertIn("5. \x1b[1;32m[python]\x1b[0m", box)
-                self.assertIn("\x1b[1;33mwrites: out.txt\x1b[0m", box)
-                self.assertIn("\x1b[1;94mreads:\x1b[0m in.txt", box)
+                self.assertIn("5. \x1b[1;32m[python]\x1b[0m  3 lines", box)
+                self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m   \x1b[1;33mout.txt\x1b[0m", box)
+                self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m    in.txt", box)
+                single_py = (
+                    "python3 - <<'PY'\n"
+                    "from pathlib import Path\n"
+                    "Path('only.txt').write_text('ok')\n"
+                    "PY\n"
+                )
+                single_sum = self.mod.summarize_script_actions(single_py, work_dir=Path(os.getcwd()))
+                single_box, _, _ = self.mod.format_safety_box("s1/1b", [], default_yes=True, summary=single_sum)
+                self.assertIn("1. \x1b[1;32m[python]\x1b[0m  2 lines — \x1b[1;33mwrites: only.txt\x1b[0m", single_box)
         finally:
             if saved_no_color is None:
                 os.environ.pop("NO_COLOR", None)
@@ -3377,6 +3386,104 @@ class TestRunBlock(unittest.TestCase):
         self.assertTrue(ascii_title[0].endswith("..."))
         self.assertLessEqual(self.mod.display_width(ascii_title[0]), 58)
 
+
+    def test_f60_unified_python_tree_expansion(self):
+        # 1. Multi-file Python block in repository root expands with tree markers
+        root_multi_rw = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "Path('VERSION').read_text()\n"
+            "Path('build.py').write_text('x')\n"
+            "Path('run_block').write_text('y')\n"
+            "PY\n"
+            "rm -f temp.txt\n"
+        )
+        sum_root = self.mod.summarize_script_actions(root_multi_rw, Path("/tmp/work"))
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+            box_root, _, _ = self.mod.format_safety_box("s1/1", [], default_yes=True, summary=sum_root)
+        self.assertIn("  1. [python]  4 lines", box_root)
+        self.assertIn("     ├─ [write]   build.py, run_block", box_root)
+        self.assertIn("     └─ [read]    VERSION", box_root)
+        self.assertIn("  2. [write]   rm -f temp.txt", box_root)
+
+        # 2. Multi-file write-only Python block in root and same subdirectory both expand
+        same_dir_writes = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "Path('src/safety.py').write_text('a')\n"
+            "Path('src/ui.py').write_text('b')\n"
+            "PY\n"
+        )
+        sum_sub = self.mod.summarize_script_actions(same_dir_writes, Path("/tmp/work"))
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+            box_sub, _, _ = self.mod.format_safety_box("s1/2", [], default_yes=True, summary=sum_sub)
+        self.assertIn("  1. [python]  3 lines", box_sub)
+        self.assertIn("     └─ [write]   src: safety.py, ui.py", box_sub)
+
+        # 3. Single-file read+write on same file expands (total_paths == 2)
+        same_file_rw = (
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "p = Path('README.md')\n"
+            "p.write_text(p.read_text())\n"
+            "PY\n"
+        )
+        sum_rw1 = self.mod.summarize_script_actions(same_file_rw, Path("/tmp/work"))
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+            box_rw1, _, _ = self.mod.format_safety_box("s1/3", [], default_yes=True, summary=sum_rw1)
+        self.assertIn("  1. [python]  3 lines", box_rw1)
+        self.assertIn("     ├─ [write]   README.md", box_rw1)
+        self.assertIn("     └─ [read]    README.md", box_rw1)
+
+        # 4. Trivial 0-1 file Python blocks remain compact single-line summaries
+        for label, py_src, expected in (
+            ("zero", "print(1)", "1. [python]  2 lines"),
+            ("one_write", "Path('build.py').write_text('x')", "1. [python]  2 lines — writes: build.py"),
+            ("one_read", "Path('src/ui.py').read_text()", "1. [python]  2 lines — reads: src/ui.py"),
+        ):
+            with self.subTest(case=label):
+                script = (
+                    "python3 - <<'PY'\n"
+                    "from pathlib import Path\n"
+                    f"{py_src}\n"
+                    "PY\n"
+                )
+                s_sum = self.mod.summarize_script_actions(script, Path("/tmp/work"))
+                self.assertEqual(len(s_sum["operations"]), 1)
+                with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+                    s_box, _, _ = self.mod.format_safety_box("s1/4", [], default_yes=True, summary=s_sum)
+                self.assertIn(expected, s_box)
+                self.assertNotIn("├─", s_box)
+                self.assertNotIn("└─", s_box)
+
+        # 5. Earlier cd subdir + root Python block + trailing root shell write keeps tree markers
+        mixed_root_after_cd = (
+            "cd /tmp\n"
+            "ls -la\n"
+            "cd /tmp/work\n"
+            "python3 - <<'PY'\n"
+            "from pathlib import Path\n"
+            "Path('a.txt').write_text('1')\n"
+            "Path('b.txt').read_text()\n"
+            "PY\n"
+            "rm -f a.txt\n"
+        )
+        sum_mix = self.mod.summarize_script_actions(mixed_root_after_cd, Path("/tmp/work"))
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+            box_mix, _, _ = self.mod.format_safety_box("s1/5", [], default_yes=True, summary=sum_mix)
+        self.assertIn("    1. [read]  ls -la", box_mix)
+        self.assertIn("    2. [python]  3 lines", box_mix)
+        self.assertIn("       ├─ [write]   a.txt", box_mix)
+        self.assertIn("       └─ [read]    b.txt", box_mix)
+        self.assertIn("    3. [write]   rm -f a.txt", box_mix)
+
+        # 6. ASCII fallback renders |- and `- connectors for root-dir expanded Python block
+        with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((96, 24))):
+                ascii_box, _, _ = self.mod.format_safety_box("s1/6", [], default_yes=True, summary=sum_root)
+        self.assertIn("     |- [write]   build.py, run_block", ascii_box)
+        self.assertIn("     `- [read]    VERSION", ascii_box)
 
 if __name__ == "__main__":
     unittest.main()

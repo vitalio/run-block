@@ -67,6 +67,33 @@ def read_clipboard_key(tty_r) -> str:
             pass
 
 
+def _step_matches_group_item(
+    st: dict[str, object],
+    tag: str,
+    desc: str,
+    group_dir: str,
+) -> bool:
+    if str(st.get("tag") or "") != tag or str(st.get("dir") or "") != group_dir:
+        return False
+    st_desc = str(st.get("desc") or "")
+    if not st_desc or st_desc == desc:
+        return True
+    if not group_dir:
+        return False
+    if st_desc.endswith(" " + desc):
+        return True
+    if tag == "git" and st_desc.startswith("git -C "):
+        m_git_c = re.match(r"^git\s+-C\s+[^\s]+\s+(.+)$", st_desc)
+        if m_git_c and f"git {m_git_c.group(1)}" == desc:
+            return True
+    short_ext = (
+        st_desc.replace(f"{group_dir}/", "")
+        .replace(f'"{group_dir}"', ".")
+        .replace(f"'{group_dir}'", ".")
+        .replace(group_dir, ".")
+    )
+    return short_ext == desc
+
 def _match_operation_step_numbers(
     items: list[tuple[str, str]],
     operation_steps: list[dict[str, object]],
@@ -83,10 +110,9 @@ def _match_operation_step_numbers(
         if idx < n_steps:
             st = operation_steps[idx]
             st_tag = str(st.get("tag") or "")
-            st_dir = str(st.get("dir") or "")
             st_desc = str(st.get("desc") or "")
             if group_dir is not None:
-                matches = st_tag == tag and st_dir == group_dir
+                matches = _step_matches_group_item(st, tag, desc, group_dir)
             else:
                 matches = st_tag == tag and st_desc == desc
             if matches:
