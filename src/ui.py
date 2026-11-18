@@ -16,10 +16,12 @@ def flush_tty_input(tty_r) -> None:
 
 
 def read_clipboard_key(tty_r) -> str:
-    """Wait for a single key: returns 'copy', 'skip', 'view', or 'edit'."""
+    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', or 'details'."""
     flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
         ans = tty_r.readline().strip().lower()
+        if ans in ("d", "details"):
+            return "details"
         if ans in ("e", "edit"):
             return "edit"
         if ans in ("v", "view"):
@@ -30,6 +32,8 @@ def read_clipboard_key(tty_r) -> str:
         old_attrs = termios.tcgetattr(fd)
     except Exception:
         ans = tty_r.readline().strip().lower()
+        if ans in ("d", "details"):
+            return "details"
         if ans in ("e", "edit"):
             return "edit"
         return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "esc", "\x1b") else "copy")
@@ -39,6 +43,8 @@ def read_clipboard_key(tty_r) -> str:
             ch = os.read(fd, 1)
             if not ch:
                 return "skip"
+            if ch in (b"d", b"D"):
+                return "details"
             if ch in (b"e", b"E"):
                 return "edit"
             if ch in (b"v", b"V"):
@@ -880,6 +886,17 @@ _TAG_COLORS = {
     "git": "\x1b[1;36m",
     "python": "\x1b[1;32m",
 }
+_BUNDLE_TAG_COLORS = {
+    "rule": "\x1b[1;36m",
+    "rules": "\x1b[1;36m",
+    "cmd": "\x1b[1;35m",
+    "file": "\x1b[1;94m",
+    "include": "\x1b[1;94m",
+    "prompt": "\x1b[1;33m",
+    "section": "\x1b[1;32m",
+    "text": "\x1b[1;32m",
+    "body": "\x1b[1;32m",
+}
 _ANSI_RESET = "\x1b[0m"
 
 
@@ -1038,6 +1055,22 @@ def _colorize_warning_lines(lines: list[str]) -> list[str]:
     return out
 
 
+def _colorize_bundle_lines(lines: list[str]) -> list[str]:
+    if not _use_color():
+        return lines
+    out: list[str] = []
+    for line in lines:
+        m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
+        if m:
+            indent, num_part, tag_br, tag, spaces, rest = m.groups()
+            num_str = num_part or ""
+            t_col = _BUNDLE_TAG_COLORS.get(tag, _TAG_COLORS.get(tag, _BORDER_COLOR))
+            out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+        else:
+            out.append(line)
+    return out
+
+
 def display_width(text: str) -> int:
     clean = ANSI_RE.sub("", text)
     return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in clean)
@@ -1092,10 +1125,12 @@ def _render_block(
     title: str,
     content_lines: list[str],
     prompt_line: str | None = None,
+    term_cols: int | None = None,
 ) -> tuple[str, int, int]:
     clean_title = title.strip()
     hdr = clean_title
-    width = max(min(_hr_width(), 48), display_width(hdr) + 8)
+    cols = term_cols if term_cols is not None else _hr_width()
+    width = max(min(cols, 48), display_width(hdr) + 8)
     aligned_lines = _align_kv_lines(content_lines)
     has_exit = any(l.startswith("Exit:") for l in aligned_lines)
     title_color, border_color = _block_colors(clean_title, has_exit=has_exit)
@@ -1196,6 +1231,48 @@ def _format_step_timings_summary(
     return " · ".join(parts)
 
 
+def _build_start_bundle_sections(
+    sdir: Path | None,
+    bundle_path: Path,
+    *,
+    details: bool = False,
+    max_width: int | None = None,
+) -> list[str]:
+    fn_load = globals().get("load_session_bundle_plan")
+    if not callable(fn_load):
+        return []
+    plan = fn_load(sdir, bundle_path)
+    if not isinstance(plan, dict):
+        return []
+    max_row_len = max_width if max_width is not None else max(24, _hr_width() - 2)
+    sections: list[str] = []
+    part_cnt = int(plan.get("part_count") or 0)
+    if details:
+        fn_parts = globals().get("format_bundle_part_items")
+        part_items = fn_parts(plan) if callable(fn_parts) else []
+        if part_items:
+            hdr = f"Parts ({part_cnt}):"
+            sections.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
+            step_nums = [int(p.get("index") or i) for i, p in enumerate(plan.get("parts") or [], 1) if isinstance(p, dict)]
+            sections.extend(_colorize_bundle_lines(_wrap_labeled_items(part_items, max_row_len, indent="  ", step_nums=step_nums)))
+    else:
+        fn_groups = globals().get("format_bundle_group_items")
+        grp_items = fn_groups(plan) if callable(fn_groups) else []
+        if grp_items:
+            hdr = f"Summary ({part_cnt} part{'s' if part_cnt != 1 else ''}):"
+            sections.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
+            sections.extend(_colorize_bundle_lines(_wrap_labeled_items(grp_items, max_row_len, indent="  ")))
+    fn_warns = globals().get("format_bundle_warning_items")
+    warn_items = fn_warns(plan) if callable(fn_warns) else []
+    if warn_items:
+        if sections:
+            sections.append("")
+        whdr = f"Bundle warnings ({len(warn_items)}):"
+        sections.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
+        sections.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_row_len, indent="  ")))
+    return sections
+
+
 def build_box_body_lines(
     out_path: Path,
     rc: int | None = None,
@@ -1208,6 +1285,9 @@ def build_box_body_lines(
     duration_s: float | None = None,
     op_timings: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
+    title_kind: str | None = None,
+    bundle_details: bool = False,
+    max_width: int | None = None,
 ) -> list[str]:
     err_src = error_source if error_source is not None else out_path
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, err_src)
@@ -1255,15 +1335,27 @@ def build_box_body_lines(
             detail_lines.append("Stats: (edited)")
     has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
-        return _align_kv_lines(detail_lines)
-    hdr_lines = format_session_header_lines(label=label, sdir=resolved_sdir)
-    if detail_lines:
-        return _align_kv_lines([*hdr_lines, "", *detail_lines])
-    return hdr_lines
+        base_lines = _align_kv_lines(detail_lines)
+    else:
+        hdr_lines = format_session_header_lines(label=label, sdir=resolved_sdir)
+        if detail_lines:
+            base_lines = _align_kv_lines([*hdr_lines, "", *detail_lines])
+        else:
+            base_lines = hdr_lines
+    if title_kind and title_kind.strip() == "START BUNDLE":
+        b_sections = _build_start_bundle_sections(resolved_sdir, err_src, details=bundle_details, max_width=max_width)
+        if b_sections:
+            if base_lines:
+                return [*base_lines, "", *b_sections]
+            return b_sections
+    return base_lines
 
 
 def _clipboard_prompt_line(title_kind: str) -> str:
-    if title_kind.strip() in ("START BUNDLE", "END"):
+    kind = title_kind.strip()
+    if kind == "START BUNDLE":
+        return "-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:"
+    if kind == "END":
         return "-> Copy to clipboard? [Enter/e(dit)/Esc]:"
     return "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
 
@@ -1282,8 +1374,10 @@ def format_clipboard_box(
     duration_s: float | None = None,
     op_timings: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
+    bundle_details: bool = False,
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
+    cols = _hr_width()
     body_lines = build_box_body_lines(
         out_path,
         rc=rc,
@@ -1295,9 +1389,12 @@ def format_clipboard_box(
         duration_s=duration_s,
         op_timings=op_timings,
         failed_step=failed_step,
+        title_kind=title_kind,
+        bundle_details=bundle_details,
+        max_width=max(24, cols - 2),
     )
     prompt_line = _clipboard_prompt_line(title_kind)
-    return _render_block(title_kind, body_lines, prompt_line=prompt_line)
+    return _render_block(title_kind, body_lines, prompt_line=prompt_line, term_cols=cols)
 
 
 def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
@@ -1352,6 +1449,7 @@ def offer_clipboard_copy(
         return
     orig_path = _orig_file_backup_path(edit_target)
     is_edited = _is_file_edited(edit_target, orig_path)
+    show_details = False
     prev_cols = _hr_width()
     box, rule_width, cursor_offset = format_clipboard_box(
         label,
@@ -1367,6 +1465,7 @@ def offer_clipboard_copy(
         duration_s=duration_s,
         op_timings=op_timings,
         failed_step=failed_step,
+        bundle_details=show_details,
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
@@ -1378,6 +1477,32 @@ def offer_clipboard_copy(
             tty_w.flush()
             while True:
                 action = read_clipboard_key(tty_r)
+                if is_start_bundle and action == "details":
+                    show_details = not show_details
+                    up_rows = _box_rows_above_prompt(box, prev_cols)
+                    prev_cols = _hr_width()
+                    box, rule_width, cursor_offset = format_clipboard_box(
+                        label,
+                        copy_target,
+                        ok=ok,
+                        rc=rc,
+                        stats=stats_line(copy_target),
+                        title_kind=title_kind,
+                        extra_lines=extra_lines,
+                        cmd_str=cmd_str,
+                        edited=is_edited,
+                        error_source=edit_target,
+                        duration_s=duration_s,
+                        op_timings=op_timings,
+                        failed_step=failed_step,
+                        bundle_details=show_details,
+                    )
+                    bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                    prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                    move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                    tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                    tty_w.flush()
+                    continue
                 if (is_start_bundle and action == "edit") or (is_end_box and action in ("edit", "view")):
                     if edit_target.is_file():
                         try:
@@ -1421,6 +1546,7 @@ def offer_clipboard_copy(
                                 duration_s=duration_s,
                                 op_timings=op_timings,
                                 failed_step=failed_step,
+                                bundle_details=show_details,
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
                             prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
@@ -1437,7 +1563,7 @@ def offer_clipboard_copy(
                         tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
-                if action in ("view", "edit"):
+                if action in ("view", "edit", "details"):
                     continue
                 if action == "copy":
                     if copy_file_to_clipboard(cmd, copy_target):

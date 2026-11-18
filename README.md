@@ -38,7 +38,10 @@ present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
 markers are parsed into per-part `bundle_plan` metrics (lines, bytes, GPT/Claude
 tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
 `<session>/0` (falling back to `===== ... =====` sections when no boundary is
-provided).
+provided). `START BUNDLE` renders a compact grouped summary (`kind` + `group`)
+plus diagnostics (non-zero command `rc`, empty output, oversized fragments or
+token budget exceedance, and accidental secrets in non-rule content); press `d`
+at the `START BUNDLE` prompt to toggle the full per-part `d(etails)` view.
 When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 `Workdir` directory, that path is preferred over the current directory or
 Git root and written to `<session>/0`:
@@ -109,6 +112,8 @@ RUN_FIX
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
 | `RUN_BLOCK_TOKEN_STATS` | `true` | Show byte size and Claude/GPT/Gemini token counts (`true` / `false`) |
+| `RUN_BLOCK_BUNDLE_MAX_TOKENS` | `100000` | Warn in `START BUNDLE` / `--bundle-plan` when total tokens exceed budget (`0` disables) |
+| `RUN_BLOCK_FRAGMENT_MAX_TOKENS` | `20000` | Warn in `START BUNDLE` / `--bundle-plan` when a single fragment exceeds limit (`0` disables) |
 | `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers and elapsed timings during interactive execution (`0`/`false` to disable) |
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
@@ -124,6 +129,7 @@ RUN_FIX
 | `<command> \| run_block` | Start a new session from `stdin` context bundle into `<session>/0` |
 | `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
+| `run_block --bundle-plan [<session>] [--json] [--full]` | Summarize bundle parts and diagnostics from `stdin` or an existing session |
 | `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
 | `run_block --retry [-y] [session/step]` | Re-run the last (or specified) block |
 | `run_block --list`, `-l [session]` | List sessions and blocks with their status and summary |

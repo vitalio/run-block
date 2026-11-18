@@ -4,6 +4,7 @@
   <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0
   {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes for non-interactive headless mode)
   {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
+  {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full)
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
   {prog} --list | -l [session]       List sessions or blocks in a session
@@ -19,7 +20,9 @@
 Environment:
   RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
-  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN, END, and START BUNDLE (keeps *.orig backups)
+  RUN_BLOCK_BUNDLE_MAX_TOKENS=100000 Warn when total bundle exceeds token budget (0 disables)
+  RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000 Warn when a single bundle part exceeds token limit (0 disables)
+  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN, END, and START BUNDLE (d(etails) inspects parts) (keeps *.orig backups)
 """
 from __future__ import annotations
 

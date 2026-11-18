@@ -1,4 +1,7 @@
 # --- Detailed pre-execution block plan and safety scanner ---
+CREDENTIAL_PATH_PATTERN = r"\.ssh/id_[A-Za-z0-9_]+(?!\.pub)\b|\.netrc\b|\.aws/credentials\b"
+CREDENTIAL_PATH_RE = re.compile(CREDENTIAL_PATH_PATTERN)
+
 RISK_RULES: list[tuple[str, str, re.Pattern[str]]] = [
     (
         "git-destructive",
@@ -37,7 +40,7 @@ RISK_RULES: list[tuple[str, str, re.Pattern[str]]] = [
         "secrets-exposure",
         "shell trace or credential file access",
         re.compile(
-            r"(?:\bset\s+-[A-Za-z]*x\b|\bbash\s+-[A-Za-z]*x\b|\.ssh/id_[A-Za-z0-9_]+(?!\.pub)\b|\.netrc\b|\.aws/credentials\b)"
+            r"(?:\bset\s+-[A-Za-z]*x\b|\bbash\s+-[A-Za-z]*x\b|" + CREDENTIAL_PATH_PATTERN + r")"
         ),
     ),
     (
@@ -1716,6 +1719,60 @@ SECRET_ENV_RE = re.compile(
     r"GH_TOKEN|GITHUB_TOKEN|GITLAB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY)$",
     re.IGNORECASE,
 )
+
+CONTENT_SECRET_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("private-key", re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")),
+    ("aws-key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("github-token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b|\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
+    ("api-token", re.compile(r"\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35})\b")),
+    ("url-credentials", re.compile(r"https?://[^:\s/@]+:[^@\s/]+@[^\s/]+")),
+    ("credential-file", CREDENTIAL_PATH_RE),
+)
+_SECRET_ASSIGN_RE = re.compile(
+    r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$"
+)
+_SECRET_PLACEHOLDER_RE = re.compile(
+    r"^(?:\*+|x+|your[_-].*|example.*|changeme|placeholder|redacted|none|null|true|false|\.{3,}|<[^>]+>|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)$",
+    re.IGNORECASE,
+)
+
+
+def scan_content_secrets(text: str) -> list[dict[str, object]]:
+    """Scans non-rule bundle content for accidental secret values/keys without returning secret literals."""
+    if not text:
+        return []
+    findings: list[dict[str, object]] = []
+    seen: set[tuple[str, str]] = set()
+    for lineno, raw_line in enumerate(text.splitlines(), 1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        for cat, pat in CONTENT_SECRET_RULES:
+            if pat.search(line):
+                pair = (cat, "")
+                if pair not in seen:
+                    seen.add(pair)
+                    findings.append({"line": lineno, "category": cat, "label": cat})
+        m_assign = _SECRET_ASSIGN_RE.match(line)
+        if m_assign:
+            var_name = m_assign.group(1)
+            raw_val = m_assign.group(2).strip()
+            if (raw_val.startswith('"') and raw_val.endswith('"')) or (
+                raw_val.startswith("'") and raw_val.endswith("'")
+            ):
+                raw_val = raw_val[1:-1].strip()
+            if (
+                SECRET_ENV_RE.match(var_name)
+                and len(raw_val) >= 6
+                and not any(ch.isspace() for ch in raw_val)
+                and not raw_val.startswith(("$", "(", "[", "{", "<"))
+                and not _SECRET_PLACEHOLDER_RE.match(raw_val)
+            ):
+                pair = ("secret-env", var_name)
+                if pair not in seen:
+                    seen.add(pair)
+                    findings.append({"line": lineno, "category": "secret-env", "label": var_name})
+    return findings
 
 
 def scrub_child_env(env: dict[str, str], sandbox_mode: str) -> dict[str, str]:

@@ -163,7 +163,7 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
         offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START BUNDLE", extra_lines=body_lines)
     else:
         full_body = build_box_body_lines(
-            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0
+            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, title_kind="START BUNDLE"
         )
         sys.stdout.write(format_info_box("START BUNDLE", full_body) + "\n")
         sys.stdout.flush()

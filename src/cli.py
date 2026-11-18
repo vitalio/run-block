@@ -86,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
         if len(args) != 1:
             raise SystemExit(f"{prog}: usage: {prog} --plan < script.sh")
         return cmd_plan(sys.stdin.read())
+    if args and args[0] == "--bundle-plan":
+        return cmd_bundle_plan(args[1:])
     if args and args[0] == "--clean":
         return cmd_clean(args[1:])
 

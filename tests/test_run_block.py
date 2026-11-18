@@ -1578,9 +1578,9 @@ class TestRunBlock(unittest.TestCase):
                 title_kind="START BUNDLE",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
-            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", sb_box)
+            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:", sb_box)
             self.assertNotIn("[Enter/v(iew)/Esc]:", sb_box)
-            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:"))
+            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:"))
 
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END")
             self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", end_box)
@@ -1620,7 +1620,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(edited_calls, [bundle_file])
         mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
         self.assertIn("Edited prompt", bundle_file.read_text(encoding="utf-8"))
-        self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", tty_w.getvalue())
+        self.assertIn("-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:", tty_w.getvalue())
         self.assertIn(f"✓ Copied {bundle_file} to clipboard.", tty_w.getvalue())
 
         tty_w_esc = _KeepOpenStringIO()
@@ -2193,13 +2193,14 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn(f"Stats:  {updated_stats}", tty_out)
         self.assertEqual(tty_out.count("╭─ START BUNDLE "), 2)
 
-        initial_box, _, _ = self.mod.format_clipboard_box(
-            "s1/0",
-            bundle_file,
-            stats=initial_stats,
-            title_kind="START BUNDLE",
-            extra_lines=[f"Bundle: {bundle_file}"],
-        )
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
+            initial_box, _, _ = self.mod.format_clipboard_box(
+                "s1/0",
+                bundle_file,
+                stats=initial_stats,
+                title_kind="START BUNDLE",
+                extra_lines=[f"Bundle: {bundle_file}"],
+            )
         expected_up = self.mod._box_rows_above_prompt(initial_box, 84)
         self.assertIn(f"\r\033[{expected_up}A\033[J╭─ START BUNDLE ", tty_out)
         self.assertIn("╭─ START BUNDLE " + "─" * 32, tty_out)
@@ -3015,6 +3016,233 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(meta_after["bundle_plan"]["part_count"], 1)
         self.assertEqual(dict(meta_after["headers"]).get("Bundle-Boundary"), nonce)
 
+
+    def test_f47_bundle_diagnostics_details_view_and_cli(self):
+        proj = self.tmp / "f47_proj"
+        proj.mkdir()
+        sessions = self.tmp / "f47_sessions"
+        env = {**os.environ, "RUN_BLOCK_DIR": str(sessions), "RUN_BLOCK_CWD": str(proj)}
+        nonce = "f47nonce99"
+        cmd_prefix = chr(36)
+
+        # 1. Warnings: non-zero rc, empty cmd output (raw and header-only), oversized fragment/total,
+        #    and secret detection in non-rule parts while ignoring rule parts and never leaking secret literals.
+        secret_tok = "ghp_" + ("A1b2C3d4E5" * 3)
+        env_secret = "SECRET_" + "TOKEN_VALUE_12345"
+        big_text = "word " * 400
+        bundle_warn = (
+            "Bundle-Command: agents_bundle role=execute task=F47\n"
+            f"Bundle-Boundary: {nonce}\n"
+            "Bundle-Expose: Role, Task\n"
+            "Role: execute\n"
+            "Task: F47\n\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"r:bash\", \"group\": \"vitalio/run_block\"}} -->\n"
+            f"Rule mentions {secret_tok} and OPENAI_API_KEY={env_secret} and ~/.ssh/id_rsa\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"r:pwsh\", \"group\": \"vitalio/run_block\"}} -->\n"
+            "PowerShell rule body\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"cmd\", \"name\": \"git diff\", \"group\": \".agents_bundle\", \"rc\": 0, \"ms\": 5}} -->\n"
+            f"===== {cmd_prefix} git diff =====\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"cmd\", \"name\": \"failing_cmd\", \"group\": \".agents_bundle\", \"rc\": 2, \"ms\": 9}} -->\n"
+            "error output\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"file\", \"name\": \".env.bak\", \"group\": \"files\"}} -->\n"
+            f"OPENAI_API_KEY={env_secret}\n"
+            f"{big_text}\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+
+        env_thresh = {
+            **env,
+            "RUN_BLOCK_FRAGMENT_MAX_TOKENS": "100",
+            "RUN_BLOCK_BUNDLE_MAX_TOKENS": "150",
+        }
+        r_start = subprocess.run(
+            [str(SCRIPT)],
+            input=bundle_warn,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env_thresh,
+            check=False,
+        )
+        self.assertEqual(r_start.returncode, 0, r_start.stderr)
+        # START BUNDLE shows compact grouped summary and warnings, without leaking secret value
+        self.assertIn("Summary (5 parts):", r_start.stdout)
+        self.assertIn("[rule]", r_start.stdout)
+        self.assertIn("vitalio/run_block (2)", r_start.stdout)
+        self.assertIn("[cmd]", r_start.stdout)
+        self.assertIn(".agents_bundle (2)", r_start.stdout)
+        self.assertIn("1 rc!=0", r_start.stdout)
+        self.assertIn("Bundle warnings (5):", r_start.stdout)
+        self.assertIn("[cmd_empty]", r_start.stdout)
+        self.assertIn("[cmd_rc]", r_start.stdout)
+        self.assertIn("[fragment_oversized]", r_start.stdout)
+        self.assertIn("[secret_detected]", r_start.stdout)
+        self.assertIn("[token_budget]", r_start.stdout)
+        self.assertNotIn(env_secret, r_start.stdout)
+
+        meta = self.mod.read_session_meta(sessions / "s1")
+        plan_meta = meta.get("bundle_plan")
+        self.assertIsInstance(plan_meta, dict)
+        warn_codes = [w["code"] for w in plan_meta.get("warnings", [])]
+        self.assertEqual(
+            warn_codes,
+            ["cmd_empty", "cmd_rc", "fragment_oversized", "secret_detected", "token_budget"],
+        )
+        self.assertNotIn(env_secret, (sessions / "s1" / "meta.json").read_text(encoding="utf-8"))
+        # Rule fragment (part 1) must not trigger secret_detected
+        self.assertTrue(all(w.get("part_index") != 1 for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
+
+        # 2. Interactive START BUNDLE d(etails) toggle in offer_clipboard_copy
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "details")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("D\n")), "details")
+        b0_path = sessions / "s1" / "0"
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = _KeepOpenStringIO()
+        tty_r = io.StringIO("d\nd\nesc\n")
+        old_dir = self.mod.BASE_DIR
+        self.mod.BASE_DIR = sessions
+        saved_frag = os.environ.get("RUN_BLOCK_FRAGMENT_MAX_TOKENS")
+        saved_bud = os.environ.get("RUN_BLOCK_BUNDLE_MAX_TOKENS")
+        os.environ["RUN_BLOCK_FRAGMENT_MAX_TOKENS"] = "100"
+        os.environ["RUN_BLOCK_BUNDLE_MAX_TOKENS"] = "150"
+        try:
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                 unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+                 unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0_path}")), \
+                 unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+                 unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                self.mod.offer_clipboard_copy(
+                    "s1/0",
+                    b0_path,
+                    title_kind="START BUNDLE",
+                    extra_lines=[f"Bundle: {b0_path}"],
+                )
+        finally:
+            self.mod.BASE_DIR = old_dir
+            if saved_frag is None:
+                os.environ.pop("RUN_BLOCK_FRAGMENT_MAX_TOKENS", None)
+            else:
+                os.environ["RUN_BLOCK_FRAGMENT_MAX_TOKENS"] = saved_frag
+            if saved_bud is None:
+                os.environ.pop("RUN_BLOCK_BUNDLE_MAX_TOKENS", None)
+            else:
+                os.environ["RUN_BLOCK_BUNDLE_MAX_TOKENS"] = saved_bud
+
+        tty_out = tty_w.getvalue()
+        self.assertEqual(tty_out.count("╭─ START BUNDLE "), 3)
+        self.assertEqual(tty_out.count("Summary (5 parts):"), 2)
+        self.assertEqual(tty_out.count("Parts (5):"), 1)
+        self.assertIn("1. [rule]", tty_out)
+        self.assertIn("4. [cmd]", tty_out)
+        self.assertIn("rc=2", tty_out)
+        self.assertIn("Skipped clipboard copy.", tty_out)
+
+        # 3. run_block --bundle-plan CLI: session mode, --full, --json, stdin mode, legacy 0 fallback, and errors
+        import json
+        r_bp_sess = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "s1"],
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env_thresh,
+            check=False,
+        )
+        self.assertEqual(r_bp_sess.returncode, 0, r_bp_sess.stderr)
+        self.assertIn("Bundle Plan (s1, protocol: boundary):", r_bp_sess.stdout)
+        self.assertIn("Summary (5 parts):", r_bp_sess.stdout)
+        self.assertIn("Warnings (5):", r_bp_sess.stdout)
+        self.assertNotIn("Parts (5):", r_bp_sess.stdout)
+
+        r_bp_full = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "--full", "s1"],
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env_thresh,
+            check=False,
+        )
+        self.assertEqual(r_bp_full.returncode, 0, r_bp_full.stderr)
+        self.assertIn("Parts (5):", r_bp_full.stdout)
+        self.assertIn("failing_cmd", r_bp_full.stdout)
+        self.assertIn("rc=2", r_bp_full.stdout)
+
+        r_bp_json = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "s1", "--json"],
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env_thresh,
+            check=False,
+        )
+        self.assertEqual(r_bp_json.returncode, 0, r_bp_json.stderr)
+        j_sess = json.loads(r_bp_json.stdout)
+        self.assertEqual(j_sess["session"], "s1")
+        self.assertEqual(j_sess["part_count"], 5)
+        self.assertEqual(len(j_sess["warnings"]), 5)
+
+        r_bp_stdin = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "--json", "--full"],
+            input=bundle_warn,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env_thresh,
+            check=False,
+        )
+        self.assertEqual(r_bp_stdin.returncode, 0, r_bp_stdin.stderr)
+        j_stdin = json.loads(r_bp_stdin.stdout)
+        self.assertEqual(j_stdin["protocol"], "boundary")
+        self.assertEqual(len(j_stdin["warnings"]), 5)
+
+        # Fallback to <session>/0 when meta.json lacks bundle_plan
+        legacy_s = sessions / "s_legacy"
+        legacy_s.mkdir(parents=True)
+        (legacy_s / "0").write_text(
+            f"Session: s_legacy\nNext-Block: s_legacy/1\nWorkdir: {proj}\nSandbox: off\nDate: 2026-11-18 08:00 UTC\n\n"
+            f"===== {cmd_prefix} git status -sb =====\n===== Prompt =====\nDo task\n",
+            encoding="utf-8",
+        )
+        r_bp_leg = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "s_legacy", "--full"],
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_bp_leg.returncode, 0, r_bp_leg.stderr)
+        self.assertIn("protocol: sections", r_bp_leg.stdout)
+        self.assertIn("[cmd_empty]", r_bp_leg.stdout)
+
+        # Missing session fails explicitly
+        r_bp_missing = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "no_such_sess"],
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertNotEqual(r_bp_missing.returncode, 0)
+
+        # 4. Help & documentation sync
+        r_help = subprocess.run([str(SCRIPT), "-h"], capture_output=True, text=True, check=False)
+        self.assertEqual(r_help.returncode, 0, r_help.stderr)
+        self.assertIn("--bundle-plan", r_help.stdout)
+        self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("--bundle-plan", (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8"))
+        self.assertIn("--bundle-plan", (ROOT / "src/rules/blocks/pwsh.md").read_text(encoding="utf-8"))
 
 if __name__ == "__main__":
     unittest.main()

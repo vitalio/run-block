@@ -88,6 +88,26 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
             except ValueError:
                 pass
         return "100", "default"
+    if key == "bundle_max_tokens":
+        raw = os.environ.get("RUN_BLOCK_BUNDLE_MAX_TOKENS", "").strip()
+        if raw:
+            try:
+                val_tok = int(raw)
+                if val_tok >= 0:
+                    return str(val_tok), "env"
+            except ValueError:
+                pass
+        return "100000", "default"
+    if key == "fragment_max_tokens":
+        raw = os.environ.get("RUN_BLOCK_FRAGMENT_MAX_TOKENS", "").strip()
+        if raw:
+            try:
+                val_tok = int(raw)
+                if val_tok >= 0:
+                    return str(val_tok), "env"
+            except ValueError:
+                pass
+        return "20000", "default"
     if key == "update_url":
         if os.environ.get("RUN_BLOCK_UPDATE_URL"):
             return os.environ["RUN_BLOCK_UPDATE_URL"].strip(), "env"

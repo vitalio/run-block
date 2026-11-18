@@ -139,14 +139,6 @@
 - Reproduce first with a unit test that interleaves `echo` and `echo >&2` in a loop and compares the order in `out` with the write order; then pick an approach (for example keep one shared descriptor for `out` and obtain `err` separately, such as a per-command stderr tee in the instrumented script, or accept and document the ordering limits).
 - After the approach is decided, document the `err` file and the ordering guarantees in `README.md` (step directory contents: `out`, `err`, `error`, `aborted`) and keep `AGENTS.md` in sync in the same commit.
 
-# ⚪ [NEW] F47: Add bundle diagnostics, START BUNDLE details view, and --bundle-plan CLI
-
-- Depends on: F46
-- Extend `src/bundle_plan.py`, `src/ui.py`, `src/cli.py`, and `src/header.py` to surface bundle analysis and diagnostics.
-- Detect and report bundle warnings: non-zero command `rc` or empty command output, oversized fragments or total token budget exceedance, and accidental secrets in non-rule content by reusing `src/safety.py` secret detection without duplicating patterns.
-- Render a compact grouped summary (grouping parts by `kind` + `group`) plus warnings inside `START BUNDLE`, and add a `d(etails)` action in the `START BUNDLE` prompt to inspect the full per-part breakdown.
-- Add `run_block --bundle-plan [<session>] [--json] [--full]` (reading `stdin` when no session is given, or `meta.json` / `<session>/0` for an existing session), and sync `README.md`, `src/rules/blocks/*.md`, and `tests/test_run_block.py`.
-
 # ⚪ [NEW] F48: Design machine-readable runner contract (--json step output and plan/execute handshake)
 
 - Design candidate for `role=design` to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.

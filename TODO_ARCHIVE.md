@@ -1,3 +1,11 @@
+# ✅ [DONE] F47: Add bundle diagnostics, START BUNDLE details view, and --bundle-plan CLI — *2026-11-18*
+
+- Depends on: F46
+- Extend `src/bundle_plan.py`, `src/ui.py`, `src/cli.py`, and `src/header.py` to surface bundle analysis and diagnostics.
+- Detect and report bundle warnings: non-zero command `rc` or empty command output, oversized fragments or total token budget exceedance, and accidental secrets in non-rule content by reusing `src/safety.py` secret detection without duplicating patterns.
+- Render a compact grouped summary (grouping parts by `kind` + `group`) plus warnings inside `START BUNDLE`, and add a `d(etails)` action in the `START BUNDLE` prompt to inspect the full per-part breakdown.
+- Add `run_block --bundle-plan [<session>] [--json] [--full]` (reading `stdin` when no session is given, or `meta.json` / `<session>/0` for an existing session), and sync `README.md`, `src/rules/blocks/*.md`, and `tests/test_run_block.py`.
+
 # ✅ [DONE] F46: Implement Bundle Input Protocol header filtering and fragment marker parser — *2026-11-18*
 
 - Define `src/bundle_plan.py` and integrate with `src/bundle.py` and `src/config.py` to implement the generator-agnostic Bundle Input Protocol.
