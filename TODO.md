@@ -79,10 +79,10 @@
 # 🎯 [NEXT] F64: Record part line ranges and support viewing individual parts by number in Details and CLI
 
 - Depends on: F63
-- Record 1-based `line_start` and `line_end` line ranges in cleaned `<session>/0` for each part in `parse_bundle_fragments()` (`src/bundle_plan.py`) without duplicating fragment text in `meta.json`.
-- When `d(etails)` is active in `BUNDLE` (`src/ui.py`), allow selecting any numbered part (`p(art)` or typing part number `1..N`) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
-- Add `--part N` option to `run_block --show <session>` and `run_block --bundle-plan <session>` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`.
-- Update `README.md` and unit tests in `tests/test_run_block.py`.
+- Record 1-based `line_start` and `line_end` line ranges in the final cleaned `<session>/0` for each part in `src/bundle_plan.py` and `src/bundle.py` (`format_start_bundle()`, `refresh_bundle_plan_meta()`), covering both boundary-marked fragments and `_split_section_fallback()` while accounting for `<session>/0` header lines and collapsed blank lines (and body-relative 1-based ranges for `stdin` `--bundle-plan`) without duplicating fragment text in `meta.json`.
+- When `d(etails)` is active in `BUNDLE` (`src/ui.py`), allow selecting any numbered part via `p(art)` (prompting for part number `1..N` in line input so multi-digit parts `10+` work in raw TTY; optional `1..9` shortcut when `N <= 9`) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
+- Add `--part N` option to `run_block --show` and `run_block --bundle-plan` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`; accept `--show <session> --part N`, `--show <session>/0 --part N`, and `--show --part N` (latest session `/0`), failing cleanly on non-zero steps or out-of-range part numbers.
+- Update `README.md` and unit tests in `tests/test_run_block.py`, and rebuild `run_block` via `build.py`.
 
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
