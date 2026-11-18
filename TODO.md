@@ -5,6 +5,8 @@
 - Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `BUNDLE` exits (`Enter`, `Esc`, or non-interactive mode), keeping `0.orig` backup and `F57` `a(ppend)` compatibility intact.
 - Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_run_block.py` verify the roundtrip.
 
+- Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
+
 # 🎯 [NEXT] B11: Fix TUI box height overflow, header duplication on redraw, and keep inline boxes minimal
 
 - Keep inline TUI boxes compact so they stay within visible terminal height (`shutil.get_terminal_size().lines`): remove the `Summary:` table from the inline `BUNDLE` box (retaining core headers, `Bundle:`, dim `Stats:`, and `Bundle warnings` when present), and clamp long inline sections in `PLAN`, `END`, and confirmation dialogs to available `term_rows` with a `... +N more` hint so the top border (`╭─ ...`) never scrolls into scrollback before a redraw.
@@ -24,7 +26,7 @@
 - Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `BUNDLE` instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
 - Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py`, rebuild `./run_block`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] F57: Add a(ppend) prompt editor action in BUNDLE — *Commit backlog task for BUNDLE prompt append*
+# 🎯 [NEXT] F57: Add a(ppend) prompt editor action in BUNDLE
 
 - Add an `a(ppend)` action to the `BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.
 - On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying `<session>/0` or creating `<session>/0.orig` when the entered text is empty or whitespace-only.
@@ -86,16 +88,18 @@
 - Redesign `Summary` and `Parts` tables in `src/bundle_plan.py` and `src/ui.py` (displayed in fullscreen `i(nfo)` and `--bundle-plan`) with a `top`-inspired column header row showing units once (`%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`) and omitting repeated unit suffixes (`ch`, `L`, `tok`) from data rows while retaining `%` and `~` markers.
 - Remove automatic numeric prefixes (`1.`, `2.`, ...) from `Parts` rows in `_collect_hierarchy_rows()` / `_render_bundle_table()` (`src/bundle_plan.py`) so the tree structure stays clean.
 - Highlight heavy fragments visually (bold and/or accent/warning color) using clear defaults (e.g. warn/bold at `>= 25%` share or `>= 10k` tokens, accent at `>= 10%` share or `>= 3k` tokens) so dominant context contributors stand out immediately.
-- Render the `Stats:` value in white foreground inside the fullscreen `i(nfo)` / details view (`src/ui.py`), keeping `Stats:` dimmed in the compact inline box.
+- Preserve the white `Stats:` foreground rendering inside fullscreen `i(nfo)` (`src/ui.py`) while keeping `Stats:` dimmed in compact inline boxes (introduced in `F54`).
 - Fix `reconcile_bundle_plan()` (`src/bundle_plan.py`) so `[header] Headers & spacing` is computed reliably from `<session>/0` headers and inter-section spacing in `boundary` mode instead of disappearing when raw fragment sums differ due to collapsed blank lines.
-- Clarify provenance and `kind` attribution in `src/bundle_plan.py` based on incoming fragment metadata: separate `.agents_bundle`-originated items (marking multi-part groups/packages like `vitalio/agents-rules:default` as `[bundle]`/`[ruleset]` rather than `[rule]`, and handling single-bundle vs single-rule entries like `vitalio/agents_bundle:agents_bundle` cleanly within `src/bundle_plan.py`) from non-`.agents_bundle` items (`[header]`, `[prompt]`, and external stdin sections).
-- Acceptance criteria: `top`-style column header with units, no repeated cell unit suffixes, no `Parts` numeric prefixes, heavy items highlighted, white `Stats:` inside `i(nfo)`, `[header]` visible in `boundary` mode, `.agents_bundle` vs external provenance clear; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+- Clarify provenance and `kind` attribution entirely within `src/bundle_plan.py` using existing `Bundle-Boundary` and `chain` metadata (no `agents_bundle` changes required):
+  - Display all `chain`-backed container nodes (such as `vitalio/agents-rules:default`, `vitalio/agents-rules:core`) and single-part `bundle` inclusions (`chain != []`, such as `vitalio/agents_bundle`) as `[bundle]` rather than `[rule]`, reserving `[rule]` for leaf rules and direct root `rule` directives (`chain == []`).
+  - Clearly separate `.agents_bundle`-originated fragments (boundary-marked rules, root `$ <cmd>` entries, and includes) from non-`.agents_bundle` items (`[header]`, local/appended `[prompt]`, and unframed external stdin sections) via consistent table grouping/labeling.
+- Acceptance criteria: `top`-style column header with units, no repeated cell unit suffixes, no `Parts` numeric prefixes, heavy items highlighted, white `Stats:` preserved inside `i(nfo)`, `[header]` visible in `boundary` mode, `.agents_bundle` vs external provenance and `[bundle]` vs `[rule]` kinds clear; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] F64: Record part line ranges and support viewing individual parts by number in Details and CLI
 
 - Depends on: F63, F54, F68
 - Record 1-based `line_start` and `line_end` line ranges in the final cleaned `<session>/0` for each part in `src/bundle_plan.py` and `src/bundle.py` (`format_start_bundle()`, `refresh_bundle_plan_meta()`), covering both boundary-marked fragments and `_split_section_fallback()` while accounting for `<session>/0` header lines and collapsed blank lines (and body-relative 1-based ranges for `stdin` `--bundle-plan`) without duplicating fragment text in `meta.json`.
-- When `i(nfo)` (or bundle details view) is active in `BUNDLE` (`src/ui.py`), allow selecting a part directly (e.g. cursor selection in the fullscreen list and/or `p(art)` prompt by 1..N index without cluttering the `Parts` tree with numeric prefixes) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
+- When `i(nfo)` is active in `BUNDLE` (`src/ui.py`), allow selecting a part directly (e.g. cursor selection in the fullscreen list and/or `p(art)` prompt by 1..N index without cluttering the `Parts` tree with numeric prefixes) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
 - Add `--part N` option to `run_block --show` and `run_block --bundle-plan` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`; accept `--show <session> --part N`, `--show <session>/0 --part N`, and `--show --part N` (latest session `/0`), failing cleanly on non-zero steps or out-of-range part numbers.
 - Update `README.md` and unit tests in `tests/test_run_block.py`, and rebuild `run_block` via `build.py`.
 
@@ -117,32 +121,39 @@
 - Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
 - Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_run_block.py`.
 
+- Note: `HIDDEN_SESSION_HEADER_KEYS` filtering (`src/config.py`, `src/bundle_plan.py`, `src/ui.py`) is already implemented; remaining scope covers `--list` filtering/columns, `--info [session]`, `--show` `--script`/`--out`, and `--retry <session>`.
+
 # ⚪ [NEW] F34: Design workspace state fingerprinting and drift detection across steps
 
+- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
 - Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`PLAN` / `END`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_run_block.py`.
 
 # ⚪ [NEW] F35: Design tamper-evident hash chain and parent-step verification for session history
 
+- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
 - Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_run_block.py`.
 
 # ⚪ [NEW] F36: Design pre-flight sandbox dry-run preview via temporary git worktree
 
+- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
 - Define how actual mutated files and diff summaries are presented in `PLAN` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_run_block.py`.
 
 # ⚪ [NEW] F37: Design session execution policies and post-step revert guards
 
+- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Evaluate declarative session-level execution constraints in `meta.json` / `.agents_bundle` (`src/bundle.py`, `src/config.py`), such as allowed write path globs, maximum modified file count, or network-access restrictions.
 - Define enforcement and rollback semantics in `src/runner.py` and `src/safety.py` (pre-execution policy checks plus post-step diff verification with automatic revert on violation) and cover with `tests/test_run_block.py`.
 
 # ⚪ [NEW] F38: Design explicit parent-step DAG lineage for session branches and retries
 
+- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_run_block.py`.
@@ -156,6 +167,7 @@
 
 # ⚪ [NEW] F48: Design machine-readable runner contract (--json step output and plan/execute handshake)
 
+- Role: design
 - Design candidate for `role=design` to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
 - Evaluate structured `--json` execution output for `<session>/<step>` (status: `ok`/`syntax_error`/`not_run`/`completed`, `exit_code`, safety findings, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` non-TTY handshake, and env sanitization so client LLM API keys do not leak into executed step scripts.
 - Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
