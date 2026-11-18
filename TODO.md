@@ -1,3 +1,15 @@
+# 🎯 [NEXT] F65: Rename TUI box titles START BUNDLE to BUNDLE and BLOCK PLAN to PLAN
+
+- Rename the `START BUNDLE` box title to `BUNDLE` and the `BLOCK PLAN` box title to `PLAN` across `src/ui.py` (`format_safety_box()`, `_TITLE_COLORS`, `_block_colors()`, `build_box_body_lines()`, `_clipboard_prompt_line()`, `offer_clipboard_copy()`) and `src/bundle.py` (`cmd_start()`).
+- Update CLI `--help` text in `src/header.py`, project docs in `AGENTS.md` and `README.md`, and all assertions and box-title fixtures in `tests/test_run_block.py`.
+- Acceptance criteria: TUI box headers render `BUNDLE`, `PLAN`, and `END` consistently with existing border/title colors and prompt behaviors; `build.py --check` and full `tests/test_run_block.py` pass; `run_block` is rebuilt via `build.py`.
+
+# 🎯 [NEXT] B10: Forward all session headers into END and fix session dir resolution
+
+- Fix `_resolve_session_dir()` in `src/ui.py` so a step directory containing step metadata (`<session>/<step>/meta.json`) never masks the parent session directory (`<session>/0` and `<session>/meta.json`).
+- Pass `sdir` explicitly from `src/runner.py` to `offer_clipboard_copy()` (and forward it to `format_clipboard_box()` / `build_box_body_lines()` in `src/ui.py`) so `END`, `NOT RUN`, and `SYNTAX ERROR` boxes always receive the session directory directly.
+- Acceptance criteria: `END` (as well as `NOT RUN` and `SYNTAX ERROR`) renders all exposed session headers (`Workdir`, `Role`, `Task`, `Title`, etc.) identically to `PLAN` even after `<session>/<step>/meta.json` has been written; add regression tests in `tests/test_run_block.py` covering `END`, `NOT RUN`, and `SYNTAX ERROR` with real `<session>/<step>/meta.json` files, update `README.md` if needed, and rebuild `run_block` via `build.py`.
+
 # 🎯 [NEXT] F63: Render hierarchical tabular bundle Summary and Details with char sizes and clean Preamble
 
 - Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
@@ -7,11 +19,11 @@
 - Compute and store `chars` per part in `_build_bundle_plan()` (falling back to `bytes` for older `meta.json`) and render `Summary` and `Parts` as right-aligned numeric columns (`%`, `chars`, `L`, `tokens`) followed by `[kind]` and the description column, wrapping only the description column cleanly on narrow terminals (`src/bundle_plan.py`, `src/ui.py`).
 - Update `README.md` and unit tests in `tests/test_run_block.py`.
 
-# 🎯 [NEXT] F62: Colorize full BLOCK PLAN operation lines with bold tags and regular body tint
+# 🎯 [NEXT] F62: Colorize full PLAN operation lines with bold tags and regular body tint
 
 - Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so every operation tag in `_TAG_COLORS` (`read`, `write`, `exec`, `git`, `python`) renders only the `[tag]` bracket in bold (`\x1b[1;...m`) while the operation body and any wrapped continuation lines render in the matching non-bold color (`\x1b[...m` without `1;`), keeping step numbers, tree connectors (`├─`, `└─`), and `NO_COLOR`/non-TTY output unchanged.
 - In `_colorize_python_op_rest()` in `src/ui.py`, render the base Python summary (`N lines — calls: ...`) in regular green (`\x1b[32m`), and render inline `writes: ...` and `reads: ...` fragments (both label and file list) in regular yellow (`\x1b[33m`) and regular bright blue (`\x1b[94m`) respectively.
-- Acceptance criteria: in TTY color mode, all `BLOCK PLAN` `Operations:` lines (`[read]`, `[write]`, `[exec]`, `[git]`, `[python]`, AST-expanded sub-items, and wrapped continuation lines) show bold `[tag]` labels with non-bold matching-color bodies; `tests/test_run_block.py` (including `test_f27_visual_hierarchy_border_colors_and_block_plan_highlights`, `test_f40_distinct_operation_tag_colors`, and wrapped/inline cases) and `README.md` (if needed) are updated, and `run_block` is rebuilt via `build.py`.
+- Acceptance criteria: in TTY color mode, all `PLAN` `Operations:` lines (`[read]`, `[write]`, `[exec]`, `[git]`, `[python]`, AST-expanded sub-items, and wrapped continuation lines) show bold `[tag]` labels with non-bold matching-color bodies; `tests/test_run_block.py` (including `test_f27_visual_hierarchy_border_colors_and_block_plan_highlights`, `test_f40_distinct_operation_tag_colors`, and wrapped/inline cases) and `README.md` (if needed) are updated, and `run_block` is rebuilt via `build.py`.
 
 # 🎯 [NEXT] F61: Auto-detect existing step number collisions in run_block and offer interactive renumbering to the next free step
 
@@ -21,21 +33,21 @@
 # 🎯 [NEXT] F59: Redraw active TUI box in place on terminal resize (SIGWINCH)
 
 - Monitor terminal window resize events (`SIGWINCH` via a self-pipe registered in `select()`) while waiting for user input in `read_clipboard_key()` and `read_confirm_key()` in `src/ui.py`, debouncing rapid resize events (~25ms) and restoring the previous `SIGWINCH` handler cleanly on exit.
-- When terminal width (`_hr_width()`) changes during `offer_clipboard_copy()`, `confirm_execution()`, or `prompt_yes_no_box()` in `src/ui.py`, recalculate the visual row count of the previously rendered box under the new width (`_box_rows_above_prompt()`), erase the old box in place, and re-render the active box (`START BUNDLE`, `BLOCK PLAN`, `END`, or confirmation dialog) for the new width with the cursor restored at the prompt.
+- When terminal width (`_hr_width()`) changes during `offer_clipboard_copy()`, `confirm_execution()`, or `prompt_yes_no_box()` in `src/ui.py`, recalculate the visual row count of the previously rendered box under the new width (`_box_rows_above_prompt()`), erase the old box in place, and re-render the active box (`BUNDLE`, `PLAN`, `END`, or confirmation dialog) for the new width with the cursor restored at the prompt.
 - Acceptance criteria: shrinking or widening a POSIX TTY while an interactive TUI prompt is waiting redraws the active box cleanly in place without broken `│ ` borders or duplicate lines, and subsequent `e(dit)` redraws remain aligned; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] F58: Wrap long lines inside all TUI boxes while preserving hanging indents
 
-- Enforce terminal-width wrapping (`_hr_width() - 2`) inside `_render_block()` in `src/ui.py` for all rendered TUI boxes (`START BUNDLE`, `BLOCK PLAN`, `END`, `NOT RUN`, `SYNTAX ERROR`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`, and `prompt_yes_no_box`), so no content or prompt line exceeds the terminal width and breaks the left `│ ` border.
+- Enforce terminal-width wrapping (`_hr_width() - 2`) inside `_render_block()` in `src/ui.py` for all rendered TUI boxes (`BUNDLE`, `PLAN`, `END`, `NOT RUN`, `SYNTAX ERROR`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`, and `prompt_yes_no_box`), so no content or prompt line exceeds the terminal width and breaks the left `│ ` border.
 - Preserve hanging indentation on wrapped lines: align continuation lines under the value column for `Key:   value` rows, preserve leading list/tree indentation (`  `, `    `, `├─ `, `└─ `) on already-indented items without double-wrapping lines that already fit, and clamp `_extract_last_error_line()` in `src/ui.py` to the available box content width.
 - Acceptance criteria: on narrow terminals (40–70 columns), long `Workdir:`, `Output:`, `Error:`, `Stats:`, `Steps:`, headers, and prompt lines wrap cleanly with `│ ` on every visual row and aligned continuation indents across all TUI box types; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
 
-# 🎯 [NEXT] F57: Add a(ppend) prompt editor action in START BUNDLE — *Commit backlog task for START BUNDLE prompt append*
+# 🎯 [NEXT] F57: Add a(ppend) prompt editor action in BUNDLE — *Commit backlog task for BUNDLE prompt append*
 
-- Add an `a(ppend)` action to the `START BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.
+- Add an `a(ppend)` action to the `BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.
 - On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying `<session>/0` or creating `<session>/0.orig` when the entered text is empty or whitespace-only.
 - Before the first non-empty append, preserve the original bundle in `<session>/0.orig` via `_write_orig_backup_once()`, then append the prompt text to `<session>/0` in `src/ui.py` / `src/bundle.py` (appending into the trailing `===== Prompt =====` section when already present so repeated `a(ppend)` calls do not duplicate the header, or creating `===== Prompt =====` at the end otherwise).
-- Refresh bundle metadata (`refresh_bundle_meta()`), recalculate line/byte/token `Stats:` with the `(edited)` marker, and redraw `START BUNDLE` in place so pressing `Enter` copies the updated bundle to the clipboard.
+- Refresh bundle metadata (`refresh_bundle_meta()`), recalculate line/byte/token `Stats:` with the `(edited)` marker, and redraw `BUNDLE` in place so pressing `Enter` copies the updated bundle to the clipboard.
 - Acceptance criteria: `a(ppend)` opens an empty temp file and appends non-empty prompt text into `===== Prompt =====` in `<session>/0`; empty input leaves `<session>/0` and `<session>/0.orig` untouched; `0.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] F56: Align operation progress lines, update status colors, and collapse silent steps
@@ -48,23 +60,23 @@
 # 🎯 [NEXT] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks
 
 - Remove the `Steps: 1. [tag] ...` summary line from the main `END` box in `build_box_body_lines()` (`src/ui.py`), keeping `END` focused on `Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
-- Add an interactive `i(nfo)` action across all interactive TUI prompts (`START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation dialogs such as `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `SESSION COMPLETED`) in `src/ui.py` and `src/runner.py`:
-  - Update prompt hints to include `i(nfo)` without conflicting with existing hotkeys (`[Enter/e(dit)/i(nfo)/Esc]:` on `START BUNDLE` and `END`, `[Y/n/e(dit)/i(nfo)]:` / `[y/n/e(dit)/i(nfo)]:` on `BLOCK PLAN`).
-  - Pressing `i` opens a styled alternate-screen TUI info panel showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/byte/token counts, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and the original pre-execution `BLOCK PLAN` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
+- Add an interactive `i(nfo)` action across all interactive TUI prompts (`BUNDLE`, `PLAN`, `END`, and confirmation dialogs such as `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `SESSION COMPLETED`) in `src/ui.py` and `src/runner.py`:
+  - Update prompt hints to include `i(nfo)` without conflicting with existing hotkeys (`[Enter/e(dit)/i(nfo)/Esc]:` on `BUNDLE` and `END`, `[Y/n/e(dit)/i(nfo)]:` / `[y/n/e(dit)/i(nfo)]:` on `PLAN`).
+  - Pressing `i` opens a styled alternate-screen TUI info panel showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/byte/token counts, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and the original pre-execution `PLAN` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
   - Support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), returning cleanly to the active block prompt on `q`/`Esc`/`Enter`/`i`, and opening the plain-text report in the configured viewer/editor (`resolve_editor_command()`) when pressing `v` (`v(iew)`).
-- Acceptance criteria: `END` box omits `Steps:`; pressing `i` in `START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation boxes displays complete headers, stats, operation timings, and original plan in the TUI info screen; pressing `v` inside `i(nfo)` opens the report in the external viewer/editor; closing returns cleanly to the prompt; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+- Acceptance criteria: `END` box omits `Steps:`; pressing `i` in `BUNDLE`, `PLAN`, `END`, and confirmation boxes displays complete headers, stats, operation timings, and original plan in the TUI info screen; pressing `v` inside `i(nfo)` opens the report in the external viewer/editor; closing returns cleanly to the prompt; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
 - Design candidate for `role=design` (coordinates with `F42` and `F48`).
-- Problem: when a block executes `<cmd> | run_block` inside an active step (e.g., `todo_md F21 | agents_bundle role=work | run_block` inside `s53/1`), `IN_RUN_BLOCK=1` disables clipboard copy and prints the inner `START BUNDLE` box inside the outer step's `[s53/1] START ... [s53/1] END` output, leaving outer wrappers around the new bundle and lacking an explicit contract for nested `run_block` invocations.
+- Problem: when a block executes `<cmd> | run_block` inside an active step (e.g., `todo_md F21 | agents_bundle role=work | run_block` inside `s53/1`), `IN_RUN_BLOCK=1` disables clipboard copy and prints the inner `BUNDLE` box inside the outer step's `[s53/1] START ... [s53/1] END` output, leaving outer wrappers around the new bundle and lacking an explicit contract for nested `run_block` invocations.
 - Define the behavior matrix when `IN_RUN_BLOCK=1` (and optional `RUN_BLOCK_PARENT_SESSION` / `RUN_BLOCK_PARENT_STEP` env metadata):
   1. Subcommand guards: allow read-only inspection (`--list`, `--show`, `--info`, `--bundle-plan`) and completing the current session (`--done`), while blocking recursive step execution (`<session>/<step>`, `--fix`, `--retry`) unless explicitly overridden.
   2. Nested session initialization (`<cmd> | run_block` / `--start`): specify console framing, clipboard handoff policy (copying the spawned `<session>/0` bundle vs suppressing outer step clipboard copy), and `parent_session` / `spawned_sessions` linkage in `<session>/meta.json`.
   3. Headless / machine-readable (`--json` in `F48`) interaction when a step spawns a child session.
 - Target files for downstream implementation: `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/cli.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_run_block.py`.
 
-- Concrete reproduction scenario: running a nested session initializer inside an active step (`todo_md <ID> | agents_bundle role=execute | run_block`) prints the inner `START BUNDLE` box (`<child>/0`) inside the outer `[sN/k] START ... [sN/k] END` block output, skips copying `<child>/0` to the clipboard because `IN_RUN_BLOCK=1`, and then triggers the outer `END` box's `-> Copy to clipboard?` prompt for the outer step log (with `[sN/k]` wrappers) instead of copying the clean `<child>/0` bundle and suppressing the outer clipboard prompt.
+- Concrete reproduction scenario: running a nested session initializer inside an active step (`todo_md <ID> | agents_bundle role=execute | run_block`) prints the inner `BUNDLE` box (`<child>/0`) inside the outer `[sN/k] START ... [sN/k] END` block output, skips copying `<child>/0` to the clipboard because `IN_RUN_BLOCK=1`, and then triggers the outer `END` box's `-> Copy to clipboard?` prompt for the outer step log (with `[sN/k]` wrappers) instead of copying the clean `<child>/0` bundle and suppressing the outer clipboard prompt.
 
 # 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
 
@@ -80,8 +92,8 @@
 
 - Persist session completion state (`"completed": true`, `"completed_at": "<YYYY-MM-DDTHH:MM:SSZ>"`, optional `"completed_note"`) in `<session>/meta.json` via helpers in `src/config.py` (`is_session_completed`, `set_session_completed`), preserving completion fields in `write_session_meta()` and resetting automatically when a session is recreated (`--start --force`).
 - Add `run_block --done [session] [-m "<note>"]` in `src/cli.py` and `src/runner.py` (allowed both directly in terminal and inside the final block of a session) and display `[DONE]` status badges in `run_block --list` / `-l`.
-- Check session completion before `BLOCK PLAN` across normal runs (`<session>/<step>`), `--fix`, and `--retry`:
-  - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`prompt_yes_no_box`, default `No`); on confirmation (`y`/`Enter`), clear the completion marker in `meta.json` and proceed to `BLOCK PLAN`, otherwise exit with `NOT RUN`.
+- Check session completion before `PLAN` across normal runs (`<session>/<step>`), `--fix`, and `--retry`:
+  - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`prompt_yes_no_box`, default `No`); on confirmation (`y`/`Enter`), clear the completion marker in `meta.json` and proceed to `PLAN`, otherwise exit with `NOT RUN`.
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
 - Document session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (bundled via `src/bundles/run_block.bundle`), plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
 
@@ -89,7 +101,7 @@
 
 - Depends on: F63
 - Record 1-based `line_start` and `line_end` line ranges in cleaned `<session>/0` for each part in `parse_bundle_fragments()` (`src/bundle_plan.py`) without duplicating fragment text in `meta.json`.
-- When `d(etails)` is active in `START BUNDLE` (`src/ui.py`), allow selecting any numbered part (`p(art)` or typing part number `1..N`) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `START BUNDLE`.
+- When `d(etails)` is active in `BUNDLE` (`src/ui.py`), allow selecting any numbered part (`p(art)` or typing part number `1..N`) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
 - Add `--part N` option to `run_block --show <session>` and `run_block --bundle-plan <session>` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`.
 - Update `README.md` and unit tests in `tests/test_run_block.py`.
 
@@ -105,7 +117,7 @@
 
 # ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
 
-- Hide `Bundle-Command` from TUI box headers in `src/ui.py` (`HIDDEN_SESSION_HEADER_KEYS`) to avoid noisy or multi-line `-p` headers in `START BUNDLE` / `BLOCK PLAN` / `END`, while preserving it in `meta.json` for `--info`.
+- Hide `Bundle-Command` from TUI box headers in `src/ui.py` (`HIDDEN_SESSION_HEADER_KEYS`) to avoid noisy or multi-line `-p` headers in `BUNDLE` / `PLAN` / `END`, while preserving it in `meta.json` for `--info`.
 - Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
 - Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.
 - Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
@@ -115,7 +127,7 @@
 
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
-- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`BLOCK PLAN` / `END`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_run_block.py`.
+- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`PLAN` / `END`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_run_block.py`.
 
 # ⚪ [NEW] F35: Design tamper-evident hash chain and parent-step verification for session history
 
@@ -127,7 +139,7 @@
 
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
-- Define how actual mutated files and diff summaries are presented in `BLOCK PLAN` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_run_block.py`.
+- Define how actual mutated files and diff summaries are presented in `PLAN` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_run_block.py`.
 
 # ⚪ [NEW] F37: Design session execution policies and post-step revert guards
 
