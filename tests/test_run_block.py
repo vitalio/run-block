@@ -169,14 +169,14 @@ class TestRunBlock(unittest.TestCase):
             box, rule_w, cursor_off = self.mod.format_safety_box("s1/2", findings, summary=summary)
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
-        self.assertEqual(box_lines[0], "╭─ BLOCK PLAN " + "─" * 34)
+        self.assertEqual(box_lines[0], "╭─ PLAN " + "─" * 40)
         self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/e(dit)]:")
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
         self.assertIn("│ Block:   s1/2", box)
         self.assertNotIn("Sandbox:", box)
         self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/e(dit)]:"))
-        self.assertNotIn("BLOCK PLAN (", box)
+        self.assertNotIn("PLAN (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
         self.assertIn("Safety warnings (6):", box)
@@ -394,7 +394,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
-        self.assertIn("╭─ START BUNDLE ", r_pipe.stdout)
+        self.assertIn("╭─ BUNDLE ", r_pipe.stdout)
         self.assertIn("Session:    s1", r_pipe.stdout)
         self.assertIn("Next-Block: s1/1", r_pipe.stdout)
         self.assertNotIn("Sandbox:", r_pipe.stdout)
@@ -460,7 +460,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        self.assertIn("╭─ START BUNDLE ", r_start.stdout)
+        self.assertIn("╭─ BUNDLE ", r_start.stdout)
         self.assertIn("Session:    s2", r_start.stdout)
 
         r_show0 = subprocess.run(
@@ -526,9 +526,9 @@ class TestRunBlock(unittest.TestCase):
 
     def test_info_and_prompt_boxes_and_skipped_step_confirmation(self):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
-            info_box = self.mod.format_info_box("START BUNDLE", ["Session: s1", "Next-Block: s1/1"])
+            info_box = self.mod.format_info_box("BUNDLE", ["Session: s1", "Next-Block: s1/1"])
         info_lines = info_box.splitlines()
-        self.assertTrue(info_lines[0].startswith("╭─ START BUNDLE ────"))
+        self.assertTrue(info_lines[0].startswith("╭─ BUNDLE ────"))
         self.assertEqual(len(info_lines[0]), 48)
         self.assertEqual(info_lines[1], "│ Session:    s1")
         self.assertEqual(info_lines[2], "│ Next-Block: s1/1")
@@ -912,7 +912,7 @@ class TestRunBlock(unittest.TestCase):
         multi_cd = "cd /tmp\nls -la\ncd /var\nls -la\n"
         sum_cd = rb_mod.summarize_script_actions(multi_cd, Path("/home"))
         box_cd, _, _ = rb_mod.format_safety_box("s1/4", [], default_yes=True, summary=sum_cd)
-        self.assertIn("╭─ BLOCK PLAN ", box_cd)
+        self.assertIn("╭─ PLAN ", box_cd)
         self.assertIn("Block:   s1/4", box_cd)
         self.assertIn("  /tmp:", box_cd)
         stripped_lines = [l.strip() for l in box_cd.splitlines()]
@@ -1397,9 +1397,9 @@ class TestRunBlock(unittest.TestCase):
         with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
             with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream), \
                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
-                ascii_box = self.mod.format_info_box("START BUNDLE", ["Session: s1", "Next-Block: s1/1"])
+                ascii_box = self.mod.format_info_box("BUNDLE", ["Session: s1", "Next-Block: s1/1"])
         a_lines = ascii_box.splitlines()
-        self.assertTrue(a_lines[0].startswith("+- START BUNDLE ----"))
+        self.assertTrue(a_lines[0].startswith("+- BUNDLE ----"))
         self.assertEqual(len(a_lines[0]), 48)
         self.assertEqual(a_lines[1], "| Session:    s1")
         self.assertEqual(a_lines[2], "| Next-Block: s1/1")
@@ -1412,12 +1412,12 @@ class TestRunBlock(unittest.TestCase):
         try:
             with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
                 colored_box, _, c_off = self.mod.format_prompt_box(
-                    "BLOCK PLAN",
+                    "PLAN",
                     ["Block: s1/1", "Workdir: /tmp/proj"],
                     "-> Execute? [Y/n]:",
                 )
             self.assertIn("\x1b[93m╭─ ", colored_box)
-            self.assertIn("\x1b[1;93mBLOCK PLAN\x1b[0m", colored_box)
+            self.assertIn("\x1b[1;93mPLAN\x1b[0m", colored_box)
             self.assertIn("\x1b[2mBlock:\x1b[0m   s1/1", colored_box)
             self.assertIn("\x1b[2mWorkdir:\x1b[0m \x1b[1;33m/tmp/proj\x1b[0m", colored_box)
             self.assertEqual(c_off, len("│ -> Execute? [Y/n]:"))
@@ -1450,7 +1450,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[91m╭─ \x1b[0m\x1b[1;91mEND\x1b[0m", end_err)
                 self.assertIn("\x1b[91m│\x1b[0m", end_err)
 
-                # 2. BLOCK PLAN with matching Workdir (dimmed), Sandbox: off omitted,
+                # 2. PLAN with matching Workdir (dimmed), Sandbox: off omitted,
                 #    Operations color-coding, and Safety warnings + prompt highlight
                 cwd_now = os.getcwd()
                 script_warn = (
@@ -1468,7 +1468,7 @@ class TestRunBlock(unittest.TestCase):
                 box_warn, _, _ = self.mod.format_safety_box(
                     "s1/2", findings, default_yes=False, summary=summary
                 )
-                self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mBLOCK PLAN\x1b[0m", box_warn)
+                self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mPLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertNotIn("Sandbox:", box_warn)
                 self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    cat README.md", box_warn)
@@ -1494,7 +1494,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[1;93m-> Execute this block? [y/n/e(dit)]:\x1b[0m", box_warn)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_warn)
 
-                # 3. BLOCK PLAN with differing Workdir (highlighted) and no safety warnings (prompt uncolored)
+                # 3. PLAN with differing Workdir (highlighted) and no safety warnings (prompt uncolored)
                 other_dir = self.tmp / "other_workdir"
                 other_dir.mkdir()
                 sum_clean = self.mod.summarize_script_actions("ls -la\n", work_dir=other_dir)
@@ -1575,7 +1575,7 @@ class TestRunBlock(unittest.TestCase):
             sb_box, _, sb_off = self.mod.format_clipboard_box(
                 "s1",
                 bundle_file,
-                title_kind="START BUNDLE",
+                title_kind="BUNDLE",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
             self.assertIn("-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:", sb_box)
@@ -1614,7 +1614,7 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1",
                 bundle_file,
-                title_kind="START BUNDLE",
+                title_kind="BUNDLE",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
         self.assertEqual(edited_calls, [bundle_file])
@@ -1629,7 +1629,7 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1",
                 bundle_file,
-                title_kind="START BUNDLE",
+                title_kind="BUNDLE",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
         mock_copy_esc.assert_not_called()
@@ -1742,7 +1742,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("Write-Output '__RB_STEP__:6'\nrm -f out.txt", inst_ps)
 
     def test_f30_numbered_block_plan_and_live_progress_execution(self):
-        # 1. BLOCK PLAN numbers top-level operations and keeps Python AST sub-entries unnumbered
+        # 1. PLAN numbers top-level operations and keeps Python AST sub-entries unnumbered
         many_src = ", ".join(f'"src/f{i}.py"' for i in range(6))
         many_tests = ", ".join(f'"tests/t{i}.py"' for i in range(6))
         script_num = (
@@ -2187,7 +2187,7 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1/0",
                 bundle_file,
-                title_kind="START BUNDLE",
+                title_kind="BUNDLE",
                 extra_lines=[f"Bundle: {bundle_file}"],
             )
 
@@ -2200,19 +2200,19 @@ class TestRunBlock(unittest.TestCase):
         tty_out = tty_w.getvalue()
         self.assertIn(f"Stats:  {initial_stats}", tty_out)
         self.assertIn(f"Stats:  {updated_stats}", tty_out)
-        self.assertEqual(tty_out.count("╭─ START BUNDLE "), 2)
+        self.assertEqual(tty_out.count("╭─ BUNDLE "), 2)
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             initial_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0",
                 bundle_file,
                 stats=initial_stats,
-                title_kind="START BUNDLE",
+                title_kind="BUNDLE",
                 extra_lines=[f"Bundle: {bundle_file}"],
             )
         expected_up = self.mod._box_rows_above_prompt(initial_box, 84)
-        self.assertIn(f"\r\033[{expected_up}A\033[J╭─ START BUNDLE ", tty_out)
-        self.assertIn("╭─ START BUNDLE " + "─" * 32, tty_out)
+        self.assertIn(f"\r\033[{expected_up}A\033[J╭─ BUNDLE ", tty_out)
+        self.assertIn("╭─ BUNDLE " + "─" * 38, tty_out)
         self.assertIn("╰" + "─" * 47, tty_out)
 
         # Terminal resize during e(dit) recalculates border width and final bottom rule
@@ -2235,12 +2235,12 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1/0",
                 bundle_file,
-                title_kind="START BUNDLE",
+                title_kind="BUNDLE",
                 extra_lines=[f"Bundle: {bundle_file}"],
             )
         resize_out = tty_w_resize.getvalue()
-        self.assertIn("╭─ START BUNDLE " + "─" * 28, resize_out)
-        self.assertIn("╭─ START BUNDLE " + "─" * 32, resize_out)
+        self.assertIn("╭─ BUNDLE " + "─" * 34, resize_out)
+        self.assertIn("╭─ BUNDLE " + "─" * 38, resize_out)
         self.assertTrue(resize_out.endswith("\r\033[K│ Skipped clipboard copy.\n\r\033[K" + ("╰" + "─" * 47) + "\n"))
 
         # Unchanged <session>/0 does not trigger refresh_bundle_meta; hook in refresh_bundle_meta runs when changed
@@ -2321,14 +2321,14 @@ class TestRunBlock(unittest.TestCase):
 
 
     def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
-        # 1. BLOCK PLAN prompt shows e(dit), keeps v(iew) as compatibility alias
+        # 1. PLAN prompt shows e(dit), keeps v(iew) as compatibility alias
         self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/e(dit)]:")
         self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/e(dit)]:")
         self.assertEqual(self.mod.read_confirm_key(io.StringIO("e\n"), default_yes=True), "edit")
         self.assertEqual(self.mod.read_confirm_key(io.StringIO("v\n"), default_yes=True), "view")
 
         # 2. First edit creates block.orig.sh, subsequent edit preserves block.orig.sh,
-        #    recomputes operations/stats/warnings/default_yes, and redraws BLOCK PLAN with (edited)
+        #    recomputes operations/stats/warnings/default_yes, and redraws PLAN with (edited)
         work = self.tmp / "f51_work"
         work.mkdir()
         sdir = self.tmp / "s1"
@@ -2374,7 +2374,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(script_path.read_text(encoding="utf-8"), edit_2_script)
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ BLOCK PLAN "), 3)
+        self.assertEqual(tty_out.count("╭─ PLAN "), 3)
         self.assertIn("-> Execute this block? [Y/n/e(dit)]:", tty_out)
         self.assertIn("-> Execute this block? [y/n/e(dit)]:", tty_out)
         self.assertIn("Safety warnings (1):", tty_out)
@@ -2482,7 +2482,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn(f"Stats:  {attach_stats} (edited)", tty_out)
         self.assertIn(f"✓ Copied {attach_file} to clipboard.", tty_out)
 
-        # 3. START BUNDLE preserves 0.orig on first e(dit) without overwriting on subsequent edits
+        # 3. BUNDLE preserves 0.orig on first e(dit) without overwriting on subsequent edits
         b0 = self.tmp / "s1" / "0"
         initial_0 = "Session: s1\nNext-Block: s1/1\n\nInitial bundle\n"
         b0.write_text(initial_0, encoding="utf-8")
@@ -2497,7 +2497,7 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True), \
              unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-            self.mod.offer_clipboard_copy("s1/0", b0, title_kind="START BUNDLE", extra_lines=[f"Bundle: {b0}"])
+            self.mod.offer_clipboard_copy("s1/0", b0, title_kind="BUNDLE", extra_lines=[f"Bundle: {b0}"])
 
         orig_0 = self.tmp / "s1" / "0.orig"
         self.assertTrue(orig_0.is_file())
@@ -2532,7 +2532,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(self.mod.format_duration(65.2), "1m 5s")
         self.assertEqual(self.mod.format_duration(3665.0), "1h 1m 5s")
 
-        # 2. Wall-clock block duration excludes BLOCK PLAN confirmation wait
+        # 2. Wall-clock block duration excludes PLAN confirmation wait
         work = self.tmp / "f49_work"
         work.mkdir()
         (work / "a.txt").write_text("alpha\n", encoding="utf-8")
@@ -2640,7 +2640,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("END (2.4s)", list_out)
         self.assertIn(f"END (exit {rc2},", list_out)
 
-        # 5. BLOCK PLAN visually nests AST-expanded sub-items in both flat, multi-dir, ASCII, and color modes
+        # 5. PLAN visually nests AST-expanded sub-items in both flat, multi-dir, ASCII, and color modes
         mixed_script = (
             "cd /tmp\n"
             "python3 - <<'PY'\n"
@@ -2692,8 +2692,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(self.mod._BORDER_COLOR, "\x1b[96m")
 
         expected_titles = {
-            "START BUNDLE": ("\x1b[1;96m", "\x1b[96m"),
-            "BLOCK PLAN": ("\x1b[1;93m", "\x1b[93m"),
+            "BUNDLE": ("\x1b[1;96m", "\x1b[96m"),
+            "PLAN": ("\x1b[1;93m", "\x1b[93m"),
             "END": ("\x1b[1;92m", "\x1b[92m"),
             "SYNTAX ERROR": ("\x1b[1;91m", "\x1b[91m"),
             "NOT RUN": ("\x1b[1;91m", "\x1b[91m"),
@@ -2799,7 +2799,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("╭─ SYNTAX ERROR ", buf_syn.getvalue())
         self.assertNotIn("Sandbox:", buf_syn.getvalue())
 
-        # Active sandbox mode shows full Sandbox: line in START BUNDLE, BLOCK PLAN, END, NOT RUN, SYNTAX ERROR
+        # Active sandbox mode shows full Sandbox: line in BUNDLE, PLAN, END, NOT RUN, SYNTAX ERROR
         r_start_strict = subprocess.run(
             [str(SCRIPT), "--start", "--session", "s2", "--sandbox", "strict"],
             input="Role: execute\n\nPrompt\n",
@@ -3078,7 +3078,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        # START BUNDLE shows compact grouped summary and warnings, without leaking secret value
+        # BUNDLE shows compact grouped summary and warnings, without leaking secret value
         self.assertIn("Summary (5 parts):", r_start.stdout)
         self.assertIn("[rule]", r_start.stdout)
         self.assertIn("vitalio/run_block (2)", r_start.stdout)
@@ -3105,7 +3105,7 @@ class TestRunBlock(unittest.TestCase):
         # Rule fragment (part 1) must not trigger secret_detected
         self.assertTrue(all(w.get("part_index") != 1 for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
 
-        # 2. Interactive START BUNDLE d(etails) toggle in offer_clipboard_copy
+        # 2. Interactive BUNDLE d(etails) toggle in offer_clipboard_copy
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "details")
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("D\n")), "details")
         b0_path = sessions / "s1" / "0"
@@ -3134,7 +3134,7 @@ class TestRunBlock(unittest.TestCase):
                 self.mod.offer_clipboard_copy(
                     "s1/0",
                     b0_path,
-                    title_kind="START BUNDLE",
+                    title_kind="BUNDLE",
                     extra_lines=[f"Bundle: {b0_path}"],
                 )
         finally:
@@ -3149,7 +3149,7 @@ class TestRunBlock(unittest.TestCase):
                 os.environ["RUN_BLOCK_BUNDLE_MAX_TOKENS"] = saved_bud
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ START BUNDLE "), 3)
+        self.assertEqual(tty_out.count("╭─ BUNDLE "), 3)
         self.assertEqual(tty_out.count("Summary (5 parts):"), 2)
         self.assertEqual(tty_out.count("Parts (5):"), 1)
         self.assertIn("1. [rule]", tty_out)
@@ -3275,7 +3275,7 @@ class TestRunBlock(unittest.TestCase):
             "Implement F55\n"
         )
 
-        # 1. START BUNDLE excludes all Bundle-* headers and clamps long Title to a single line
+        # 1. BUNDLE excludes all Bundle-* headers and clamps long Title to a single line
         r_start = subprocess.run(
             [str(SCRIPT), "--start", "--session", "s1"],
             input=bundle_payload,
@@ -3314,7 +3314,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(self.mod.parse_bundle_headers(s1_dir).get("bundle-command"), "agents_bundle role=execute task=F55")
         self.assertNotIn("bundle-command", {k.lower() for k, _ in self.mod.parse_bundle_header_items(s1_dir, include_transport=False)})
 
-        # 2. BLOCK PLAN, END, NOT RUN, SYNTAX ERROR, and confirmation header lines exclude Bundle-* and clamp Title
+        # 2. PLAN, END, NOT RUN, SYNTAX ERROR, and confirmation header lines exclude Bundle-* and clamp Title
         old_base = self.mod.BASE_DIR
         self.mod.BASE_DIR = sessions
         try:
@@ -3325,7 +3325,7 @@ class TestRunBlock(unittest.TestCase):
                 end_box, _, _ = self.mod.format_clipboard_box("s1/1", s1_dir / "1" / "out", ok=True, rc=0)
                 hdr_confirm = self.mod.format_session_header_lines(label="s1/1", sdir=s1_dir, work_dir=proj)
 
-            for box_name, rendered in (("BLOCK PLAN", plan_box), ("END", end_box), ("CONFIRM", "\n".join(hdr_confirm))):
+            for box_name, rendered in (("PLAN", plan_box), ("END", end_box), ("CONFIRM", "\n".join(hdr_confirm))):
                 with self.subTest(box=box_name):
                     for hidden_hdr in ("Bundle-Command:", "Bundle-Boundary:", "Bundle-Expose:", "Bundle-Hide:", "Bundle-Custom:"):
                         self.assertNotIn(hidden_hdr, rendered)

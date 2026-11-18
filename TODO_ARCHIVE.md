@@ -1,3 +1,9 @@
+# ✅ [DONE] F65: Rename TUI box titles START BUNDLE to BUNDLE and BLOCK PLAN to PLAN — *2026-11-18, Renamed START BUNDLE to BUNDLE and BLOCK PLAN to PLAN across UI, bundle start, help, docs, and tests; rebuilt standalone run_block.*
+
+- Rename the `START BUNDLE` box title to `BUNDLE` and the `BLOCK PLAN` box title to `PLAN` across `src/ui.py` (`format_safety_box()`, `_TITLE_COLORS`, `_block_colors()`, `build_box_body_lines()`, `_clipboard_prompt_line()`, `offer_clipboard_copy()`) and `src/bundle.py` (`cmd_start()`).
+- Update CLI `--help` text in `src/header.py`, project docs in `AGENTS.md` and `README.md`, and all assertions and box-title fixtures in `tests/test_run_block.py`.
+- Acceptance criteria: TUI box headers render `BUNDLE`, `PLAN`, and `END` consistently with existing border/title colors and prompt behaviors; `build.py --check` and full `tests/test_run_block.py` pass; `run_block` is rebuilt via `build.py`.
+
 # ✅ [DONE] B10: Forward all session headers into END and fix session dir resolution — *2026-11-18, Fixed _resolve_session_dir(), passed sdir into offer_clipboard_copy(), added regression tests, and rebuilt run_block.*
 
 - Fix `_resolve_session_dir()` in `src/ui.py` so a step directory containing step metadata (`<session>/<step>/meta.json`) never masks the parent session directory (`<session>/0` and `<session>/meta.json`).

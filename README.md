@@ -6,7 +6,7 @@
 terminal without API keys or background daemons. It receives a session context bundle on `stdin`
 (`<command> | run_block` -> `~/.local/state/run_block/<session>/0`) and executes numbered
 Bash or PowerShell blocks (`<session>/1`, `<session>/2`, ...) with syntax validation, a
-pre-execution `BLOCK PLAN` safety scanner, PTY streaming, and one-keystroke clipboard copy
+pre-execution `PLAN` safety scanner, PTY streaming, and one-keystroke clipboard copy
 with Claude/GPT/Gemini token counts.
 
 ## Quick Installation
@@ -41,10 +41,10 @@ present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
 markers are parsed into per-part `bundle_plan` metrics (lines, bytes, GPT/Claude
 tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
 `<session>/0` (falling back to `===== ... =====` sections when no boundary is
-provided). `START BUNDLE` renders a compact grouped summary (`kind` + `group`)
+provided). `BUNDLE` renders a compact grouped summary (`kind` + `group`)
 plus diagnostics (non-zero command `rc`, empty output, oversized fragments or
 token budget exceedance, and accidental secrets in non-rule content); press `d`
-at the `START BUNDLE` prompt to toggle the full per-part `d(etails)` view.
+at the `BUNDLE` prompt to toggle the full per-part `d(etails)` view.
 When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 `Workdir` directory, that path is preferred over the current directory or
 Git root and written to `<session>/0`:
@@ -64,7 +64,7 @@ git status -sb
 RUN_BLOCK
 ```
 
-### 2. Inspecting the `BLOCK PLAN` before execution
+### 2. Inspecting the `PLAN` before execution
 
 ```bash
 run_block s1/2 <<'RUN_BLOCK'
@@ -72,7 +72,7 @@ python3 -m unittest
 RUN_BLOCK
 ```
 
-Before running, `run_block` displays the `BLOCK PLAN` (working directory, numbered
+Before running, `run_block` displays the `PLAN` (working directory, numbered
 operations with nested AST-expanded sub-items for multi-file or read+write
 Python blocks, and any safety warnings). Press
 `Enter`/`y` to run, `n`/`Esc` to abort, or `e` (or `v`) to edit the script in your
@@ -82,10 +82,10 @@ safety warnings in place, and re-validates syntax before execution. During execu
 `run_block` records wall-clock block duration (excluding confirmation prompts) and
 per-operation elapsed timings in `<session>/<step>/meta.json`, `[<session>/<step>] END
 (<duration>)`, `Stats:`, and live progress output. Across all interactive TUI
-confirmation prompts (`BLOCK PLAN`, `END`, `STEP ALREADY EXISTS`,
+confirmation prompts (`PLAN`, `END`, `STEP ALREADY EXISTS`,
 `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and `CLEAN SESSIONS`), `Esc`
 consistently cancels or exits without proceeding. In the `END` clipboard prompt (and
-`START BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
+`BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
 `<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
 recalculating line/byte/token statistics, `Error:` lines, and clipboard targets in place.
 
@@ -116,13 +116,13 @@ RUN_FIX
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
 | `RUN_BLOCK_TOKEN_STATS` | `true` | Show byte size and Claude/GPT/Gemini token counts (`true` / `false`) |
-| `RUN_BLOCK_BUNDLE_MAX_TOKENS` | `100000` | Warn in `START BUNDLE` / `--bundle-plan` when total tokens exceed budget (`0` disables) |
-| `RUN_BLOCK_FRAGMENT_MAX_TOKENS` | `20000` | Warn in `START BUNDLE` / `--bundle-plan` when a single fragment exceeds limit (`0` disables) |
+| `RUN_BLOCK_BUNDLE_MAX_TOKENS` | `100000` | Warn in `BUNDLE` / `--bundle-plan` when total tokens exceed budget (`0` disables) |
+| `RUN_BLOCK_FRAGMENT_MAX_TOKENS` | `20000` | Warn in `BUNDLE` / `--bundle-plan` when a single fragment exceeds limit (`0` disables) |
 | `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers and elapsed timings during interactive execution (`0`/`false` to disable) |
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
 | `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash`, `sh`, or `pwsh`/`powershell` on Windows) |
-| `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e` in `BLOCK PLAN`, `END`, and `START BUNDLE` |
+| `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e` in `PLAN`, `END`, and `BUNDLE` |
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |
 

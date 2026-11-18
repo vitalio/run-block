@@ -362,7 +362,7 @@ def format_safety_box(
     edited: bool = False,
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
-    title = " BLOCK PLAN "
+    title = " PLAN "
     prompt_suffix = _safety_prompt_suffix(default_yes)
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     term_cols = _hr_width()
@@ -762,7 +762,7 @@ def confirm_execution(
         script_path=script_path,
         edited=is_edited,
     )
-    _, border_col = _block_colors("BLOCK PLAN")
+    _, border_col = _block_colors("PLAN")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
     prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
     try:
@@ -962,8 +962,8 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
 
 _KV_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*:)\s+(.*\S.*)$")
 _TITLE_COLORS = {
-    "START BUNDLE": "\x1b[1;96m",
-    "BLOCK PLAN": "\x1b[1;93m",
+    "BUNDLE": "\x1b[1;96m",
+    "PLAN": "\x1b[1;93m",
     "END": "\x1b[1;92m",
     "SYNTAX ERROR": "\x1b[1;91m",
     "NOT RUN": "\x1b[1;91m",
@@ -1439,7 +1439,7 @@ def build_box_body_lines(
             base_lines = _align_kv_lines([*hdr_lines, "", *detail_lines])
         else:
             base_lines = hdr_lines
-    if title_kind and title_kind.strip() == "START BUNDLE":
+    if title_kind and title_kind.strip() == "BUNDLE":
         b_sections = _build_start_bundle_sections(resolved_sdir, err_src, details=bundle_details, max_width=max_width)
         if b_sections:
             if base_lines:
@@ -1450,7 +1450,7 @@ def build_box_body_lines(
 
 def _clipboard_prompt_line(title_kind: str) -> str:
     kind = title_kind.strip()
-    if kind == "START BUNDLE":
+    if kind == "BUNDLE":
         return "-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:"
     if kind == "END":
         return "-> Copy to clipboard? [Enter/e(dit)/Esc]:"
@@ -1521,7 +1521,7 @@ def offer_clipboard_copy(
     mode = clipboard_mode()
     if mode == "never":
         return
-    is_start_bundle = title_kind.strip() == "START BUNDLE"
+    is_start_bundle = title_kind.strip() == "BUNDLE"
     is_end_box = title_kind.strip() == "END"
     edit_target = out_path
     copy_target = edit_target

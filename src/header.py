@@ -22,7 +22,7 @@ Environment:
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
   RUN_BLOCK_BUNDLE_MAX_TOKENS=100000 Warn when total bundle exceeds token budget (0 disables)
   RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000 Warn when a single bundle part exceeds token limit (0 disables)
-  VISUAL / EDITOR                    Editor for e(dit) in BLOCK PLAN, END, and START BUNDLE (d(etails) inspects parts) (keeps *.orig backups)
+  VISUAL / EDITOR                    Editor for e(dit) in PLAN, END, and BUNDLE (d(etails) inspects parts) (keeps *.orig backups)
 """
 from __future__ import annotations
 

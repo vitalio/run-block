@@ -1,9 +1,3 @@
-# 🎯 [NEXT] F65: Rename TUI box titles START BUNDLE to BUNDLE and BLOCK PLAN to PLAN
-
-- Rename the `START BUNDLE` box title to `BUNDLE` and the `BLOCK PLAN` box title to `PLAN` across `src/ui.py` (`format_safety_box()`, `_TITLE_COLORS`, `_block_colors()`, `build_box_body_lines()`, `_clipboard_prompt_line()`, `offer_clipboard_copy()`) and `src/bundle.py` (`cmd_start()`).
-- Update CLI `--help` text in `src/header.py`, project docs in `AGENTS.md` and `README.md`, and all assertions and box-title fixtures in `tests/test_run_block.py`.
-- Acceptance criteria: TUI box headers render `BUNDLE`, `PLAN`, and `END` consistently with existing border/title colors and prompt behaviors; `build.py --check` and full `tests/test_run_block.py` pass; `run_block` is rebuilt via `build.py`.
-
 # 🎯 [NEXT] F63: Unify Stats and hierarchical tabular bundle Summary/Details with char sizes and clean Preamble
 
 - Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
