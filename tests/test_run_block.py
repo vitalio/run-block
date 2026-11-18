@@ -280,7 +280,7 @@ class TestRunBlock(unittest.TestCase):
         f = self.tmp / "x.txt"
         f.write_text("hello\n", encoding="utf-8")
         s = self.mod.stats_line(f)
-        self.assertIn("1 line · 6 B · ~2 tokens", s)
+        self.assertIn("1 line · 6 chars · ~2 tokens", s)
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
@@ -291,7 +291,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("Sandbox:", box)
         self.assertNotIn("END (", box)
         self.assertIn(f"│ Output: {f}", box)
-        self.assertIn("│ Stats:  1 line · 6 B · ~2 tokens", box)
+        self.assertIn("│ Stats:  1 line · 6 chars · ~2 tokens", box)
         self.assertIn("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 9)
@@ -306,7 +306,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("Block:   s2/2", box_err)
         self.assertIn("Exit:   2", box_err)
         self.assertIn(f"Output: {f}", box_err)
-        self.assertIn("Stats:  1 line · 6 B · ~2 tokens", box_err)
+        self.assertIn("Stats:  1 line · 6 chars · ~2 tokens", box_err)
 
     def test_self_update_and_check_update(self):
         installed = self.tmp / "my_block"
@@ -2952,11 +2952,13 @@ class TestRunBlock(unittest.TestCase):
             self.assertGreater(p["gpt"], 0)
             self.assertGreater(p["claude"], 0)
             self.assertGreater(p["share_pct"], 0.0)
-        self.assertAlmostEqual(sum(p["share_pct"] for p in parts), 100.0, delta=0.5)
-        self.assertEqual(plan["bytes"], sum(p["bytes"] for p in parts))
-        self.assertEqual(plan["lines"], sum(p["lines"] for p in parts))
-        self.assertEqual(plan["gpt"], sum(p["gpt"] for p in parts))
-        self.assertEqual(plan["claude"], sum(p["claude"] for p in parts))
+        hdr_entry = plan.get("header") or {}
+        self.assertGreater(hdr_entry.get("chars", 0), 0)
+        self.assertAlmostEqual(sum(p["share_pct"] for p in parts) + hdr_entry["share_pct"], 100.0, delta=0.5)
+        self.assertEqual(plan["chars"], sum(p["chars"] for p in parts) + hdr_entry["chars"])
+        self.assertEqual(plan["bytes"], sum(p["bytes"] for p in parts) + hdr_entry["bytes"])
+        self.assertEqual(plan["lines"], sum(p["lines"] for p in parts) + hdr_entry["lines"])
+        self.assertEqual(plan["chars"], len(b0))
 
         # 2. Bundle-Expose: * with Bundle-Hide forwards all non-Bundle non-reserved headers except hidden
         exp_all = self.mod.filter_exposed_headers([
@@ -3079,7 +3081,8 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         # BUNDLE shows compact grouped summary and warnings, without leaking secret value
-        self.assertIn("Summary (5 parts):", r_start.stdout)
+        self.assertIn("(5 parts)\n│ Summary:", r_start.stdout)
+        self.assertIn("[header]", r_start.stdout)
         self.assertIn("[rule]", r_start.stdout)
         self.assertIn("vitalio/run_block (2)", r_start.stdout)
         self.assertIn("[cmd]", r_start.stdout)
@@ -3150,10 +3153,10 @@ class TestRunBlock(unittest.TestCase):
 
         tty_out = tty_w.getvalue()
         self.assertEqual(tty_out.count("╭─ BUNDLE "), 3)
-        self.assertEqual(tty_out.count("Summary (5 parts):"), 2)
-        self.assertEqual(tty_out.count("Parts (5):"), 1)
-        self.assertIn("1. [rule]", tty_out)
-        self.assertIn("4. [cmd]", tty_out)
+        self.assertEqual(tty_out.count("│ Summary:"), 2)
+        self.assertEqual(tty_out.count("│ Parts:"), 1)
+        self.assertIn("[rule]    ├─ 1. r:bash", tty_out)
+        self.assertIn("[cmd]     └─ 4. failing_cmd", tty_out)
         self.assertIn("rc=2", tty_out)
         self.assertIn("Skipped clipboard copy.", tty_out)
 
@@ -3605,6 +3608,153 @@ class TestRunBlock(unittest.TestCase):
             self.mod.BASE_DIR = saved_base
             if saved_cwd_env is not None:
                 os.environ["RUN_BLOCK_CWD"] = saved_cwd_env
+
+    def test_f63_unified_chars_chain_hierarchy_tabular_and_preamble(self):
+        # 1. count_tokens / format_stats / Script: / format_start_bundle use chars
+        sample = "hello мир\n"
+        tok = self.mod.count_tokens(sample.encode("utf-8"))
+        self.assertEqual(tok["chars"], len(sample))
+        self.assertEqual(tok["bytes"], len(sample.encode("utf-8")))
+        self.assertIn("10 chars", self.mod.format_stats(sample.encode("utf-8")))
+        plan_sum = self.mod.summarize_script_actions("echo hello_f63\n", Path("/tmp"))
+        self.assertIn("15 chars", str(plan_sum["meta"]))
+
+        # 2. Standalone ===== Rules ===== outside boundary markers does NOT create [text] Preamble,
+        #    whereas real unframed preamble text DOES create [text] Preamble.
+        nonce = "f63nonce"
+        body_with_section_hdr = (
+            "===== Rules =====\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"vitalio/run_block:blocks/bash\", \"chain\": [\"vitalio/run_block\"]}} -->\n"
+            "Rule body\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        _, p_clean = self.mod.parse_bundle_fragments(body_with_section_hdr, boundary=nonce)
+        self.assertEqual(p_clean["part_count"], 1)
+        self.assertEqual([x["kind"] for x in p_clean["parts"]], ["rule"])
+
+        body_with_real_preamble = (
+            "===== Rules =====\n"
+            "Actual unframed intro\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"chain\": []}} -->\n"
+            "Prompt text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        _, p_pre = self.mod.parse_bundle_fragments(body_with_real_preamble, boundary=nonce)
+        self.assertEqual(p_pre["part_count"], 2)
+        self.assertEqual([x["kind"] for x in p_pre["parts"]], ["text", "prompt"])
+        self.assertEqual(p_pre["parts"][0]["name"], "Preamble")
+
+        # 3. Neutral chain hierarchy, prefix dedup, legacy fallback, and older meta.json bytes->chars fallback
+        nested_body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"vitalio/run_block:blocks/bash\", \"chain\": [\"vitalio/run_block\"]}} -->\n"
+            + ("bash rule line\n" * 4)
+            + f"<!-- bundle:{nonce}:end -->\n"
+            + f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"bundleA:r1\", \"chain\": [\"bundleA\", \"rulesetB\"]}} -->\n"
+            + "sub rule 1\n"
+            + f"<!-- bundle:{nonce}:end -->\n"
+            + f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"bundleA:r2\", \"chain\": [\"bundleA\", \"rulesetB\"]}} -->\n"
+            + "sub rule 2\n"
+            + f"<!-- bundle:{nonce}:end -->\n"
+            + f"<!-- bundle:{nonce}:part {{\"kind\": \"cmd\", \"name\": \"git status -sb\", \"chain\": [], \"rc\": 0, \"ms\": 4}} -->\n"
+            + "clean\n"
+            + f"<!-- bundle:{nonce}:end -->\n"
+            + f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"Prompt\", \"chain\": []}} -->\n"
+            + ("very_long_unbroken_token_" * 4)
+            + "\n"
+            + f"<!-- bundle:{nonce}:end -->\n"
+        )
+        proj = self.tmp / "f63_proj"
+        proj.mkdir()
+        sessions = self.tmp / "f63_sessions"
+        env = {**os.environ, "RUN_BLOCK_DIR": str(sessions), "RUN_BLOCK_CWD": str(proj)}
+        bundle_in = (
+            f"Bundle-Boundary: {nonce}\n"
+            "Bundle-Expose: Role\n"
+            "Role: execute\n\n"
+            + nested_body
+        )
+        r_start = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s1"],
+            input=bundle_in,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_start.returncode, 0, r_start.stderr)
+        out_s = r_start.stdout
+        self.assertRegex(out_s, r"│ Stats: .*\(5 parts\)\n│ Summary:")
+        self.assertIn("[header]  Headers & spacing", out_s)
+        self.assertNotIn("vitalio/run_block: vitalio/run_block:", out_s)
+        self.assertIn("vitalio/run_block:blocks/bash", out_s)
+        self.assertIn("[rule]    bundleA (2)", out_s)
+        self.assertIn("[rule]    └─ rulesetB (2)", out_s)
+        self.assertIn("[cmd]     git status -sb", out_s)
+        self.assertIn("[prompt]  Prompt", out_s)
+
+        plan1 = self.mod.load_session_bundle_plan(sessions / "s1")
+        assert plan1 is not None
+        self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_group_items(plan1)))
+        self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_part_items(plan1)))
+
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
+            det_box, _, _ = self.mod.format_clipboard_box(
+                "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="BUNDLE", bundle_details=True, sdir=sessions / "s1"
+            )
+        self.assertIn("(5 parts)\n│ Parts:", det_box)
+        self.assertIn("├─ 2. bundleA:r1", det_box)
+        self.assertIn("└─ 3. bundleA:r2", det_box)
+
+        # Narrow terminal wraps ONLY the description column cleanly
+        narrow_lines = self.mod.format_bundle_summary_lines(plan1, max_width=64)
+        for ln in narrow_lines:
+            self.assertLessEqual(self.mod.display_width(ln), 64, ln)
+        self.assertTrue(any(ln.startswith("  " + " " * 30) for ln in narrow_lines))
+
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
+            ed_box, _, _ = self.mod.format_clipboard_box(
+                "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="BUNDLE", edited=True, sdir=sessions / "s1"
+            )
+            self.assertRegex(ed_box, r"│ Stats: .*\(5 parts\) \(edited\)\n│ Summary:")
+            no_tok_box, _, _ = self.mod.format_clipboard_box(
+                "s1/0", sessions / "s1" / "0", stats=None, title_kind="BUNDLE", edited=False, sdir=sessions / "s1"
+            )
+            self.assertNotIn("│ Stats:", no_tok_box)
+            self.assertIn("│ Summary (5 parts):", no_tok_box)
+
+        # Legacy meta.json without chars falls back to bytes; empty group expands at root
+        legacy_plan = {
+            "protocol": "boundary",
+            "part_count": 2,
+            "lines": 2,
+            "bytes": 40,
+            "gpt": 10,
+            "claude": 12,
+            "parts": [
+                {"index": 1, "kind": "cmd", "name": "root_cmd", "group": "", "lines": 1, "bytes": 20, "gpt": 5, "claude": 6, "share_pct": 50.0},
+                {"index": 2, "kind": "rule", "id": "g:item", "group": "g", "lines": 1, "bytes": 20, "gpt": 5, "claude": 6, "share_pct": 50.0},
+            ],
+            "warnings": [],
+        }
+        enriched = self.mod._enrich_bundle_plan(legacy_plan)
+        self.assertEqual(enriched["chars"], 40)
+        self.assertEqual(enriched["parts"][0]["chars"], 20)
+        leg_sum = "\n".join(self.mod.format_bundle_summary_lines(enriched, max_width=100))
+        self.assertIn("[cmd]   root_cmd", leg_sum)
+        self.assertIn("[rule]  g:item", leg_sum)
+
+        r_bp = subprocess.run(
+            [str(SCRIPT), "--bundle-plan", "s1"],
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_bp.returncode, 0, r_bp.stderr)
+        self.assertIn("chars ·", r_bp.stdout)
+        self.assertNotIn(" B ·", r_bp.stdout)
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,14 @@
+# ✅ [DONE] F63: Unify Stats and hierarchical tabular bundle Summary/Details with char sizes and clean Preamble — *2026-11-18, Unify Stats/Summary/Details with char sizes, neutral chain hierarchy, and header reconciliation*
+
+- Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
+- Fix false `[text] Preamble` fragments in `parse_bundle_fragments()` (`src/bundle_plan.py`): ignore standalone `===== ... =====` section headers (such as `===== Rules =====`) outside `<!-- bundle:<nonce>:part ... -->` markers so only real unframed preamble text creates a `Preamble` part.
+- Eliminate duplicate `<prefix>: <prefix>:<name>` labels in `format_bundle_group_items()` and `format_bundle_part_items()` (`src/bundle_plan.py`) when the item name already starts with the group/chain prefix.
+- Expand root-level items (`chain: []` or empty `group`) directly in `Summary` and expand nested `chain` levels (`bundle` / `ruleset` hierarchies) in `Summary` and `d(etails)` (`src/bundle_plan.py`, `src/ui.py`).
+- Unify `Stats`, `Summary`, `Parts` (`d(etails)`), and `--bundle-plan` `Total:` around `chars` as the shared size unit (`count_tokens()` and `format_stats()` in `src/ui.py`, `format_bundle_plan_text()` in `src/bundle_plan.py`, `format_start_bundle()` in `src/bundle.py`, and `Script:` sizing in `src/safety.py`), storing `chars` per part in `_build_bundle_plan()` (falling back to `bytes` for older `meta.json`).
+- Visually attach `Summary` / `Parts` directly under `Stats:` in the bundle box without a blank separator line (showing part count and `(edited)` on `Stats:` and keeping `RUN_BLOCK_TOKEN_STATS=false` behavior consistent), and account for `<session>/0` headers and inter-section spacing (e.g. a `[header]` entry when non-zero) so lines, `chars`, tokens, and `%` in the breakdown reconcile to 100% of `Stats:`.
+- Render `Summary` and `Parts` as right-aligned numeric columns (`%`, `chars`, `L`, `tokens`) followed by `[kind]` and the description column, wrapping only the description column cleanly on narrow terminals (`src/bundle_plan.py`, `src/ui.py`).
+- Update `README.md` and unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F65: Rename TUI box titles START BUNDLE to BUNDLE and BLOCK PLAN to PLAN — *2026-11-18, Renamed START BUNDLE to BUNDLE and BLOCK PLAN to PLAN across UI, bundle start, help, docs, and tests; rebuilt standalone run_block.*
 
 - Rename the `START BUNDLE` box title to `BUNDLE` and the `BLOCK PLAN` box title to `PLAN` across `src/ui.py` (`format_safety_box()`, `_TITLE_COLORS`, `_block_colors()`, `build_box_body_lines()`, `_clipboard_prompt_line()`, `offer_clipboard_copy()`) and `src/bundle.py` (`cmd_start()`).

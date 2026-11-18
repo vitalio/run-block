@@ -44,15 +44,20 @@ def format_start_bundle(
         bundle_header_lines.append(f"{exp_k}: {exp_v}")
     bundle_header_text = "\n".join(bundle_header_lines) + "\n"
     full_text = bundle_header_text + ("\n" + clean_body + "\n" if clean_body else "")
-    total_lines = len(full_text.splitlines())
-    total_tokens = count_tokens(full_text.encode("utf-8"))["gpt"]
+    full_tok = count_tokens(full_text.encode("utf-8"))
+    total_lines = int(full_tok["lines"])
+    total_chars = int(full_tok["chars"])
+    total_tokens = int(full_tok["gpt"])
+    fn_reconcile = globals().get("reconcile_bundle_plan")
+    if callable(fn_reconcile):
+        bundle_plan = fn_reconcile(bundle_plan, full_text)
     console_lines = [
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",
         f"Date: {ts}",
         f"Workdir: {wdir}",
         f"Sandbox: {sb_hdr}",
-        f"Total: {total_lines} lines (~{total_tokens} tokens)",
+        f"Total: {total_lines} line{'s' if total_lines != 1 else ''} · {_human_chars(total_chars)} (~{total_tokens} tokens)",
     ]
     return {
         "console_lines": console_lines,
@@ -61,6 +66,7 @@ def format_start_bundle(
         "exposed_headers": exposed_headers,
         "bundle_plan": bundle_plan,
         "total_lines": total_lines,
+        "total_chars": total_chars,
         "total_tokens": total_tokens,
         "sandbox": sb_mode,
     }

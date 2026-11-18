@@ -38,10 +38,12 @@ from `<session>/0` and TUI boxes), and
 forwarded into `<session>/0` alongside `run_block`'s own headers (`Session`,
 `Next-Block`, `Workdir`, `Sandbox`, `Date`). When `Bundle-Boundary: <nonce>` is
 present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
-markers are parsed into per-part `bundle_plan` metrics (lines, bytes, GPT/Claude
+markers are parsed into per-part `bundle_plan` metrics (lines, chars, GPT/Claude
 tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
 `<session>/0` (falling back to `===== ... =====` sections when no boundary is
-provided). `BUNDLE` renders a compact grouped summary (`kind` + `group`)
+provided). `BUNDLE` attaches a hierarchical tabular `Summary` (derived from
+neutral `chain` or legacy `group`/`via`, with `[header]` accounting to 100%)
+directly under `Stats:`
 plus diagnostics (non-zero command `rc`, empty output, oversized fragments or
 token budget exceedance, and accidental secrets in non-rule content); press `d`
 at the `BUNDLE` prompt to toggle the full per-part `d(etails)` view.
@@ -87,7 +89,7 @@ confirmation prompts (`PLAN`, `END`, `STEP ALREADY EXISTS`,
 consistently cancels or exits without proceeding. In the `END` clipboard prompt (and
 `BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
 `<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
-recalculating line/byte/token statistics, `Error:` lines, and clipboard targets in place.
+recalculating line/char/token statistics, `Error:` lines, and clipboard targets in place.
 
 ### 3. Patching a failed block (`--fix`)
 
@@ -115,7 +117,7 @@ RUN_FIX
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; also persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
-| `RUN_BLOCK_TOKEN_STATS` | `true` | Show byte size and Claude/GPT/Gemini token counts (`true` / `false`) |
+| `RUN_BLOCK_TOKEN_STATS` | `true` | Show char size and Claude/GPT/Gemini token counts (`true` / `false`) |
 | `RUN_BLOCK_BUNDLE_MAX_TOKENS` | `100000` | Warn in `BUNDLE` / `--bundle-plan` when total tokens exceed budget (`0` disables) |
 | `RUN_BLOCK_FRAGMENT_MAX_TOKENS` | `20000` | Warn in `BUNDLE` / `--bundle-plan` when a single fragment exceeds limit (`0` disables) |
 | `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers and elapsed timings during interactive execution (`0`/`false` to disable) |

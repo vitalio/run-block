@@ -188,20 +188,124 @@ def analyze_bundle_warnings(
     return warnings
 
 
+def _part_chars(entry: dict[str, object]) -> int:
+    raw = entry.get("chars")
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return int(raw)
+    return int(entry.get("bytes") or 0)
+
+
+def _resolve_part_chain(entry: dict[str, object]) -> list[str]:
+    if "chain" in entry and isinstance(entry.get("chain"), (list, tuple)):
+        return [str(x).strip() for x in entry["chain"] if str(x).strip()]
+    grp = str(entry.get("group") or "").strip()
+    if not grp:
+        return []
+    via = str(entry.get("via") or "").strip()
+    if via and via != grp:
+        return [via, grp]
+    return [grp]
+
+
+def _join_chain_label(chain: list[str], name: str) -> str:
+    if not chain:
+        return name
+    if not name:
+        return " -> ".join(chain) if len(chain) > 1 else chain[0]
+    cur = name
+    for seg in reversed(chain):
+        if cur == seg or cur.startswith(seg + ":") or cur.startswith(seg + "/"):
+            continue
+        cur = f"{seg}: {cur}"
+    return cur
+
+
+def _child_rel_label(prefix: str, name: str) -> str:
+    if not prefix or not name or name == prefix:
+        return name
+    for sep in (":", "/"):
+        if name.startswith(prefix + sep):
+            return name[len(prefix) + 1 :].lstrip() or name
+    return name
+
+
+def _recompute_share_pct(plan: dict[str, object]) -> None:
+    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
+    hdr = plan.get("header") if isinstance(plan.get("header"), dict) else None
+    total_chars = int(plan.get("chars") if plan.get("chars") is not None else (plan.get("bytes") or 0))
+    total_bytes = int(plan.get("bytes") or 0)
+    denom = total_chars if total_chars > 0 else total_bytes
+    use_chars = total_chars > 0
+    for entry in parts:
+        val = _part_chars(entry) if use_chars else int(entry.get("bytes") or 0)
+        entry["share_pct"] = round(val * 100.0 / denom, 1) if denom > 0 else 0.0
+    if hdr is not None:
+        hval = _part_chars(hdr) if use_chars else int(hdr.get("bytes") or 0)
+        hdr["share_pct"] = round(hval * 100.0 / denom, 1) if denom > 0 else 0.0
+
+
+def reconcile_bundle_plan(plan: dict[str, object], full_text: str) -> dict[str, object]:
+    out = dict(plan)
+    parts = [p for p in (out.get("parts") or []) if isinstance(p, dict)]
+    out["parts"] = parts
+    sum_lines = sum(int(p.get("lines") or 0) for p in parts)
+    sum_chars = sum(_part_chars(p) for p in parts)
+    sum_bytes = sum(int(p.get("bytes") or 0) for p in parts)
+    sum_gpt = sum(int(p.get("gpt") or 0) for p in parts)
+    sum_claude = sum(int(p.get("claude") or 0) for p in parts)
+    full_tok = count_tokens(full_text.encode("utf-8"))
+    f_lines = int(full_tok["lines"])
+    f_chars = int(full_tok["chars"])
+    f_bytes = int(full_tok["bytes"])
+    f_gpt = int(full_tok["gpt"])
+    f_claude = int(full_tok["claude"])
+    rem_lines = f_lines - sum_lines
+    rem_chars = f_chars - sum_chars
+    rem_bytes = f_bytes - sum_bytes
+    if (rem_lines > 0 or rem_chars > 0) and f_chars >= sum_chars and f_lines >= sum_lines:
+        out["lines"] = f_lines
+        out["chars"] = f_chars
+        out["bytes"] = f_bytes
+        out["gpt"] = f_gpt
+        out["claude"] = f_claude
+        out["gpt_exact"] = bool(full_tok["gpt_exact"])
+        out["header"] = {
+            "kind": "header",
+            "name": "Headers & spacing",
+            "lines": max(0, rem_lines),
+            "chars": max(0, rem_chars),
+            "bytes": max(0, rem_bytes),
+            "gpt": max(0, f_gpt - sum_gpt),
+            "claude": max(0, f_claude - sum_claude),
+        }
+    else:
+        out.pop("header", None)
+        out["lines"] = sum_lines
+        out["chars"] = sum_chars
+        out["bytes"] = sum_bytes
+        out["gpt"] = sum_gpt
+        out["claude"] = sum_claude
+    _recompute_share_pct(out)
+    return out
+
+
 def group_bundle_parts(parts: list[dict[str, object]]) -> list[dict[str, object]]:
-    buckets: dict[tuple[str, str], dict[str, object]] = {}
-    order: list[tuple[str, str]] = []
+    buckets: dict[tuple[str, tuple[str, ...]], dict[str, object]] = {}
+    order: list[tuple[str, tuple[str, ...]]] = []
     for entry in parts:
         kind = str(entry.get("kind") or "part")
-        group = str(entry.get("group") or "")
-        key = (kind, group)
+        chain = tuple(_resolve_part_chain(entry))
+        group = " / ".join(chain) if chain else ""
+        key = (kind, chain)
         if key not in buckets:
             order.append(key)
             buckets[key] = {
                 "kind": kind,
                 "group": group,
+                "chain": list(chain),
                 "count": 0,
                 "lines": 0,
+                "chars": 0,
                 "bytes": 0,
                 "gpt": 0,
                 "claude": 0,
@@ -212,6 +316,7 @@ def group_bundle_parts(parts: list[dict[str, object]]) -> list[dict[str, object]
         b = buckets[key]
         b["count"] = int(b["count"]) + 1
         b["lines"] = int(b["lines"]) + int(entry.get("lines") or 0)
+        b["chars"] = int(b["chars"]) + _part_chars(entry)
         b["bytes"] = int(b["bytes"]) + int(entry.get("bytes") or 0)
         b["gpt"] = int(b["gpt"]) + int(entry.get("gpt") or 0)
         b["claude"] = int(b["claude"]) + int(entry.get("claude") or 0)
@@ -235,6 +340,7 @@ def _build_bundle_plan(
     part_texts: list[str] = []
     part_lines_list: list[list[str]] = []
     total_lines = 0
+    total_chars = 0
     total_bytes = 0
     total_gpt = 0
     total_claude = 0
@@ -247,6 +353,7 @@ def _build_bundle_plan(
         tok = count_tokens(part_text.encode("utf-8"))
         gpt_exact = bool(tok["gpt_exact"])
         lines_cnt = int(tok["lines"])
+        chars_cnt = int(tok["chars"])
         bytes_cnt = int(tok["bytes"])
         gpt_cnt = int(tok["gpt"])
         claude_cnt = int(tok["claude"])
@@ -260,6 +367,8 @@ def _build_bundle_plan(
         name_val = str(meta.get("name") or meta.get("id") or "")
         if name_val:
             entry["name"] = name_val
+        if "chain" in meta and isinstance(meta.get("chain"), (list, tuple)):
+            entry["chain"] = [str(x).strip() for x in meta["chain"] if str(x).strip()]
         if meta.get("group"):
             entry["group"] = str(meta["group"])
         if meta.get("via"):
@@ -272,44 +381,38 @@ def _build_bundle_plan(
             ms_f = float(ms_val)
             entry["ms"] = int(round(ms_f)) if ms_f.is_integer() else ms_f
         entry["lines"] = lines_cnt
+        entry["chars"] = chars_cnt
         entry["bytes"] = bytes_cnt
         entry["gpt"] = gpt_cnt
         entry["claude"] = claude_cnt
 
         total_lines += lines_cnt
+        total_chars += chars_cnt
         total_bytes += bytes_cnt
         total_gpt += gpt_cnt
         total_claude += claude_cnt
         parts.append(entry)
 
-    for entry in parts:
-        if total_gpt > 0:
-            share = round(int(entry["gpt"]) * 100.0 / total_gpt, 1)
-        elif total_bytes > 0:
-            share = round(int(entry["bytes"]) * 100.0 / total_bytes, 1)
-        else:
-            share = 0.0
-        entry["share_pct"] = share
-
-    warnings = analyze_bundle_warnings(
-        parts,
-        part_texts=part_texts,
-        part_lines_list=part_lines_list,
-        total_gpt=total_gpt,
-    )
-
-    return {
+    plan: dict[str, object] = {
         "protocol": protocol,
         "boundary": boundary or None,
         "part_count": len(parts),
         "lines": total_lines,
+        "chars": total_chars,
         "bytes": total_bytes,
         "gpt": total_gpt,
         "claude": total_claude,
         "gpt_exact": gpt_exact,
         "parts": parts,
-        "warnings": warnings,
+        "warnings": analyze_bundle_warnings(
+            parts,
+            part_texts=part_texts,
+            part_lines_list=part_lines_list,
+            total_gpt=total_gpt,
+        ),
     }
+    _recompute_share_pct(plan)
+    return plan
 
 
 def _split_section_fallback(norm_text: str, boundary_val: str | None) -> tuple[str, dict[str, object]]:
@@ -346,7 +449,10 @@ def _split_section_fallback(norm_text: str, boundary_val: str | None) -> tuple[s
     for idx, (sec_title, sec_lines) in enumerate(raw_sections):
         meta = _infer_section_meta(sec_title, is_sections=saw_section, is_preamble=(idx == 0))
         raw_parts.append((meta, sec_lines))
-    return clean_body, _build_bundle_plan(protocol, boundary_val, raw_parts)
+    plan = _build_bundle_plan(protocol, boundary_val, raw_parts)
+    if clean_body:
+        plan = reconcile_bundle_plan(plan, clean_body + "\n")
+    return clean_body, plan
 
 
 def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple[str, dict[str, object]]:
@@ -375,8 +481,14 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
                 found_markers += 1
                 if in_part:
                     raw_parts.append((cur_meta, cur_lines))
-                elif any(x.strip() for x in unframed_lines):
-                    raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(found_markers == 1)), unframed_lines))
+                else:
+                    real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
+                    while real_unframed and not real_unframed[0].strip():
+                        real_unframed.pop(0)
+                    while real_unframed and not real_unframed[-1].strip():
+                        real_unframed.pop()
+                    if any(x.strip() for x in real_unframed):
+                        raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(len(raw_parts) == 0)), real_unframed))
                 unframed_lines = []
                 in_part = True
                 cur_lines = []
@@ -408,13 +520,22 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
 
         if in_part:
             raw_parts.append((cur_meta, cur_lines))
-        elif any(x.strip() for x in unframed_lines):
-            raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=False), unframed_lines))
+        else:
+            real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
+            while real_unframed and not real_unframed[0].strip():
+                real_unframed.pop(0)
+            while real_unframed and not real_unframed[-1].strip():
+                real_unframed.pop()
+            if any(x.strip() for x in real_unframed):
+                raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(len(raw_parts) == 0)), real_unframed))
 
         if found_markers > 0:
             clean_body = "\n".join(stripped_lines)
             clean_body = re.sub(r"\n{3,}", "\n\n", clean_body).strip("\n")
-            return clean_body, _build_bundle_plan("boundary", boundary_val, raw_parts)
+            plan = _build_bundle_plan("boundary", boundary_val, raw_parts)
+            if clean_body:
+                plan = reconcile_bundle_plan(plan, clean_body + "\n")
+            return clean_body, plan
 
     return _split_section_fallback(norm_text, boundary_val)
 
@@ -427,6 +548,7 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     meta_hdrs = _parse_meta_header_items(sdir)
     boundary = get_bundle_boundary(meta_hdrs)
     _, plan = parse_bundle_fragments(body, boundary=boundary)
+    plan = reconcile_bundle_plan(plan, text)
     update_session_meta(sdir, bundle_plan=plan)
 
 
@@ -434,6 +556,250 @@ def _format_tok_pair(gpt_cnt: int, claude_cnt: int) -> str:
     lo = min(gpt_cnt, claude_cnt)
     hi = max(gpt_cnt, claude_cnt)
     return f"~{_human_tok(lo)}–{_human_tok(hi)} tok" if lo != hi else f"~{_human_tok(lo)} tok"
+
+
+def _new_tree_node(name: str, chain: list[str]) -> dict[str, object]:
+    return {
+        "name": name,
+        "chain": list(chain),
+        "items": [],
+        "children_by_name": {},
+        "direct_parts": [],
+        "total_count": 0,
+        "lines": 0,
+        "chars": 0,
+        "bytes": 0,
+        "gpt": 0,
+        "claude": 0,
+        "share_pct": 0.0,
+        "kinds": [],
+        "rc_errors": 0,
+    }
+
+
+def _add_part_to_node(node: dict[str, object], entry: dict[str, object]) -> None:
+    node["total_count"] = int(node["total_count"]) + 1
+    node["lines"] = int(node["lines"]) + int(entry.get("lines") or 0)
+    node["chars"] = int(node["chars"]) + _part_chars(entry)
+    node["bytes"] = int(node["bytes"]) + int(entry.get("bytes") or 0)
+    node["gpt"] = int(node["gpt"]) + int(entry.get("gpt") or 0)
+    node["claude"] = int(node["claude"]) + int(entry.get("claude") or 0)
+    node["share_pct"] = round(float(node["share_pct"]) + float(entry.get("share_pct") or 0.0), 1)
+    kind = str(entry.get("kind") or "part")
+    kinds = node["kinds"]
+    if isinstance(kinds, list) and kind not in kinds:
+        kinds.append(kind)
+    rc_val = entry.get("rc")
+    if isinstance(rc_val, int) and rc_val != 0:
+        node["rc_errors"] = int(node["rc_errors"]) + 1
+
+
+def _build_bundle_tree(parts: list[dict[str, object]]) -> list[tuple[str, dict[str, object]]]:
+    root_items: list[tuple[str, dict[str, object]]] = []
+    root_nodes: dict[str, dict[str, object]] = {}
+    for entry in parts:
+        chain = _resolve_part_chain(entry)
+        if not chain:
+            root_items.append(("part", entry))
+            continue
+        cur_items = root_items
+        cur_map = root_nodes
+        cur_node: dict[str, object] | None = None
+        for depth_idx, seg in enumerate(chain):
+            if seg not in cur_map:
+                new_n = _new_tree_node(seg, chain[: depth_idx + 1])
+                cur_map[seg] = new_n
+                cur_items.append(("node", new_n))
+            cur_node = cur_map[seg]
+            _add_part_to_node(cur_node, entry)
+            cur_items = cur_node["items"]  # type: ignore[assignment]
+            cur_map = cur_node["children_by_name"]  # type: ignore[assignment]
+        if cur_node is not None:
+            cur_node["items"].append(("part", entry))  # type: ignore[union-attr]
+            cur_node["direct_parts"].append(entry)  # type: ignore[union-attr]
+    return root_items
+
+
+def _node_display_kind(node: dict[str, object]) -> str:
+    kinds = node.get("kinds") or []
+    return str(kinds[0]) if isinstance(kinds, list) and len(kinds) == 1 else "bundle"
+
+
+def _tree_connector(ancestors_more: list[bool], is_last: bool) -> str:
+    utf8_ok = _supports_utf8()
+    bar = "│  " if utf8_ok else "|  "
+    branch = ("└─ " if is_last else "├─ ") if utf8_ok else ("`- " if is_last else "|- ")
+    return "".join(bar if more else "   " for more in ancestors_more) + branch
+
+
+def _make_table_row(
+    *,
+    kind: str,
+    desc: str,
+    lines_cnt: int,
+    chars_cnt: int,
+    gpt_cnt: int,
+    claude_cnt: int,
+    share_pct: float,
+    tree_prefix: str = "",
+    num: int | None = None,
+) -> dict[str, object]:
+    return {
+        "pct_str": f"{share_pct:.1f}%",
+        "chars_str": _human_chars(chars_cnt, short=True),
+        "lines_str": f"{lines_cnt}L",
+        "tok_str": _format_tok_pair(gpt_cnt, claude_cnt),
+        "kind": kind,
+        "tree_prefix": tree_prefix,
+        "num": num,
+        "desc": desc,
+    }
+
+
+def _part_extras_suffix(p: dict[str, object], *, include_ms: bool = True) -> str:
+    extras: list[str] = []
+    rc_val = p.get("rc")
+    if isinstance(rc_val, int) and (include_ms or rc_val != 0):
+        extras.append(f"rc={rc_val}")
+    if include_ms and "ms" in p:
+        extras.append(f"{p['ms']}ms")
+    return f" ({', '.join(extras)})" if extras else ""
+
+
+def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    hdr = plan.get("header")
+    if isinstance(hdr, dict) and (_part_chars(hdr) > 0 or int(hdr.get("lines") or 0) > 0):
+        rows.append(
+            _make_table_row(
+                kind="header",
+                desc=str(hdr.get("name") or "Headers & spacing"),
+                lines_cnt=int(hdr.get("lines") or 0),
+                chars_cnt=_part_chars(hdr),
+                gpt_cnt=int(hdr.get("gpt") or 0),
+                claude_cnt=int(hdr.get("claude") or 0),
+                share_pct=float(hdr.get("share_pct") or 0.0),
+            )
+        )
+    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
+    root_items = _build_bundle_tree(parts)
+
+    def _emit_part(p: dict[str, object], parent_name: str, ancestors_more: list[bool], is_last: bool | None) -> None:
+        t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
+        raw_lbl = _part_label(p)
+        lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
+        lbl += _part_extras_suffix(p, include_ms=details)
+        p_idx = int(p["index"]) if (details and isinstance(p.get("index"), int)) else None
+        rows.append(
+            _make_table_row(
+                kind=str(p.get("kind") or "part"),
+                desc=lbl,
+                lines_cnt=int(p.get("lines") or 0),
+                chars_cnt=_part_chars(p),
+                gpt_cnt=int(p.get("gpt") or 0),
+                claude_cnt=int(p.get("claude") or 0),
+                share_pct=float(p.get("share_pct") or 0.0),
+                tree_prefix=t_pfx,
+                num=p_idx,
+            )
+        )
+
+    def _emit_node(node: dict[str, object], ancestors_more: list[bool], is_last: bool | None) -> None:
+        t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
+        has_children = bool(node.get("children_by_name"))
+        direct_parts: list[dict[str, object]] = list(node.get("direct_parts") or [])  # type: ignore[arg-type]
+        if not has_children and len(direct_parts) == 1:
+            p = direct_parts[0]
+            lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
+            p_idx = int(p["index"]) if (details and isinstance(p.get("index"), int)) else None
+            rows.append(
+                _make_table_row(
+                    kind=str(p.get("kind") or "part"),
+                    desc=lbl,
+                    lines_cnt=int(p.get("lines") or 0),
+                    chars_cnt=_part_chars(p),
+                    gpt_cnt=int(p.get("gpt") or 0),
+                    claude_cnt=int(p.get("claude") or 0),
+                    share_pct=float(p.get("share_pct") or 0.0),
+                    tree_prefix=t_pfx,
+                    num=p_idx,
+                )
+            )
+            return
+        cnt = int(node.get("total_count") or 0)
+        rc_errs = int(node.get("rc_errors") or 0)
+        lbl = f"{node['name']} ({cnt})" + (f" ({rc_errs} rc!=0)" if rc_errs else "")
+        rows.append(
+            _make_table_row(
+                kind=_node_display_kind(node),
+                desc=lbl,
+                lines_cnt=int(node.get("lines") or 0),
+                chars_cnt=int(node.get("chars") or 0),
+                gpt_cnt=int(node.get("gpt") or 0),
+                claude_cnt=int(node.get("claude") or 0),
+                share_pct=float(node.get("share_pct") or 0.0),
+                tree_prefix=t_pfx,
+            )
+        )
+        if details or has_children:
+            child_items: list[tuple[str, dict[str, object]]] = list(node.get("items") or [])  # type: ignore[arg-type]
+            next_anc = ([*ancestors_more, not is_last] if is_last is not None else [])
+            for c_idx, (c_type, c_obj) in enumerate(child_items):
+                c_last = c_idx == len(child_items) - 1
+                if c_type == "node":
+                    _emit_node(c_obj, next_anc, c_last)
+                else:
+                    _emit_part(c_obj, str(node["name"]), next_anc, c_last)
+
+    for it_type, it_obj in root_items:
+        if it_type == "node":
+            _emit_node(it_obj, [], None)
+        else:
+            _emit_part(it_obj, "", [], None)
+    return rows
+
+
+def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: str = "  ") -> list[str]:
+    if not rows:
+        return []
+    w_pct = max(len(str(r["pct_str"])) for r in rows)
+    w_ch = max(len(str(r["chars_str"])) for r in rows)
+    w_ln = max(len(str(r["lines_str"])) for r in rows)
+    w_tok = max(len(str(r["tok_str"])) for r in rows)
+    w_kind = max(len(f"[{r['kind']}]") for r in rows)
+    nums = [r["num"] for r in rows if r.get("num") is not None]
+    num_w = max((len(f"{n}.") for n in nums), default=0)
+
+    out: list[str] = []
+    for r in rows:
+        kind_col = f"[{r['kind']}]".ljust(w_kind)
+        cols_prefix = (
+            f"{indent}{str(r['pct_str']).rjust(w_pct)} "
+            f"{str(r['chars_str']).rjust(w_ch)} "
+            f"{str(r['lines_str']).rjust(w_ln)} "
+            f"{str(r['tok_str']).rjust(w_tok)}  "
+            f"{kind_col}  "
+        )
+        t_pfx = str(r.get("tree_prefix") or "")
+        n_val = r.get("num")
+        n_pfx = (f"{n_val}.".rjust(num_w) + " ") if n_val is not None else ""
+        full_pfx = f"{cols_prefix}{t_pfx}{n_pfx}"
+        sub_indent = " " * display_width(full_pfx)
+        avail = max(16, max_width - display_width(full_pfx))
+        desc = str(r.get("desc") or "")
+        wrapped = textwrap.wrap(desc, width=avail, break_long_words=True, break_on_hyphens=False) or [desc]
+        out.append(full_pfx + wrapped[0])
+        for cont in wrapped[1:]:
+            out.append(sub_indent + cont)
+    return out
+
+
+def format_bundle_summary_lines(plan: dict[str, object], max_width: int = 120) -> list[str]:
+    return _render_bundle_table(_collect_hierarchy_rows(plan, details=False), max_width=max_width)
+
+
+def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120) -> list[str]:
+    return _render_bundle_table(_collect_hierarchy_rows(plan, details=True), max_width=max_width)
 
 
 def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
@@ -444,12 +810,13 @@ def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
     for g in groups:
         kind = str(g.get("kind") or "part")
+        chain = [str(x) for x in (g.get("chain") or []) if str(x)]
         grp = str(g.get("group") or "")
         cnt = int(g.get("count") or 0)
         names = list(g.get("names") or [])
-        if grp:
-            if cnt == 1 and names and names[0] != grp:
-                lbl = f"{grp}: {names[0]}"
+        if chain:
+            if cnt == 1 and names:
+                lbl = _join_chain_label(chain, str(names[0]))
             elif cnt > 1:
                 lbl = f"{grp} ({cnt})"
             else:
@@ -459,11 +826,12 @@ def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
         else:
             lbl = f"{cnt} part" + ("s" if cnt != 1 else "")
         lines_cnt = int(g.get("lines") or 0)
+        chars_cnt = int(g.get("chars") if g.get("chars") is not None else (g.get("bytes") or 0))
         gpt_cnt = int(g.get("gpt") or 0)
         claude_cnt = int(g.get("claude") or 0)
         share = float(g.get("share_pct") or 0.0)
         err_cnt = int(g.get("rc_errors") or 0)
-        meta = f"{lines_cnt}L · {_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"
+        meta = f"{lines_cnt}L · {_human_chars(chars_cnt, short=True)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"
         if err_cnt:
             meta += f" · {err_cnt} rc!=0"
         items.append((kind, f"{lbl}  [{meta}]"))
@@ -475,21 +843,19 @@ def format_bundle_part_items(plan: dict[str, object]) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
     for p in parts:
         kind = str(p.get("kind") or "part")
-        lbl = _part_label(p)
-        grp = str(p.get("group") or "")
-        if grp and grp != lbl:
-            lbl = f"{grp}: {lbl}"
+        chain = _resolve_part_chain(p)
+        lbl = _join_chain_label(chain, _part_label(p))
         lines_cnt = int(p.get("lines") or 0)
-        bytes_cnt = int(p.get("bytes") or 0)
+        chars_cnt = _part_chars(p)
         gpt_cnt = int(p.get("gpt") or 0)
         claude_cnt = int(p.get("claude") or 0)
         share = float(p.get("share_pct") or 0.0)
-        extras: list[str] = [f"{lines_cnt}L", _human_size(bytes_cnt), f"{_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"]
+        extras: list[str] = [f"{lines_cnt}L", _human_chars(chars_cnt, short=True), f"{_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"]
         if "rc" in p:
             extras.append(f"rc={p['rc']}")
         if "ms" in p:
             extras.append(f"{p['ms']}ms")
-        items.append((kind, f"{lbl}  [{' · '.join(extras)}]")) 
+        items.append((kind, f"{lbl}  [{' · '.join(extras)}]"))
     return items
 
 
@@ -502,9 +868,17 @@ def format_bundle_warning_items(plan: dict[str, object]) -> list[tuple[str, str]
     ]
 
 
-def _enrich_bundle_plan(plan: dict[str, object]) -> dict[str, object]:
+def _enrich_bundle_plan(plan: dict[str, object], full_text: str | None = None) -> dict[str, object]:
     out = dict(plan)
-    parts = [p for p in (out.get("parts") or []) if isinstance(p, dict)]
+    parts = [dict(p) for p in (out.get("parts") or []) if isinstance(p, dict)]
+    for part in parts:
+        if part.get("chars") is None:
+            part["chars"] = int(part.get("bytes") or 0)
+    out["parts"] = parts
+    if out.get("chars") is None:
+        out["chars"] = int(out.get("bytes") or sum(_part_chars(p) for p in parts))
+    if full_text is not None and "header" not in out:
+        out = reconcile_bundle_plan(out, full_text)
     if "warnings" not in out:
         out["warnings"] = analyze_bundle_warnings(parts, total_gpt=int(out.get("gpt") or 0))
     return out
@@ -514,17 +888,17 @@ def load_session_bundle_plan(sdir: Path | None, bundle_path: Path | None = None)
     meta = read_session_meta(sdir) if sdir is not None else {}
     raw_plan = meta.get("bundle_plan")
     bpath = bundle_path if bundle_path is not None else (sdir / "0" if sdir is not None else None)
+    btext = bpath.read_text(encoding="utf-8", errors="replace") if (bpath is not None and bpath.is_file()) else None
     if isinstance(raw_plan, dict) and "parts" in raw_plan and "warnings" in raw_plan:
-        return _enrich_bundle_plan(raw_plan)
-    if bpath is not None and bpath.is_file():
-        text = bpath.read_text(encoding="utf-8", errors="replace")
-        _, body = parse_stdin_preamble(text)
+        return _enrich_bundle_plan(raw_plan, full_text=btext)
+    if btext is not None:
+        _, body = parse_stdin_preamble(btext)
         meta_hdrs = _parse_meta_header_items(sdir) if sdir is not None else []
         boundary = get_bundle_boundary(meta_hdrs)
         _, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
         if isinstance(raw_plan, dict) and raw_plan.get("protocol") == "boundary" and parsed_plan.get("protocol") != "boundary":
-            return _enrich_bundle_plan(raw_plan)
-        return parsed_plan
+            return _enrich_bundle_plan(raw_plan, full_text=btext)
+        return reconcile_bundle_plan(parsed_plan, btext)
     if isinstance(raw_plan, dict):
         return _enrich_bundle_plan(raw_plan)
     return None
@@ -539,26 +913,25 @@ def format_bundle_plan_text(
     protocol = str(plan.get("protocol") or "empty")
     part_cnt = int(plan.get("part_count") or 0)
     lines_cnt = int(plan.get("lines") or 0)
-    bytes_cnt = int(plan.get("bytes") or 0)
+    chars_cnt = int(plan.get("chars") if plan.get("chars") is not None else (plan.get("bytes") or 0))
     gpt_cnt = int(plan.get("gpt") or 0)
     claude_cnt = int(plan.get("claude") or 0)
     hdr_target = session if session else "stdin"
     out_lines: list[str] = [
         f"Bundle Plan ({hdr_target}, protocol: {protocol}):",
-        f"Total: {lines_cnt} line{'s' if lines_cnt != 1 else ''} · {_human_size(bytes_cnt)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({part_cnt} part{'s' if part_cnt != 1 else ''})",
+        f"Total: {lines_cnt} line{'s' if lines_cnt != 1 else ''} · {_human_chars(chars_cnt)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({part_cnt} part{'s' if part_cnt != 1 else ''})",
     ]
-    grp_items = format_bundle_group_items(plan)
-    if grp_items:
+    sum_lines = format_bundle_summary_lines(plan, max_width=120)
+    if sum_lines:
         out_lines.append("")
         out_lines.append(f"Summary ({part_cnt} part{'s' if part_cnt != 1 else ''}):")
-        out_lines.extend(_wrap_labeled_items(grp_items, 120, indent="  "))
+        out_lines.extend(sum_lines)
     if full:
-        part_items = format_bundle_part_items(plan)
-        if part_items:
+        part_lines = format_bundle_parts_lines(plan, max_width=120)
+        if part_lines:
             out_lines.append("")
             out_lines.append(f"Parts ({part_cnt}):")
-            step_nums = [int(p.get("index") or i) for i, p in enumerate(plan.get("parts") or [], 1) if isinstance(p, dict)]
-            out_lines.extend(_wrap_labeled_items(part_items, 120, indent="  ", step_nums=step_nums))
+            out_lines.extend(part_lines)
     warn_items = format_bundle_warning_items(plan)
     if warn_items:
         out_lines.append("")

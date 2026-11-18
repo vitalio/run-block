@@ -868,6 +868,7 @@ def count_tokens(data: bytes) -> dict[str, int | bool]:
         gpt = math.ceil(chars / 4)
     return {
         "bytes": len(data),
+        "chars": chars,
         "lines": lines,
         "claude": math.ceil(chars / 3.5),
         "gpt": gpt,
@@ -889,13 +890,24 @@ def _human_size(num_bytes: int) -> str:
 def _human_tok(n: int) -> str:
     if n < 1000:
         return f"{n}"
-    return f"{n / 1000:.1f}k"
+    if n < 1_000_000:
+        return f"{n / 1000:.1f}k"
+    return f"{n / 1_000_000:.1f}M"
+
+
+def _human_chars(num_chars: int, *, short: bool = False) -> str:
+    n = max(0, int(num_chars))
+    if short:
+        return f"{_human_tok(n)} ch"
+    if n < 1000:
+        return f"{n} char{'s' if n != 1 else ''}"
+    return f"{_human_tok(n)} chars"
 
 
 def format_stats(data: bytes) -> str:
     s = count_tokens(data)
     lines = int(s["lines"])
-    sz = _human_size(int(s["bytes"]))
+    sz = _human_chars(int(s["chars"]))
     lo = min(int(s["gpt"]), int(s["claude"]))
     hi = max(int(s["gpt"]), int(s["claude"]))
     tok_str = f"~{_human_tok(lo)}–{_human_tok(hi)} tokens" if lo != hi else f"~{_human_tok(lo)} tokens"
@@ -984,6 +996,10 @@ _TAG_COLORS = {
     "python": "\x1b[1;32m",
 }
 _BUNDLE_TAG_COLORS = {
+    "header": "\x1b[2m",
+    "bundle": "\x1b[1;34m",
+    "ruleset": "\x1b[1;36m",
+    "group": "\x1b[1;34m",
     "rule": "\x1b[1;36m",
     "rules": "\x1b[1;36m",
     "cmd": "\x1b[1;35m",
@@ -1156,7 +1172,18 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
     if not _use_color():
         return lines
     out: list[str] = []
+    tree_re = re.compile(r"^((?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))(.*)$")
+    tab_re = re.compile(r"^(\s*\S+%\s+\S+\s+ch\s+\S+L\s+~\S+\s+tok\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
     for line in lines:
+        m_tab = tab_re.match(line)
+        if m_tab:
+            num_prefix, tag_br, tag, spaces, rest = m_tab.groups()
+            t_col = _BUNDLE_TAG_COLORS.get(tag, _TAG_COLORS.get(tag, _BORDER_COLOR))
+            m_tree = tree_re.match(rest)
+            if m_tree:
+                rest = f"{_KEY_COLOR}{m_tree.group(1)}{_ANSI_RESET}{m_tree.group(2)}"
+            out.append(f"{num_prefix}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+            continue
         m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
         if m:
             indent, num_part, tag_br, tag, spaces, rest = m.groups()
@@ -1328,6 +1355,50 @@ def _format_step_timings_summary(
     return " · ".join(parts)
 
 
+def _build_start_bundle_parts(
+    sdir: Path | None,
+    bundle_path: Path,
+    *,
+    details: bool = False,
+    max_width: int | None = None,
+    plan: dict[str, object] | None = None,
+    include_part_count: bool = True,
+) -> tuple[list[str], list[str]]:
+    if plan is None:
+        fn_load = globals().get("load_session_bundle_plan")
+        if callable(fn_load):
+            loaded = fn_load(sdir, bundle_path)
+            if isinstance(loaded, dict):
+                plan = loaded
+    if not isinstance(plan, dict):
+        return [], []
+    max_row_len = max_width if max_width is not None else max(24, _hr_width() - 2)
+    breakdown: list[str] = []
+    part_cnt = int(plan.get("part_count") or 0)
+    count_suffix = f" ({part_cnt} part{'s' if part_cnt != 1 else ''})" if include_part_count else ""
+    if details:
+        fn_parts = globals().get("format_bundle_parts_lines")
+        part_lines = fn_parts(plan, max_width=max_row_len) if callable(fn_parts) else []
+        if part_lines:
+            hdr = f"Parts{count_suffix}:"
+            breakdown.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
+            breakdown.extend(_colorize_bundle_lines(part_lines))
+    else:
+        fn_summary = globals().get("format_bundle_summary_lines")
+        sum_lines = fn_summary(plan, max_width=max_row_len) if callable(fn_summary) else []
+        if sum_lines:
+            hdr = f"Summary{count_suffix}:"
+            breakdown.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
+            breakdown.extend(_colorize_bundle_lines(sum_lines))
+    warnings_sec: list[str] = []
+    fn_warns = globals().get("format_bundle_warning_items")
+    warn_items = fn_warns(plan) if callable(fn_warns) else []
+    if warn_items:
+        whdr = f"Bundle warnings ({len(warn_items)}):"
+        warnings_sec.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
+        warnings_sec.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_row_len, indent="  ")))
+    return breakdown, warnings_sec
+
 def _build_start_bundle_sections(
     sdir: Path | None,
     bundle_path: Path,
@@ -1335,39 +1406,8 @@ def _build_start_bundle_sections(
     details: bool = False,
     max_width: int | None = None,
 ) -> list[str]:
-    fn_load = globals().get("load_session_bundle_plan")
-    if not callable(fn_load):
-        return []
-    plan = fn_load(sdir, bundle_path)
-    if not isinstance(plan, dict):
-        return []
-    max_row_len = max_width if max_width is not None else max(24, _hr_width() - 2)
-    sections: list[str] = []
-    part_cnt = int(plan.get("part_count") or 0)
-    if details:
-        fn_parts = globals().get("format_bundle_part_items")
-        part_items = fn_parts(plan) if callable(fn_parts) else []
-        if part_items:
-            hdr = f"Parts ({part_cnt}):"
-            sections.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
-            step_nums = [int(p.get("index") or i) for i, p in enumerate(plan.get("parts") or [], 1) if isinstance(p, dict)]
-            sections.extend(_colorize_bundle_lines(_wrap_labeled_items(part_items, max_row_len, indent="  ", step_nums=step_nums)))
-    else:
-        fn_groups = globals().get("format_bundle_group_items")
-        grp_items = fn_groups(plan) if callable(fn_groups) else []
-        if grp_items:
-            hdr = f"Summary ({part_cnt} part{'s' if part_cnt != 1 else ''}):"
-            sections.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
-            sections.extend(_colorize_bundle_lines(_wrap_labeled_items(grp_items, max_row_len, indent="  ")))
-    fn_warns = globals().get("format_bundle_warning_items")
-    warn_items = fn_warns(plan) if callable(fn_warns) else []
-    if warn_items:
-        if sections:
-            sections.append("")
-        whdr = f"Bundle warnings ({len(warn_items)}):"
-        sections.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
-        sections.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_row_len, indent="  ")))
-    return sections
+    b, w = _build_start_bundle_parts(sdir, bundle_path, details=details, max_width=max_width)
+    return [*b, "", *w] if (b and w) else [*b, *w]
 
 
 def build_box_body_lines(
@@ -1389,6 +1429,14 @@ def build_box_body_lines(
     err_src = error_source if error_source is not None else out_path
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, err_src)
     is_edited = _is_file_edited(err_src) if edited is None else edited
+    is_bundle_box = bool(title_kind and title_kind.strip() == "BUNDLE")
+    bundle_plan_obj: dict[str, object] | None = None
+    if is_bundle_box:
+        fn_load = globals().get("load_session_bundle_plan")
+        if callable(fn_load):
+            loaded_plan = fn_load(resolved_sdir, err_src)
+            if isinstance(loaded_plan, dict):
+                bundle_plan_obj = loaded_plan
     if (duration_s is None or op_timings is None) and err_src.name == "out":
         step_meta = read_step_meta(err_src.parent)
         if duration_s is None and isinstance(step_meta.get("duration_ms"), (int, float)):
@@ -1427,6 +1475,10 @@ def build_box_body_lines(
             stats_parts.append(duration_str)
         if stats_parts:
             joined_stats = " · ".join(stats_parts)
+            if is_bundle_box and isinstance(bundle_plan_obj, dict):
+                p_cnt = int(bundle_plan_obj.get("part_count") or 0)
+                if p_cnt > 0:
+                    joined_stats += f" ({p_cnt} part{'s' if p_cnt != 1 else ''})"
             detail_lines.append(f"Stats: {joined_stats} (edited)" if is_edited else f"Stats: {joined_stats}")
         elif is_edited:
             detail_lines.append("Stats: (edited)")
@@ -1439,12 +1491,29 @@ def build_box_body_lines(
             base_lines = _align_kv_lines([*hdr_lines, "", *detail_lines])
         else:
             base_lines = hdr_lines
-    if title_kind and title_kind.strip() == "BUNDLE":
-        b_sections = _build_start_bundle_sections(resolved_sdir, err_src, details=bundle_details, max_width=max_width)
-        if b_sections:
-            if base_lines:
-                return [*base_lines, "", *b_sections]
-            return b_sections
+    if is_bundle_box:
+        has_stats_line = any(line.startswith("Stats:") for line in base_lines)
+        has_stats_count = bool(
+            stats and isinstance(bundle_plan_obj, dict) and int(bundle_plan_obj.get("part_count") or 0) > 0
+        )
+        b_breakdown, b_warnings = _build_start_bundle_parts(
+            resolved_sdir,
+            err_src,
+            details=bundle_details,
+            max_width=max_width,
+            plan=bundle_plan_obj,
+            include_part_count=not has_stats_count,
+        )
+        out_lines = list(base_lines)
+        if b_breakdown:
+            if out_lines and not has_stats_line:
+                out_lines.append("")
+            out_lines.extend(b_breakdown)
+        if b_warnings:
+            if out_lines:
+                out_lines.append("")
+            out_lines.extend(b_warnings)
+        return out_lines
     return base_lines
 
 
