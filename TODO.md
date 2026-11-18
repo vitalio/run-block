@@ -95,8 +95,7 @@
 
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
-- Depends on: agents_bundle:F7, agents_bundle:F15
-- Move `src/rules/` and `src/bundles/` to `agents/` using the unified logical bundle/rule layout once `agents_bundle` supports it, updating `AGENTS.md`, `README.md`, `build.py`, and tests.
+- Move `src/rules/` and `src/bundles/` to `agents/` using the unified logical bundle/rule layout once `agents_bundle` supports the root `agents/` directory (coordinated in `todo_flow`), updating `AGENTS.md`, `README.md`, `build.py`, and tests.
 - Tighten Rule 1 in `bash.md` and `pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
 
 # ⚪ [NEW] F16: Prevent unintended interactive pagers during block execution
