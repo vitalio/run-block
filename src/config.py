@@ -354,6 +354,7 @@ def write_step_meta(
     exit_code: int,
     operations: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
+    renumbered_from: str | None = None,
 ) -> Path:
     meta_file = step_dir / "meta.json"
     data: dict[str, object] = {
@@ -364,6 +365,8 @@ def write_step_meta(
         data["operations"] = list(operations)
     if failed_step is not None and exit_code != 0:
         data["failed_step"] = int(failed_step)
+    if renumbered_from:
+        data["renumbered_from"] = str(renumbered_from)
     payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:

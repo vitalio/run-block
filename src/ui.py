@@ -460,8 +460,12 @@ def _build_prompt_yes_no_suffix(
     has_script: bool = False,
     has_output: bool = False,
     can_copy: bool = False,
+    has_renumber: bool = False,
 ) -> str:
-    parts = ["Y", "n"] if default_yes else ["y", "N"]
+    if has_renumber:
+        parts = ["r", "R", "N"]
+    else:
+        parts = ["Y", "n"] if default_yes else ["y", "N"]
     if has_script:
         parts.append("s(cript)")
     if has_output:
@@ -481,18 +485,25 @@ def prompt_yes_no_box(
     tty_streams: tuple[object, object] | None = None,
     script_path: Path | None = None,
     out_path: Path | None = None,
-) -> bool:
+    renumber_label: str | None = None,
+    renumber_status: str | None = None,
+) -> bool | str:
     has_script = script_path is not None and script_path.is_file()
     has_output = out_path is not None and out_path.is_file()
     can_copy = has_output
+    has_renumber = bool(renumber_label)
+    renum_msg = renumber_status or (f"✓ Renumbering to {renumber_label}." if has_renumber else "")
     suffix = _build_prompt_yes_no_suffix(
         default_yes,
         has_script=has_script,
         has_output=has_output,
         can_copy=can_copy,
+        has_renumber=has_renumber,
     )
     prompt_line = f"-> {question} {suffix}"
     status_list: list[str] = [yes_status, no_status]
+    if has_renumber:
+        status_list.append(renum_msg)
     clip_target: Path | None = None
     clip: tuple[list[str], str] | None = None
     if can_copy and out_path is not None:
@@ -508,6 +519,13 @@ def prompt_yes_no_box(
         else:
             status_list.append(f"✗ No clipboard tool found for {clip_target}.")
     extra_keys: dict[str, str] = {}
+    case_sensitive_keys: dict[str, str] = {}
+    if has_renumber:
+        case_sensitive_keys["r"] = "renumber"
+        case_sensitive_keys["R"] = "yes"
+        extra_keys["renumber"] = "renumber"
+        extra_keys["restart"] = "yes"
+        extra_keys["overwrite"] = "yes"
     if has_script:
         extra_keys["s"] = "script"
         extra_keys["script"] = "script"
@@ -534,12 +552,14 @@ def prompt_yes_no_box(
             tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
             status_line: str | None = None
+            result: bool | str = False
             while True:
                 action = read_confirm_key(
                     tty_r,
                     default_yes=default_yes,
                     default_no=not default_yes,
                     extra_keys=extra_keys,
+                    case_sensitive_keys=case_sensitive_keys,
                 )
                 if action == "script" and has_script and script_path is not None:
                     open_script_in_editor(script_path, tty_r, tty_w)
@@ -565,20 +585,24 @@ def prompt_yes_no_box(
                         status_line = f"✗ Clipboard copy failed; run: {clip[1]}"
                     else:
                         status_line = f"✗ No clipboard tool found for {clip_target}."
-                    approved = False
+                    result = False
+                    break
+                if action == "renumber" and has_renumber:
+                    status_line = renum_msg
+                    result = "renumber"
                     break
                 if action == "yes":
-                    approved = True
+                    result = True
                     break
                 if action == "no":
-                    approved = False
+                    result = False
                     break
             if status_line is None:
-                status_line = yes_status if approved else no_status
+                status_line = yes_status if result else no_status
             prefixed_status = _prefix_block_line(status_line, border_color=border_col)
             tty_w.write(f"\r\033[K{prefixed_status}\n\r\033[K{bottom}\n")
             tty_w.flush()
-            return approved
+            return result
         finally:
             if close_after:
                 tty_w.close()
@@ -615,10 +639,14 @@ def _parse_confirm_line(
     default_yes: bool,
     default_no: bool = False,
     extra_keys: dict[str, str] | None = None,
+    case_sensitive_keys: dict[str, str] | None = None,
 ) -> str:
     if not line:
         return "yes" if default_yes else "no"
-    ans = line.strip().lower()
+    raw_ans = line.strip()
+    if case_sensitive_keys and raw_ans in case_sensitive_keys:
+        return case_sensitive_keys[raw_ans]
+    ans = raw_ans.lower()
     if extra_keys and ans in extra_keys:
         return extra_keys[ans]
     if ans in ("e", "edit"):
@@ -641,19 +669,28 @@ def read_confirm_key(
     default_yes: bool,
     default_no: bool = False,
     extra_keys: dict[str, str] | None = None,
+    case_sensitive_keys: dict[str, str] | None = None,
 ) -> str:
     """Reads a single key: returns 'yes', 'no', 'view', or an extra_keys action."""
     flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
         return _parse_confirm_line(
-            tty_r.readline(), default_yes, default_no=default_no, extra_keys=extra_keys
+            tty_r.readline(),
+            default_yes,
+            default_no=default_no,
+            extra_keys=extra_keys,
+            case_sensitive_keys=case_sensitive_keys,
         )
     try:
         fd = tty_r.fileno()
         old_attrs = termios.tcgetattr(fd)
     except Exception:
         return _parse_confirm_line(
-            tty_r.readline(), default_yes, default_no=default_no, extra_keys=extra_keys
+            tty_r.readline(),
+            default_yes,
+            default_no=default_no,
+            extra_keys=extra_keys,
+            case_sensitive_keys=case_sensitive_keys,
         )
     try:
         tty.setraw(fd, termios.TCSANOW)
@@ -661,7 +698,10 @@ def read_confirm_key(
             ch = os.read(fd, 1)
             if not ch:
                 return "no"
-            ch_low = ch.decode("latin1").lower()
+            ch_str = ch.decode("latin1")
+            if case_sensitive_keys and ch_str in case_sensitive_keys:
+                return case_sensitive_keys[ch_str]
+            ch_low = ch_str.lower()
             if extra_keys and ch_low in extra_keys:
                 return extra_keys[ch_low]
             if ch in (b"e", b"E"):

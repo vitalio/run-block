@@ -1,3 +1,8 @@
+# ✅ [DONE] F61: Auto-detect existing step number collisions in run_block and offer interactive renumbering to the next free step — *2026-11-18, Offer interactive r(enumber) to next free step on step number collision*
+
+- When starting a step that already exists on disk (e.g., trying to run s154/8 when it already ran), prompt the user in the interactive TUI block confirmation: `Step s154/8 already exists. r(enumber) to next free step / r(estart) / Esc [r/R/Esc]:` (or similar prompt).
+- On `r` / renumber, automatically scan session directory for the next available step index (e.g. s154/9), update the block script header / metadata, and proceed without losing work.
+
 # ✅ [DONE] F62: Colorize full PLAN operation lines with bold tags and regular body tint — *2026-11-18*
 
 - Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so every operation tag in `_TAG_COLORS` (`read`, `write`, `exec`, `git`, `python`) renders only the `[tag]` bracket in bold (`\x1b[1;...m`) while the operation body and any wrapped continuation lines render in the matching non-bold color (`\x1b[...m` without `1;`), keeping step numbers, tree connectors (`├─`, `└─`), and `NO_COLOR`/non-TTY output unchanged.

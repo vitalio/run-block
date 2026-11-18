@@ -66,6 +66,37 @@ def parse_ref(ref: str, allow_fix_step: bool) -> tuple[str, str]:
     return m.group(1), m.group(2)
 
 
+def next_free_step(sdir: Path, min_step: int = 1) -> int:
+    used: set[int] = set()
+    if sdir.is_dir():
+        for p in sdir.iterdir():
+            if p.is_dir():
+                m = re.fullmatch(r"(\d+)(?:_\d+)?", p.name)
+                if m:
+                    used.add(int(m.group(1)))
+    candidate = max(min_step, (max(used) + 1) if used else 1)
+    while candidate in used:
+        candidate += 1
+    return candidate
+
+
+def _rewrite_script_step_header(script_text: str, old_label: str, new_label: str) -> str:
+    lines = script_text.splitlines(keepends=True)
+    if not lines:
+        return script_text
+    pat = re.compile(
+        rf"^(\s*#\s*(?:run_block|Block|Next-Block)\s*:\s*){re.escape(old_label)}(\s*)$"
+    )
+    for idx in range(min(3, len(lines))):
+        line_body = lines[idx].rstrip("\r\n")
+        eol = lines[idx][len(line_body) :]
+        m = pat.match(line_body)
+        if m:
+            lines[idx] = f"{m.group(1)}{new_label}{m.group(2)}{eol}"
+            break
+    return "".join(lines)
+
+
 def next_fix_step(step: str, sdir: Path | None = None) -> str:
     base = step.split("_", 1)[0]
     min_next = 1
@@ -648,6 +679,7 @@ def run_script(
     auto_yes: bool = False,
     sandbox_override: str | None = None,
     footer_on_fail: str | None = None,
+    renumbered_from: str | None = None,
 ) -> int:
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     step_dir = script_path.parent
@@ -900,6 +932,7 @@ def run_script(
         exit_code=rc,
         operations=op_timings,
         failed_step=failed_step,
+        renumbered_from=renumbered_from,
     )
     end_detail = f"exit {rc}, {dur_str}" if rc != 0 else dur_str
     end_line = f"\n[{label}] END ({end_detail})\n"
@@ -1036,6 +1069,7 @@ def cmd_normal(
         return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
 
     aborted_marker = step_dir / "aborted"
+    renumbered_from: str | None = None
 
     overwrite = aborted_marker.exists()
     if overwrite:
@@ -1046,7 +1080,9 @@ def cmd_normal(
             orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
-            existing_lines = []
+            next_num = next_free_step(sdir, min_step=step_num + 1)
+            next_label = f"{session}/{next_num}"
+            existing_lines = [f"Next: {next_label}"]
             if script_path.exists():
                 existing_lines.append(f"Script: {script_path}")
             if out_path.exists():
@@ -1054,16 +1090,30 @@ def cmd_normal(
             step_hdr = format_session_header_lines(
                 label=label, sdir=sdir, sandbox_mode=sandbox_override
             )
-            if prompt_yes_no_box(
+            choice = prompt_yes_no_box(
                 "STEP ALREADY EXISTS",
                 [*step_hdr, "", *existing_lines],
-                f"Overwrite and re-run {label}?",
+                f"Step {label} already exists. r(enumber) to {next_label} or R(estart)?",
                 default_yes=False,
                 yes_status=f"✓ Overwriting {label}.",
                 no_status=f"✗ Keeping existing {label}.",
                 script_path=script_path if script_path.exists() else None,
                 out_path=out_path if out_path.exists() else None,
-            ):
+                renumber_label=next_label,
+                renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+            )
+            if choice == "renumber":
+                renumbered_from = label
+                payload = _rewrite_script_step_header(payload, label, next_label)
+                step = str(next_num)
+                step_num = next_num
+                label = next_label
+                step_dir = _step_dir(sdir, step)
+                script_path = _find_step_script(sdir, step)
+                out_path = step_dir / "out"
+                aborted_marker = step_dir / "aborted"
+                overwrite = False
+            elif choice:
                 overwrite = True
                 out_path.unlink(missing_ok=True)
                 (step_dir / "meta.json").unlink(missing_ok=True)
@@ -1071,9 +1121,9 @@ def cmd_normal(
                     orig_p.unlink(missing_ok=True)
             else:
                 return 2
-        if not overwrite:
+        if not overwrite and renumbered_from is None:
             return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: step already exists — output: {out_path}", headless=headless)
-    if step_num > 1 and not _find_step_script(sdir, str(step_num - 1)).exists():
+    if step_num > 1 and renumbered_from is None and not _find_step_script(sdir, str(step_num - 1)).exists():
         prev_label = f"{session}/{step_num - 1}"
         allow_skip = False
         if sys.stdout.isatty() and not no_clipboard() and not headless:
@@ -1111,6 +1161,7 @@ def cmd_normal(
         cleanup_on_abort=[script_path],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
+        renumbered_from=renumbered_from,
     )
 
 

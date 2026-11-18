@@ -590,6 +590,8 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(buf_dup_dec.getvalue(), "")
             self.assertEqual(mock_prompt.call_args[0][0], "STEP ALREADY EXISTS")
             self.assertIn("Block:   s9/1", mock_prompt.call_args[0][1])
+            self.assertIn("Next: s9/2", mock_prompt.call_args[0][1])
+            self.assertEqual(mock_prompt.call_args[1].get("renumber_label"), "s9/2")
 
         with unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(False, "USER_ABORTED")):
             buf_abort = io.StringIO()
@@ -668,6 +670,109 @@ class TestRunBlock(unittest.TestCase):
                     self.assertFalse(ok_esc)
                     self.assertIn("-> Overwrite existing session s9? [y/N]:", tty_w_esc.getvalue())
                     self.assertIn("✗ Canceled by user.", tty_w_esc.getvalue())
+
+    def test_f61_step_collision_interactive_renumbering(self):
+        # 1. next_free_step scans existing step & fix directories cleanly
+        s_scan = self.tmp / "s_scan"
+        s_scan.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(self.mod.next_free_step(s_scan, min_step=1), 1)
+        for d_name in ("1", "2", "8", "8_1"):
+            (s_scan / d_name).mkdir()
+        self.assertEqual(self.mod.next_free_step(s_scan, min_step=9), 9)
+        self.assertEqual(self.mod.next_free_step(s_scan, min_step=3), 9)
+
+        # 2. prompt_yes_no_box supports r(enumber) vs R(estart) vs N/Esc
+        tty_w_r = io.StringIO()
+        tty_r_r = io.StringIO("r\n")
+        res_renum = self.mod.prompt_yes_no_box(
+            "STEP ALREADY EXISTS",
+            ["Block: s154/8", "", "Next: s154/9"],
+            "Step s154/8 already exists. r(enumber) to s154/9 or R(estart)?",
+            default_yes=False,
+            yes_status="✓ Overwriting s154/8.",
+            no_status="✗ Keeping existing s154/8.",
+            tty_streams=(tty_w_r, tty_r_r),
+            renumber_label="s154/9",
+            renumber_status="✓ Renumbering s154/8 -> s154/9.",
+        )
+        self.assertEqual(res_renum, "renumber")
+        out_r_text = tty_w_r.getvalue()
+        self.assertIn("[r/R/N]:", out_r_text)
+        self.assertIn("✓ Renumbering s154/8 -> s154/9.", out_r_text)
+
+        tty_w_cap_r = io.StringIO()
+        tty_r_cap_r = io.StringIO("R\n")
+        res_restart = self.mod.prompt_yes_no_box(
+            "STEP ALREADY EXISTS",
+            ["Block: s154/8", "", "Next: s154/9"],
+            "Step s154/8 already exists. r(enumber) to s154/9 or R(estart)?",
+            default_yes=False,
+            yes_status="✓ Overwriting s154/8.",
+            no_status="✗ Keeping existing s154/8.",
+            tty_streams=(tty_w_cap_r, tty_r_cap_r),
+            renumber_label="s154/9",
+            renumber_status="✓ Renumbering s154/8 -> s154/9.",
+        )
+        self.assertIs(res_restart, True)
+        self.assertIn("✓ Overwriting s154/8.", tty_w_cap_r.getvalue())
+
+        class _NoCloseStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        # 3. End-to-end cmd_normal collision: choosing 'r' preserves s154/8 and runs as s154/9
+        s154 = self.tmp / "s154"
+        s154.mkdir(parents=True, exist_ok=True)
+        for idx in range(1, 9):
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc_init = self.mod.cmd_normal(f"s154/{idx}", f"echo original_step_{idx}\n", auto_yes=True)
+            self.assertEqual(rc_init, 0)
+        orig_8_script = (s154 / "8" / "block.sh").read_text(encoding="utf-8")
+        orig_8_out = (s154 / "8" / "out").read_text(encoding="utf-8")
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w_coll = _NoCloseStringIO()
+        tty_r_coll = io.StringIO("r\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="never"), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_coll, tty_r_coll)), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)) as mock_exec, \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            rc_renum = self.mod.cmd_normal(
+                "s154/8",
+                "# Block: s154/8\necho renumbered_to_nine\n",
+                auto_yes=False,
+            )
+        self.assertEqual(rc_renum, 0)
+        self.assertEqual(mock_exec.call_args[0][0], "s154/9")
+        self.assertIn("# Block: s154/9", mock_exec.call_args[0][1])
+        self.assertEqual((s154 / "8" / "block.sh").read_text(encoding="utf-8"), orig_8_script)
+        self.assertEqual((s154 / "8" / "out").read_text(encoding="utf-8"), orig_8_out)
+        self.assertTrue((s154 / "9" / "block.sh").is_file())
+        out_9 = (s154 / "9" / "out").read_text(encoding="utf-8")
+        self.assertIn("[s154/9] START", out_9)
+        self.assertIn("renumbered_to_nine", out_9)
+        self.assertIn("[s154/9] END", out_9)
+        meta_9 = self.mod.read_step_meta(s154 / "9")
+        self.assertEqual(meta_9.get("renumbered_from"), "s154/8")
+        self.assertIn("✓ Renumbering s154/8 -> s154/9.", tty_w_coll.getvalue())
+
+        # 4. Choosing 'R' (Restart) overwrites s154/8 in place
+        tty_w_ov = _NoCloseStringIO()
+        tty_r_ov = io.StringIO("R\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="never"), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_ov, tty_r_ov)), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            rc_ov = self.mod.cmd_normal("s154/8", "echo restarted_eight\n", auto_yes=False)
+        self.assertEqual(rc_ov, 0)
+        out_8_after = (s154 / "8" / "out").read_text(encoding="utf-8")
+        self.assertIn("restarted_eight", out_8_after)
+        self.assertNotIn("original_step_8", out_8_after)
 
     def test_powershell_mode_and_agents(self):
         fake_pwsh = self.tmp / "pwsh"

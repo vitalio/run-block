@@ -8,11 +8,6 @@
 - Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `BUNDLE` instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
 - Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py`, rebuild `./run_block`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] F61: Auto-detect existing step number collisions in run_block and offer interactive renumbering to the next free step
-
-- When starting a step that already exists on disk (e.g., trying to run s154/8 when it already ran), prompt the user in the interactive TUI block confirmation: `Step s154/8 already exists. r(enumber) to next free step / r(estart) / Esc [r/R/Esc]:` (or similar prompt).
-- On `r` / renumber, automatically scan session directory for the next available step index (e.g. s154/9), update the block script header / metadata, and proceed without losing work.
-
 # 🎯 [NEXT] F59: Redraw active TUI box in place on terminal resize (SIGWINCH)
 
 - Monitor terminal window resize events (`SIGWINCH` via a self-pipe registered in `select()`) while waiting for user input in `read_clipboard_key()` and `read_confirm_key()` in `src/ui.py`, debouncing rapid resize events (~25ms) and restoring the previous `SIGWINCH` handler cleanly on exit.

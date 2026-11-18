@@ -83,10 +83,12 @@ terminal editor. The first edit preserves the original script as
 safety warnings in place, and re-validates syntax before execution. During execution,
 `run_block` records wall-clock block duration (excluding confirmation prompts) and
 per-operation elapsed timings in `<session>/<step>/meta.json`, `[<session>/<step>] END
-(<duration>)`, `Stats:`, and live progress output. Across all interactive TUI
-confirmation prompts (`PLAN`, `END`, `STEP ALREADY EXISTS`,
-`SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and `CLEAN SESSIONS`), `Esc`
-consistently cancels or exits without proceeding. In the `END` clipboard prompt (and
+(<duration>)`, `Stats:`, and live progress output. When a block targets a step number that already exists on disk,
+`STEP ALREADY EXISTS` prompts to `r(enumber)` to the next free step (preserving
+existing outputs and updating the block label/metadata) or `R(estart)` to
+overwrite it. Across all interactive TUI confirmation prompts (`PLAN`, `END`,
+`STEP ALREADY EXISTS`, `SESSION ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and
+`CLEAN SESSIONS`), `Esc` consistently cancels or exits without proceeding. In the `END` clipboard prompt (and
 `BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
 `<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
 recalculating line/char/token statistics, `Error:` lines, and clipboard targets in place.
