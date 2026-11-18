@@ -1,3 +1,15 @@
+# 🎯 [NEXT] F71: Rename TUI boxes to START SESSION / START STEP / END STEP, unify [Y/n] prompts, and improve renumber UX
+
+- Rename TUI box titles in `src/ui.py`, `src/bundle.py`, and `src/runner.py`: `BUNDLE` -> `START SESSION`, `PLAN` -> `START STEP`, `END` -> `END STEP`, and display `Step: <label>` in step boxes (keeping `Next-Block:` / `# Block:` in agent protocol headers).
+- Standardize prompt suffixes in `src/ui.py` and `src/runner.py`: omit `Enter` and `Esc` labels from `[...]` brackets (replace `[Enter/.../Esc]:` with `[Y/n/...]:`), use a single uppercase letter exclusively for the `Enter` default (fixing `START STEP` warnings `[y/n/...]` -> `[y/N/...]`), remove `r`/`R` case-sensitive collisions, while preserving `Enter`, `n`/`q`/`Esc` behavior.
+- Remove the interactive `SESSION ALREADY EXISTS` overwrite dialog from `start_session()` (`src/runner.py`) so `--start`/`--session` on an existing session without `--force` fails immediately with an explicit error.
+- Redesign `STEP ALREADY EXISTS` in `src/runner.py` and `src/ui.py`:
+  - When `out` exists, prompt `-> Copy out to clipboard? [Y/n/r(enumber)/...]`: `Enter`/`y` copies existing `out` to clipboard and exits, `r` renumbers to `Next` and proceeds into `START STEP`, `n`/`q`/`Esc` exits.
+  - When `out` is missing, prompt `-> Renumber to <next_label>? [r(enumber)/n/...]:` with no `Enter` default.
+- Redesign `MISSING PREVIOUS STEP` in `src/runner.py` and `src/ui.py`: compute `<first_missing_label>` as the first missing/free step starting from `1` for strictly sequential steps, prompt `-> Renumber to <first_missing_label>? [r(enumber)/n/...]:` with no `Enter` default, and on `r` renumber and proceed into `START STEP`.
+- When a step is renumbered (`STEP ALREADY EXISTS` or `MISSING PREVIOUS STEP`), record an explicit notice in the captured step output `out` (alongside `renumbered_from` in `meta.json`) informing the agent of the executed step number, and update `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so the agent trusts and continues from the renumbered step.
+- Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `src/header.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_run_block.py`.
+
 # 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
 
 - Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
@@ -26,13 +38,15 @@
 - Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `BUNDLE` instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
 - Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py`, rebuild `./run_block`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] F57: Add a(ppend) prompt editor action in BUNDLE
+# 🎯 [NEXT] F57: Add a(ppend) prompt editor action across clipboard TUI cards (START SESSION, END STEP, SYNTAX ERROR, NOT RUN)
 
-- Add an `a(ppend)` action to the `BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.
-- On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying `<session>/0` or creating `<session>/0.orig` when the entered text is empty or whitespace-only.
-- Before the first non-empty append, preserve the original bundle in `<session>/0.orig` via `_write_orig_backup_once()`, then append the prompt text to `<session>/0` in `src/ui.py` / `src/bundle.py` (appending into the trailing `===== Prompt =====` section when already present so repeated `a(ppend)` calls do not duplicate the header, or creating `===== Prompt =====` at the end otherwise).
-- Refresh bundle metadata (`refresh_bundle_meta()`), recalculate line/byte/token `Stats:` with the `(edited)` marker, and redraw `BUNDLE` in place so pressing `Enter` copies the updated bundle to the clipboard.
-- Acceptance criteria: `a(ppend)` opens an empty temp file and appends non-empty prompt text into `===== Prompt =====` in `<session>/0`; empty input leaves `<session>/0` and `<session>/0.orig` untouched; `0.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+- Add a shared `a(ppend)` action across all clipboard-copy prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py` (`[Y/n/a(ppend)/...]:` or compatible prompt suffix), recognizing `a`/`A` (and `append` in line-input mode).
+- On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying the target file or creating a `.orig` backup when the entered text is empty or whitespace-only.
+- Before the first non-empty append, preserve the original file via `_write_orig_backup_once()` (`0.orig` for `START SESSION`, `out.orig` for step output cards), then append the text:
+  - In `START SESSION`: append into the trailing `===== Prompt =====` section of `<session>/0` (creating it if absent) and call `refresh_bundle_meta()`.
+  - In `END STEP`, `SYNTAX ERROR`, and `NOT RUN`: append the user note/question to the clipboard target output (`out`) and refresh clipboard command/target if needed.
+- Recalculate line/byte/token `Stats:` with the `(edited)` marker and redraw the box in place so pressing `Enter`/`y` copies the updated content to the clipboard.
+- Acceptance criteria: `a(ppend)` works uniformly across `START SESSION`, `END STEP`, `SYNTAX ERROR`, and `NOT RUN`; empty input leaves files and `.orig` backups untouched; `.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
@@ -58,22 +72,27 @@
 
 # 🎯 [NEXT] F42: Support marking sessions as completed (--done) with confirmation before reopening
 
-- Persist session completion state (`"completed": true`, `"completed_at": "<YYYY-MM-DDTHH:MM:SSZ>"`, optional `"completed_note"`) in `<session>/meta.json` via helpers in `src/config.py` (`is_session_completed`, `set_session_completed`), preserving completion fields in `write_session_meta()` and resetting automatically when a session is recreated (`--start --force`).
-- Add `run_block --done [session] [-m "<note>"]` in `src/cli.py` and `src/runner.py` (allowed both directly in terminal and inside the final block of a session) and display `[DONE]` status badges in `run_block --list` / `-l`.
-- Check session completion before `PLAN` across normal runs (`<session>/<step>`), `--fix`, and `--retry`:
-  - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`prompt_yes_no_box`, default `No`); on confirmation (`y`/`Enter`), clear the completion marker in `meta.json` and proceed to `PLAN`, otherwise exit with `NOT RUN`.
+- Persist session completion state (`"completed": true`, `"completed_at": "<YYYY-MM-DDTHH:MM:SSZ>"`, optional `"completed_note"`) and accumulated session statistics (`"stats"`: total steps, ok/failed/`--fix`/renumbered counts, total execution `duration_ms`, started/completed timestamps) in `<session>/meta.json` via helpers in `src/config.py` (`is_session_completed`, `set_session_completed`, `update_session_stats`), preserving completion and stats fields in `write_session_meta()` and resetting automatically when a session is recreated (`--start --force`).
+- Add `run_block --done [session] [-m "<note>"]` in `src/cli.py` and `src/runner.py` (allowed both directly in terminal and inside the final block of a session), render an `END SESSION` summary card displaying the accumulated session statistics, and show `[DONE]` status badges in `run_block --list` / `-l`.
+- Check session completion before `START STEP` (`PLAN`) across normal runs (`<session>/<step>`), `--fix`, and `--retry`:
+  - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`-> Reopen session <session>? [y/N/i(nfo)]:` / `prompt_yes_no_box`, default `No`); on confirmation (`y`), clear the completion marker in `meta.json` and proceed directly into `START STEP`, otherwise exit with `NOT RUN`.
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
-- Document session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (bundled via `src/bundles/run_block.bundle`), plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
+- Document `END SESSION` and session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md`, plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
 
 # 🎯 [NEXT] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks
 
 - Depends on: B11
-- Remove the `Steps: 1. [tag] ...` summary line from the main `END` box in `build_box_body_lines()` (`src/ui.py`), keeping `END` focused on `Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
-- Unify detail inspection behind a single `i(nfo)` hotkey across all interactive TUI prompts (`BUNDLE`, `PLAN`, `END`, and confirmation dialogs such as `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `SESSION COMPLETED`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py`:
-  - Replace `d(etails)` in `BUNDLE` with `i(nfo)` (`[Enter/e(dit)/i(nfo)/Esc]:` on `BUNDLE` and `END`, `[Y/n/e(dit)/i(nfo)]:` / `[y/n/e(dit)/i(nfo)]:` on `PLAN`).
-  - Pressing `i` opens a styled alternate-screen fullscreen `i(nfo)` view showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/char/token counts with `Stats:` value rendered in white foreground (while keeping inline `Stats:` dimmed in the compact box), full `BUNDLE` `Summary`/`Parts`/warnings breakdown, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and pre-execution `PLAN` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
-  - Support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), returning cleanly to the active block prompt on `q`/`Esc`/`i` (and `Enter`, or copying on `Enter` in `BUNDLE`/`END` if configured), and opening the plain-text report in the configured viewer/editor (`resolve_editor_command()`) on `v(iew)`.
-- Acceptance criteria: `BUNDLE` uses `i(nfo)` instead of `d(etails)`; `END` omits `Steps:`; compact inline boxes stay minimal while `i(nfo)` shows full metadata, white `Stats:`, bundle breakdown, operation timings, and original plan on alternate screen; `v(iew)` opens the external viewer/editor; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+- Remove the `Steps: 1. [tag] ...` summary line from the main `END STEP` (`END`) box in `build_box_body_lines()` (`src/ui.py`), keeping `END STEP` focused on `Step`/`Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
+- Unify detail inspection and editing behind a single `i(nfo)` hotkey across all interactive TUI prompts (`START SESSION`, `START STEP`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `SESSION COMPLETED`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py`:
+  - Move `e(dit)` (for `<session>/0`, `block.*`, and `out`), `s(cript)`/`o(utput)` view/edit, and rare collision overwrite/re-run inside the fullscreen `i(nfo)` inspector so compact inline prompts drop `e(dit)`, `s(cript)`, `o(utput)`, and `d(etails)`:
+    - `START SESSION` / `END STEP` / `SYNTAX ERROR` / `NOT RUN`: `[Y/n/a(ppend)/i(nfo)]:` (coordinating `a(ppend)` with `F57`)
+    - `START STEP`: `[Y/n/i(nfo)]:` / `[y/N/i(nfo)]:`
+    - `STEP ALREADY EXISTS`: `[Y/n/r(enumber)/i(nfo)]:` (with `out`) or `[r(enumber)/n/i(nfo)]:` (without `out`)
+    - `MISSING PREVIOUS STEP`: `[r(enumber)/n/i(nfo)]:` (no `Enter` default)
+    - `SESSION COMPLETED`: `[y/N/i(nfo)]:`
+  - Pressing `i` opens a styled alternate-screen fullscreen `i(nfo)` view showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/char/token counts with `Stats:` value rendered in white foreground (while keeping inline `Stats:` dimmed in the compact box), full `START SESSION` `Summary`/`Parts`/warnings breakdown, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and pre-execution `START STEP` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
+  - Inside `i(nfo)`, support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), `e(dit)` on the active artifact (recalculating plan/stats on return), `s(cript)`/`o(utput)` inspection/editing and `o(verwrite)` on step collisions, `v(iew)` to open the plain-text report in `resolve_editor_command()`, and clean return to the active prompt on `q`/`Esc`/`i`.
+- Acceptance criteria: compact inline boxes stay minimal (`i(nfo)` replaces `d(etails)`/`e(dit)`/`s(cript)`/`o(utput)`); `END STEP` omits `Steps:`; `i(nfo)` shows full metadata, white `Stats:`, bundle breakdown, operation timings, and original plan on alternate screen with `e(dit)` and `v(iew)` actions; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] F68: Redesign bundle breakdown table in top style, fix header/kind attribution, and highlight heavy parts
 
