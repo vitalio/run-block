@@ -8,12 +8,6 @@
 - Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `BUNDLE` instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
 - Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py`, rebuild `./run_block`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] F62: Colorize full PLAN operation lines with bold tags and regular body tint
-
-- Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so every operation tag in `_TAG_COLORS` (`read`, `write`, `exec`, `git`, `python`) renders only the `[tag]` bracket in bold (`\x1b[1;...m`) while the operation body and any wrapped continuation lines render in the matching non-bold color (`\x1b[...m` without `1;`), keeping step numbers, tree connectors (`├─`, `└─`), and `NO_COLOR`/non-TTY output unchanged.
-- In `_colorize_python_op_rest()` in `src/ui.py`, render the base Python summary (`N lines — calls: ...`) in regular green (`\x1b[32m`), and render inline `writes: ...` and `reads: ...` fragments (both label and file list) in regular yellow (`\x1b[33m`) and regular bright blue (`\x1b[94m`) respectively.
-- Acceptance criteria: in TTY color mode, all `PLAN` `Operations:` lines (`[read]`, `[write]`, `[exec]`, `[git]`, `[python]`, AST-expanded sub-items, and wrapped continuation lines) show bold `[tag]` labels with non-bold matching-color bodies; `tests/test_run_block.py` (including `test_f27_visual_hierarchy_border_colors_and_block_plan_highlights`, `test_f40_distinct_operation_tag_colors`, and wrapped/inline cases) and `README.md` (if needed) are updated, and `run_block` is rebuilt via `build.py`.
-
 # 🎯 [NEXT] F61: Auto-detect existing step number collisions in run_block and offer interactive renumbering to the next free step
 
 - When starting a step that already exists on disk (e.g., trying to run s154/8 when it already ran), prompt the user in the interactive TUI block confirmation: `Step s154/8 already exists. r(enumber) to next free step / r(estart) / Esc [r/R/Esc]:` (or similar prompt).

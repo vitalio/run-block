@@ -61,7 +61,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.22.5"
+VERSION = "0.22.6"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -3554,16 +3554,25 @@ def _colorize_kv_line(line: str) -> str:
     return line
 
 
+def _regular_color(ansi_col: str) -> str:
+    return ("\x1b[" + ansi_col[4:]) if ansi_col.startswith("\x1b[1;") else ansi_col
+
 def _colorize_python_op_rest(rest: str) -> str:
-    def _repl(m: re.Match[str]) -> str:
-        kind = m.group(1)
-        body = m.group(2)
-        if kind == "reads:":
-            return f"{_TAG_COLORS['read']}{kind}{_ANSI_RESET} {body}"
-        return f"{_TAG_COLORS['write']}{kind} {body}{_ANSI_RESET}"
-
-    return re.sub(r"\b(writes:|reads:)\s+([^;]+)", _repl, rest)
-
+    py_col = _regular_color(_TAG_COLORS["python"])
+    write_col = _regular_color(_TAG_COLORS["write"])
+    read_col = _regular_color(_TAG_COLORS["read"])
+    parts: list[str] = []
+    pos = 0
+    for m in re.finditer(r"\b(writes:|reads:)\s+([^;]+)", rest):
+        if m.start() > pos:
+            parts.append(f"{py_col}{rest[pos:m.start()]}{_ANSI_RESET}")
+        kind, body = m.group(1), m.group(2)
+        seg_col = read_col if kind == "reads:" else write_col
+        parts.append(f"{seg_col}{kind} {body}{_ANSI_RESET}")
+        pos = m.end()
+    if pos < len(rest):
+        parts.append(f"{py_col}{rest[pos:]}{_ANSI_RESET}")
+    return "".join(parts)
 
 def _colorize_operation_lines(lines: list[str]) -> list[str]:
     if not _use_color():
@@ -3577,34 +3586,29 @@ def _colorize_operation_lines(lines: list[str]) -> list[str]:
             num_str = num_part or ""
             if num_str and num_str.lstrip().startswith(("├─", "└─", "|-", "`-")):
                 num_str = f"{_KEY_COLOR}{num_str}{_ANSI_RESET}"
-            last_tag = tag
-            if tag == "write":
-                t_col = _TAG_COLORS["write"]
-                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{t_col}{rest}{_ANSI_RESET}")
-            elif tag == "python":
-                t_col = _TAG_COLORS["python"]
-                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{_colorize_python_op_rest(rest)}")
-            elif tag in _TAG_COLORS:
+            if tag in _TAG_COLORS:
+                last_tag = tag
                 t_col = _TAG_COLORS[tag]
-                out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+                if tag == "python":
+                    out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{_colorize_python_op_rest(rest)}")
+                else:
+                    body_col = _regular_color(t_col)
+                    out.append(f"{indent}{num_str}{t_col}{tag_br}{_ANSI_RESET}{spaces}{body_col}{rest}{_ANSI_RESET}")
             else:
+                last_tag = ""
                 out.append(line)
         elif line.startswith("  ") and not line.lstrip().startswith("[") and not line.rstrip().endswith(":"):
-            if last_tag == "read":
-                out.append(line)
-            elif last_tag == "write":
-                t_col = _TAG_COLORS["write"]
-                out.append(f"{t_col}{line}{_ANSI_RESET}")
-            elif last_tag == "python":
+            if last_tag == "python":
                 out.append(_colorize_python_op_rest(line))
+            elif last_tag in _TAG_COLORS:
+                body_col = _regular_color(_TAG_COLORS[last_tag])
+                out.append(f"{body_col}{line}{_ANSI_RESET}")
             else:
                 out.append(line)
         else:
             last_tag = ""
             out.append(line)
     return out
-
-
 def _colorize_warning_lines(lines: list[str]) -> list[str]:
     if not _use_color():
         return lines

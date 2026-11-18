@@ -1471,22 +1471,24 @@ class TestRunBlock(unittest.TestCase):
                 self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mPLAN\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertNotIn("Sandbox:", box_warn)
-                self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    cat README.md", box_warn)
+                self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    \x1b[94mcat README.md\x1b[0m", box_warn)
                 self.assertNotIn("\x1b[2m[read]", box_warn)
-                self.assertIn("2. \x1b[1;36m[git]\x1b[0m     git status -sb", box_warn)
-                self.assertIn("3. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
-                self.assertIn("4. \x1b[1;32m[python]\x1b[0m  3 lines", box_warn)
-                self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m   \x1b[1;33mb.txt\x1b[0m", box_warn)
-                self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m    a.txt", box_warn)
+                self.assertIn("2. \x1b[1;36m[git]\x1b[0m     \x1b[36mgit status -sb\x1b[0m", box_warn)
+                self.assertIn("3. \x1b[1;33m[write]\x1b[0m   \x1b[33mrm -rf /tmp/f27_test\x1b[0m", box_warn)
+                self.assertNotIn("\x1b[1;33mrm -rf", box_warn)
+                self.assertIn("4. \x1b[1;32m[python]\x1b[0m  \x1b[32m3 lines\x1b[0m", box_warn)
+                self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m   \x1b[33mb.txt\x1b[0m", box_warn)
+                self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m    \x1b[94ma.txt\x1b[0m", box_warn)
                 self.assertNotIn("\x1b[2m[read]", box_warn)
 
-                # Wrapped [read] continuation lines also render in neutral foreground
+                # Wrapped [read] continuation lines render in matching regular bright blue
                 long_read = "cat " + "/".join(["segment"] * 12) + "/file.txt\n"
                 sum_wrap = self.mod.summarize_script_actions(long_read, work_dir=Path(cwd_now))
                 box_wrap, _, _ = self.mod.format_safety_box(
                     "s1/2b", [], default_yes=True, summary=sum_wrap
                 )
-                self.assertIn("  1. \x1b[1;94m[read]\x1b[0m  cat ", box_wrap)
+                self.assertIn("  1. \x1b[1;94m[read]\x1b[0m  \x1b[94mcat ", box_wrap)
+                self.assertIn("\x1b[94m             /segment/", box_wrap)
                 self.assertNotIn("\x1b[2m[read]", box_wrap)
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
@@ -1937,13 +1939,15 @@ class TestRunBlock(unittest.TestCase):
                 )
                 summary = self.mod.summarize_script_actions(script, work_dir=Path(os.getcwd()))
                 box, _, _ = self.mod.format_safety_box("s1/1", [], default_yes=True, summary=summary)
-                self.assertIn("1. \x1b[1;94m[read]\x1b[0m    cat README.md", box)
-                self.assertIn("2. \x1b[1;33m[write]\x1b[0m   \x1b[1;33mtouch out.txt\x1b[0m", box)
-                self.assertIn("3. \x1b[1;35m[exec]\x1b[0m    pytest -q", box)
-                self.assertIn("4. \x1b[1;36m[git]\x1b[0m     git status -sb", box)
-                self.assertIn("5. \x1b[1;32m[python]\x1b[0m  3 lines", box)
-                self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m   \x1b[1;33mout.txt\x1b[0m", box)
-                self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m    in.txt", box)
+                self.assertIn("1. \x1b[1;94m[read]\x1b[0m    \x1b[94mcat README.md\x1b[0m", box)
+                self.assertIn("2. \x1b[1;33m[write]\x1b[0m   \x1b[33mtouch out.txt\x1b[0m", box)
+                self.assertIn("3. \x1b[1;35m[exec]\x1b[0m    \x1b[35mpytest -q\x1b[0m", box)
+                self.assertIn("4. \x1b[1;36m[git]\x1b[0m     \x1b[36mgit status -sb\x1b[0m", box)
+                self.assertIn("5. \x1b[1;32m[python]\x1b[0m  \x1b[32m3 lines\x1b[0m", box)
+                self.assertIn("\x1b[2m├─ \x1b[0m\x1b[1;33m[write]\x1b[0m   \x1b[33mout.txt\x1b[0m", box)
+                self.assertIn("\x1b[2m└─ \x1b[0m\x1b[1;94m[read]\x1b[0m    \x1b[94min.txt\x1b[0m", box)
+
+                # Single-file inline writes/reads and calls in Python summaries
                 single_py = (
                     "python3 - <<'PY'\n"
                     "from pathlib import Path\n"
@@ -1952,7 +1956,67 @@ class TestRunBlock(unittest.TestCase):
                 )
                 single_sum = self.mod.summarize_script_actions(single_py, work_dir=Path(os.getcwd()))
                 single_box, _, _ = self.mod.format_safety_box("s1/1b", [], default_yes=True, summary=single_sum)
-                self.assertIn("1. \x1b[1;32m[python]\x1b[0m  2 lines — \x1b[1;33mwrites: only.txt\x1b[0m", single_box)
+                self.assertIn(
+                    "1. \x1b[1;32m[python]\x1b[0m  \x1b[32m2 lines — \x1b[0m\x1b[33mwrites: only.txt\x1b[0m",
+                    single_box,
+                )
+
+                single_read_py = (
+                    "python3 - <<'PY'\n"
+                    "from pathlib import Path\n"
+                    "Path('src/ui.py').read_text()\n"
+                    "PY\n"
+                )
+                sr_sum = self.mod.summarize_script_actions(single_read_py, work_dir=Path(os.getcwd()))
+                sr_box, _, _ = self.mod.format_safety_box("s1/1c", [], default_yes=True, summary=sr_sum)
+                self.assertIn(
+                    "1. \x1b[1;32m[python]\x1b[0m  \x1b[32m2 lines — \x1b[0m\x1b[94mreads: src/ui.py\x1b[0m",
+                    sr_box,
+                )
+
+                calls_py = (
+                    "python3 - <<'PY'\n"
+                    "import ast\n"
+                    "ast.parse('x = 1')\n"
+                    "PY\n"
+                )
+                calls_sum = self.mod.summarize_script_actions(calls_py, work_dir=Path(os.getcwd()))
+                calls_box, _, _ = self.mod.format_safety_box("s1/1d", [], default_yes=True, summary=calls_sum)
+                self.assertIn(
+                    "1. \x1b[1;32m[python]\x1b[0m  \x1b[32m2 lines — calls: ast.parse\x1b[0m",
+                    calls_box,
+                )
+
+                # Wrapped continuation lines keep regular matching body tint across all tags
+                wrapped_lines = self.mod._colorize_operation_lines(
+                    [
+                        "  1. [read]    cat a.txt",
+                        "               b.txt",
+                        "  2. [write]   cp a.txt",
+                        "               b.txt",
+                        "  3. [exec]    custom_tool --arg1",
+                        "               --arg2",
+                        "  4. [git]     git log --oneline",
+                        "               --graph",
+                        "  5. [python]  3 lines — writes: a.py;",
+                        "               reads: b.py; calls: ast.parse",
+                    ]
+                )
+                self.assertEqual(
+                    wrapped_lines,
+                    [
+                        "  1. \x1b[1;94m[read]\x1b[0m    \x1b[94mcat a.txt\x1b[0m",
+                        "\x1b[94m               b.txt\x1b[0m",
+                        "  2. \x1b[1;33m[write]\x1b[0m   \x1b[33mcp a.txt\x1b[0m",
+                        "\x1b[33m               b.txt\x1b[0m",
+                        "  3. \x1b[1;35m[exec]\x1b[0m    \x1b[35mcustom_tool --arg1\x1b[0m",
+                        "\x1b[35m               --arg2\x1b[0m",
+                        "  4. \x1b[1;36m[git]\x1b[0m     \x1b[36mgit log --oneline\x1b[0m",
+                        "\x1b[36m               --graph\x1b[0m",
+                        "  5. \x1b[1;32m[python]\x1b[0m  \x1b[32m3 lines — \x1b[0m\x1b[33mwrites: a.py\x1b[0m\x1b[32m;\x1b[0m",
+                        "\x1b[32m               \x1b[0m\x1b[94mreads: b.py\x1b[0m\x1b[32m; calls: ast.parse\x1b[0m",
+                    ],
+                )
         finally:
             if saved_no_color is None:
                 os.environ.pop("NO_COLOR", None)

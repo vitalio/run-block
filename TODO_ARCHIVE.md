@@ -1,3 +1,9 @@
+# ✅ [DONE] F62: Colorize full PLAN operation lines with bold tags and regular body tint — *2026-11-18*
+
+- Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so every operation tag in `_TAG_COLORS` (`read`, `write`, `exec`, `git`, `python`) renders only the `[tag]` bracket in bold (`\x1b[1;...m`) while the operation body and any wrapped continuation lines render in the matching non-bold color (`\x1b[...m` without `1;`), keeping step numbers, tree connectors (`├─`, `└─`), and `NO_COLOR`/non-TTY output unchanged.
+- In `_colorize_python_op_rest()` in `src/ui.py`, render the base Python summary (`N lines — calls: ...`) in regular green (`\x1b[32m`), and render inline `writes: ...` and `reads: ...` fragments (both label and file list) in regular yellow (`\x1b[33m`) and regular bright blue (`\x1b[94m`) respectively.
+- Acceptance criteria: in TTY color mode, all `PLAN` `Operations:` lines (`[read]`, `[write]`, `[exec]`, `[git]`, `[python]`, AST-expanded sub-items, and wrapped continuation lines) show bold `[tag]` labels with non-bold matching-color bodies; `tests/test_run_block.py` (including `test_f27_visual_hierarchy_border_colors_and_block_plan_highlights`, `test_f40_distinct_operation_tag_colors`, and wrapped/inline cases) and `README.md` (if needed) are updated, and `run_block` is rebuilt via `build.py`.
+
 # ✅ [DONE] F63: Unify Stats and hierarchical tabular bundle Summary/Details with char sizes and clean Preamble — *2026-11-18, Unify Stats/Summary/Details with char sizes, neutral chain hierarchy, and header reconciliation*
 
 - Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
