@@ -28,9 +28,12 @@ irm https://raw.githubusercontent.com/vitalio/run_block/main/install.ps1 | iex
 Pipe any context bundle on `stdin` into `run_block` to initialize
 `~/.local/state/run_block/<session>/0` and copy it to your clipboard.
 Optional leading `Key: Value` header lines on `stdin` (separated from the
-body by a blank line) are parsed into `<session>/meta.json` and displayed in
-TUI headers. `Bundle-*` transport headers (`Bundle-Command`, `Bundle-Boundary`,
-`Bundle-Expose`, `Bundle-Hide`) stay in `<session>/meta.json` only, while
+body by a blank line) are parsed into `<session>/meta.json`. Exposed
+non-transport headers (such as `Role:`, `Task:`, `Title:`) are displayed in
+TUI headers (clamped to a single line with `…` when longer than the box
+width), while `Bundle-*` transport headers (`Bundle-Command`, `Bundle-Boundary`,
+`Bundle-Expose`, `Bundle-Hide`) stay in `<session>/meta.json` only (excluded
+from `<session>/0` and TUI boxes), and
 `Bundle-Expose` / `Bundle-Hide` control which remaining `stdin` headers are
 forwarded into `<session>/0` alongside `run_block`'s own headers (`Session`,
 `Next-Block`, `Workdir`, `Sandbox`, `Date`). When `Bundle-Boundary: <nonce>` is

@@ -195,6 +195,29 @@ def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None
     return None
 
 
+def _truncate_display_width(value: str, max_val_width: int) -> str:
+    clean = re.sub(r"\s+", " ", value.strip())
+    if max_val_width <= 0:
+        return ""
+    if display_width(clean) <= max_val_width:
+        return clean
+    ellipsis = "…" if _supports_utf8() else "..."
+    ell_w = display_width(ellipsis)
+    if max_val_width <= ell_w:
+        return ellipsis[:max_val_width]
+    budget = max_val_width - ell_w
+    acc: list[str] = []
+    cur_w = 0
+    for ch in clean:
+        ch_w = display_width(ch)
+        if cur_w + ch_w > budget:
+            break
+        acc.append(ch)
+        cur_w += ch_w
+    trimmed = "".join(acc).rstrip()
+    return f"{trimmed}{ellipsis}"
+
+
 def format_session_header_lines(
     label: str | None = None,
     sdir: Path | None = None,
@@ -202,9 +225,10 @@ def format_session_header_lines(
     sandbox_mode: str | None = None,
     cd_dirs: list[str] | None = None,
     max_width: int | None = None,
+    clamp_width: int | None = None,
 ) -> list[str]:
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label)
-    hdr_items = parse_bundle_header_items(resolved_sdir)
+    hdr_items = parse_bundle_header_items(resolved_sdir, include_transport=False)
     hdr_map = {k.lower(): v for k, v in hdr_items}
 
     lines: list[str] = []
@@ -235,16 +259,41 @@ def format_session_header_lines(
     if norm_sb and norm_sb != "off":
         lines.append(f"Sandbox: {format_sandbox_header(sb_val)}")
 
+    exposed_indices: set[int] = set()
     for raw_k, val in hdr_items:
-        if raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or not val:
+        if is_bundle_transport_header(raw_k) or raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or not val:
             continue
+        exposed_indices.add(len(lines))
         lines.append(f"{raw_k}: {val}")
+
+    if exposed_indices:
+        eff_width = (
+            clamp_width
+            if clamp_width is not None
+            else (max_width if max_width is not None else max(24, _hr_width() - 2))
+        )
+        key_widths = []
+        for ln in lines:
+            m_kv = _KV_LINE_RE.match(ln)
+            if m_kv:
+                key_widths.append(len(m_kv.group(1)))
+        pad_w = (max(key_widths) + 1) if len(key_widths) >= 2 else 0
+        for idx in sorted(exposed_indices):
+            m_kv = _KV_LINE_RE.match(lines[idx])
+            if not m_kv:
+                continue
+            key_lbl, val_txt = m_kv.group(1), m_kv.group(2).lstrip()
+            prefix_w = max(len(key_lbl) + 1, pad_w)
+            avail_val = max(12, eff_width - prefix_w)
+            clamped = _truncate_display_width(val_txt, avail_val)
+            lines[idx] = f"{key_lbl} {clamped}"
+
     aligned = _align_kv_lines(lines)
     if max_width is None:
         return aligned
     wrapped: list[str] = []
-    for line in aligned:
-        if display_width(line) > max_width:
+    for idx, line in enumerate(aligned):
+        if idx not in exposed_indices and display_width(line) > max_width:
             wrapped.extend(textwrap.wrap(line, width=max_width, subsequent_indent="  ") or [line])
         else:
             wrapped.append(line)
@@ -1337,7 +1386,7 @@ def build_box_body_lines(
     if has_header or (label is None and sdir is None):
         base_lines = _align_kv_lines(detail_lines)
     else:
-        hdr_lines = format_session_header_lines(label=label, sdir=resolved_sdir)
+        hdr_lines = format_session_header_lines(label=label, sdir=resolved_sdir, clamp_width=max_width)
         if detail_lines:
             base_lines = _align_kv_lines([*hdr_lines, "", *detail_lines])
         else:

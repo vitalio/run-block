@@ -7,11 +7,6 @@ DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 SECTION_HEADER_RE = re.compile(r"^={5,}\s*(.+?)\s*={5,}$")
 
 
-def is_bundle_transport_header(key: str) -> bool:
-    norm = re.sub(r"\s+", "-", key.strip().lower())
-    return norm.startswith("bundle-")
-
-
 def _parse_header_filter_tokens(raw: str) -> set[str]:
     tokens: set[str] = set()
     for tok in re.split(r"[\s,]+", raw or ""):
@@ -24,8 +19,8 @@ def _parse_header_filter_tokens(raw: str) -> set[str]:
 def extract_bundle_transport_headers(headers: list[tuple[str, str]]) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, v in headers:
-        norm = re.sub(r"\s+", "-", k.strip().lower())
-        if norm.startswith("bundle-"):
+        if is_bundle_transport_header(k):
+            norm = re.sub(r"\s+", "-", k.strip().lower())
             out[norm] = v.strip()
     return out
 

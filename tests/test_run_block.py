@@ -395,13 +395,13 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
         self.assertIn("╭─ START BUNDLE ", r_pipe.stdout)
-        self.assertIn("Session:        s1", r_pipe.stdout)
-        self.assertIn("Next-Block:     s1/1", r_pipe.stdout)
+        self.assertIn("Session:    s1", r_pipe.stdout)
+        self.assertIn("Next-Block: s1/1", r_pipe.stdout)
         self.assertNotIn("Sandbox:", r_pipe.stdout)
-        self.assertIn("Bundle-Command: agents_bundle role=execute task=F14", r_pipe.stdout)
-        self.assertIn("Chat-Lang:      Russian", r_pipe.stdout)
-        self.assertIn("Role:           execute", r_pipe.stdout)
-        self.assertIn("Task:           F14", r_pipe.stdout)
+        self.assertNotIn("Bundle-Command:", r_pipe.stdout)
+        self.assertIn("Chat-Lang:  Russian", r_pipe.stdout)
+        self.assertIn("Role:       execute", r_pipe.stdout)
+        self.assertIn("Task:       F14", r_pipe.stdout)
         self.assertNotIn("Date:", r_pipe.stdout)
         bundle1 = (self.tmp / "sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
@@ -443,11 +443,11 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_step1.returncode, 0, r_step1.stderr)
         self.assertIn("╭─ END ", r_step1.stdout)
-        self.assertIn("Block:          s1/1", r_step1.stdout)
-        self.assertIn("Bundle-Command: agents_bundle role=execute task=F14", r_step1.stdout)
-        self.assertIn("Chat-Lang:      Russian", r_step1.stdout)
-        self.assertIn("Role:           execute", r_step1.stdout)
-        self.assertIn("Task:           F14", r_step1.stdout)
+        self.assertIn("Block:     s1/1", r_step1.stdout)
+        self.assertNotIn("Bundle-Command:", r_step1.stdout)
+        self.assertIn("Chat-Lang: Russian", r_step1.stdout)
+        self.assertIn("Role:      execute", r_step1.stdout)
+        self.assertIn("Task:      F14", r_step1.stdout)
         self.assertIn("ran_s1_step1", r_step1.stdout)
 
         r_start = subprocess.run(
@@ -461,7 +461,7 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         self.assertIn("╭─ START BUNDLE ", r_start.stdout)
-        self.assertIn("Session:        s2", r_start.stdout)
+        self.assertIn("Session:    s2", r_start.stdout)
 
         r_show0 = subprocess.run(
             [str(SCRIPT), "--show", "s2/0"],
@@ -3243,6 +3243,140 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("--bundle-plan", (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8"))
         self.assertIn("--bundle-plan", (ROOT / "src/rules/blocks/pwsh.md").read_text(encoding="utf-8"))
+
+    def test_f55_hide_bundle_transport_headers_and_clamp_long_title(self):
+        proj = self.tmp / "f55_proj"
+        proj.mkdir()
+        sessions = self.tmp / "f55_sessions"
+        env = {**os.environ, "RUN_BLOCK_DIR": str(sessions), "RUN_BLOCK_CWD": str(proj)}
+        long_title = (
+            "Hide Bundle-* transport headers from TUI boxes and clamp overly long "
+            "Title headers cleanly with an ellipsis instead of wrapping onto multiple lines"
+        )
+        bundle_payload = (
+            "Bundle-Command: agents_bundle role=execute task=F55\n"
+            "Bundle-Boundary: deadbeef55\n"
+            "Bundle-Expose: Role, Task, Title\n"
+            "Bundle-Hide: Internal-Flag\n"
+            "Bundle-Custom: extra-transport\n"
+            "Role: execute\n"
+            "Task: F55\n"
+            f"Title: {long_title}\n\n"
+            "===== Prompt =====\n"
+            "Implement F55\n"
+        )
+
+        # 1. START BUNDLE excludes all Bundle-* headers and clamps long Title to a single line
+        r_start = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s1"],
+            input=bundle_payload,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_start.returncode, 0, r_start.stderr)
+        for hidden_hdr in (
+            "Bundle-Command:",
+            "Bundle-Boundary:",
+            "Bundle-Expose:",
+            "Bundle-Hide:",
+            "Bundle-Custom:",
+        ):
+            with self.subTest(start_hidden=hidden_hdr):
+                self.assertNotIn(hidden_hdr, r_start.stdout)
+        self.assertIn("Role:       execute", r_start.stdout)
+        self.assertIn("Task:       F55", r_start.stdout)
+        title_lines = [ln for ln in r_start.stdout.splitlines() if "Title:" in ln]
+        self.assertEqual(len(title_lines), 1)
+        self.assertTrue(title_lines[0].endswith("…"))
+        self.assertLessEqual(self.mod.display_width(title_lines[0]), 80)
+
+        # meta.json and parse_bundle_header_items preserve Bundle-* headers for --info / i(nfo)
+        s1_dir = sessions / "s1"
+        meta = self.mod.read_session_meta(s1_dir)
+        meta_hdrs = dict(meta["headers"])
+        self.assertEqual(meta_hdrs.get("Bundle-Command"), "agents_bundle role=execute task=F55")
+        self.assertEqual(meta_hdrs.get("Bundle-Boundary"), "deadbeef55")
+        self.assertEqual(meta_hdrs.get("Bundle-Expose"), "Role, Task, Title")
+        self.assertEqual(meta_hdrs.get("Bundle-Hide"), "Internal-Flag")
+        self.assertEqual(meta_hdrs.get("Bundle-Custom"), "extra-transport")
+        self.assertEqual(self.mod.parse_bundle_headers(s1_dir).get("bundle-command"), "agents_bundle role=execute task=F55")
+        self.assertNotIn("bundle-command", {k.lower() for k, _ in self.mod.parse_bundle_header_items(s1_dir, include_transport=False)})
+
+        # 2. BLOCK PLAN, END, NOT RUN, SYNTAX ERROR, and confirmation header lines exclude Bundle-* and clamp Title
+        old_base = self.mod.BASE_DIR
+        self.mod.BASE_DIR = sessions
+        try:
+            with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((72, 24))):
+                plan_box, _, _ = self.mod.format_safety_box(
+                    "s1/1", [], default_yes=True, summary={"work_dir": str(proj), "meta": "1 line, bash"}
+                )
+                end_box, _, _ = self.mod.format_clipboard_box("s1/1", s1_dir / "1" / "out", ok=True, rc=0)
+                hdr_confirm = self.mod.format_session_header_lines(label="s1/1", sdir=s1_dir, work_dir=proj)
+
+            for box_name, rendered in (("BLOCK PLAN", plan_box), ("END", end_box), ("CONFIRM", "\n".join(hdr_confirm))):
+                with self.subTest(box=box_name):
+                    for hidden_hdr in ("Bundle-Command:", "Bundle-Boundary:", "Bundle-Expose:", "Bundle-Hide:", "Bundle-Custom:"):
+                        self.assertNotIn(hidden_hdr, rendered)
+                    t_lines = [ln for ln in rendered.splitlines() if "Title:" in ln]
+                    self.assertEqual(len(t_lines), 1)
+                    self.assertTrue(t_lines[0].endswith("…"))
+                    max_row = 70 if box_name == "CONFIRM" else 72
+                    self.assertLessEqual(self.mod.display_width(t_lines[0]), max_row)
+
+            # NOT RUN & SYNTAX ERROR via runner
+            buf_nr = io.StringIO()
+            with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))),                  contextlib.redirect_stdout(buf_nr):
+                self.assertEqual(self.mod.cmd_normal("s1/2", "echo skip\n"), 2)
+            self.assertIn("╭─ NOT RUN ", buf_nr.getvalue())
+            self.assertNotIn("Bundle-Command:", buf_nr.getvalue())
+            self.assertEqual(len([ln for ln in buf_nr.getvalue().splitlines() if "Title:" in ln]), 1)
+
+            buf_syn = io.StringIO()
+            with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))),                  contextlib.redirect_stdout(buf_syn):
+                self.assertNotEqual(self.mod.cmd_normal("s1/1", "if true; then\n"), 0)
+            self.assertIn("╭─ SYNTAX ERROR ", buf_syn.getvalue())
+            self.assertNotIn("Bundle-Command:", buf_syn.getvalue())
+            self.assertEqual(len([ln for ln in buf_syn.getvalue().splitlines() if "Title:" in ln]), 1)
+        finally:
+            self.mod.BASE_DIR = old_base
+
+        # 3. Short Title stays untruncated; wide Unicode Title respects display_width; ASCII uses '...'
+        s2_dir = self.tmp / "s_short"
+        s2_dir.mkdir()
+        (s2_dir / "0").write_text(
+            f"Session: s_short\nNext-Block: s_short/1\nWorkdir: {proj}\nSandbox: off\n"
+            "Date: 2026-11-18 08:00 UTC\nTitle: Short task\n",
+            encoding="utf-8",
+        )
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 24))):
+            short_lines = self.mod.format_session_header_lines(label="s_short/1", sdir=s2_dir, work_dir=proj)
+        self.assertIn("Title:   Short task", short_lines)
+
+        s3_dir = self.tmp / "s_wide"
+        s3_dir.mkdir()
+        (s3_dir / "0").write_text(
+            f"Session: s_wide\nNext-Block: s_wide/1\nWorkdir: {proj}\nSandbox: off\n"
+            "Date: 2026-11-18 08:00 UTC\nTitle: " + ("界" * 40) + "\n",
+            encoding="utf-8",
+        )
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((60, 24))):
+            wide_lines = self.mod.format_session_header_lines(label="s_wide/1", sdir=s3_dir, work_dir=proj, max_width=58)
+        wide_title = [ln for ln in wide_lines if "Title:" in ln]
+        self.assertEqual(len(wide_title), 1)
+        self.assertTrue(wide_title[0].endswith("…"))
+        self.assertLessEqual(self.mod.display_width(wide_title[0]), 58)
+
+        with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((60, 24))):
+                ascii_lines = self.mod.format_session_header_lines(label="s1/1", sdir=s1_dir, work_dir=proj, max_width=58)
+        ascii_title = [ln for ln in ascii_lines if "Title:" in ln]
+        self.assertEqual(len(ascii_title), 1)
+        self.assertTrue(ascii_title[0].endswith("..."))
+        self.assertLessEqual(self.mod.display_width(ascii_title[0]), 58)
+
 
 if __name__ == "__main__":
     unittest.main()

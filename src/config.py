@@ -229,6 +229,11 @@ HIDDEN_SESSION_HEADER_KEYS = frozenset({
 })
 
 
+def is_bundle_transport_header(key: str) -> bool:
+    norm = re.sub(r"\s+", "-", key.strip().lower())
+    return norm.startswith("bundle-")
+
+
 def parse_stdin_preamble(stdin_text: str) -> tuple[list[tuple[str, str]], str]:
     """Splits optional leading 'Key: Value' header lines (separated by a blank line) from body."""
     if not stdin_text:
@@ -386,7 +391,10 @@ def _parse_meta_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
     return items
 
 
-def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]:
+def parse_bundle_header_items(
+    session_dir: Path | None,
+    include_transport: bool = True,
+) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
     index_by_norm: dict[str, int] = {}
     if session_dir is None:
@@ -422,6 +430,8 @@ def parse_bundle_header_items(session_dir: Path | None) -> list[tuple[str, str]]
         else:
             index_by_norm[norm_key] = len(items)
             items.append((raw_key, val))
+    if not include_transport:
+        return [(k, v) for k, v in items if not is_bundle_transport_header(k)]
     return items
 
 

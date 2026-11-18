@@ -1,3 +1,10 @@
+# ✅ [DONE] F55: Hide Bundle-* transport headers from TUI boxes and clamp long Title headers — *2026-11-18, Exclude Bundle-* transport headers from TUI boxes and clamp long exposed headers*
+
+- Depends on: F46
+- Ensure `Bundle-*` transport headers (`Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) are excluded from TUI boxes (`START BUNDLE`, `BLOCK PLAN`, `END`, and confirmation dialogs) while remaining available in `meta.json`, `--info`, and the `i(nfo)` screen (`src/bundle_plan.py`, `src/config.py`, `src/ui.py`).
+- Truncate overly long exposed header values (such as `Title:`) with an ellipsis (`…`) in `format_session_header_lines` (`src/ui.py`) so long task titles stay single-line without wrapping or overflowing box width.
+- Sync `README.md` and unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F47: Add bundle diagnostics, START BUNDLE details view, and --bundle-plan CLI — *2026-11-18*
 
 - Depends on: F46
