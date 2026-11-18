@@ -1,3 +1,9 @@
+# ✅ [DONE] F58: Wrap long lines inside all TUI boxes while preserving hanging indents — *2026-11-18, Enforced terminal-width wrapping with hanging indents across all TUI boxes*
+
+- Enforce terminal-width wrapping (`_hr_width() - 2`) inside `_render_block()` in `src/ui.py` for all rendered TUI boxes (`BUNDLE`, `PLAN`, `END`, `NOT RUN`, `SYNTAX ERROR`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`, and `prompt_yes_no_box`), so no content or prompt line exceeds the terminal width and breaks the left `│ ` border.
+- Preserve hanging indentation on wrapped lines: align continuation lines under the value column for `Key:   value` rows, preserve leading list/tree indentation (`  `, `    `, `├─ `, `└─ `) on already-indented items without double-wrapping lines that already fit, and clamp `_extract_last_error_line()` in `src/ui.py` to the available box content width.
+- Acceptance criteria: on narrow terminals (40–70 columns), long `Workdir:`, `Output:`, `Error:`, `Stats:`, `Steps:`, headers, and prompt lines wrap cleanly with `│ ` on every visual row and aligned continuation indents across all TUI box types; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
+
 # ✅ [DONE] F59: Redraw active TUI box in place on terminal resize (SIGWINCH) — *2026-11-18, Redraw active TUI box in place on terminal resize (SIGWINCH)*
 
 - Monitor terminal window resize events (`SIGWINCH` via a self-pipe registered in `select()`) while waiting for user input in `read_clipboard_key()` and `read_confirm_key()` in `src/ui.py`, debouncing rapid resize events (~25ms) and restoring the previous `SIGWINCH` handler cleanly on exit.

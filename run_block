@@ -62,7 +62,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.22.8"
+VERSION = "0.22.9"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -2718,7 +2718,7 @@ def _wrap_labeled_items(
         tag = f"[{k}]".ljust(tag_w)
         prefix = f"{indent}{num_prefix}{sub_marker}{tag}  "
         sub_indent = " " * len(prefix)
-        avail = max(24, max_width - len(prefix))
+        avail = max(12, max_width - len(prefix))
         wrapped = textwrap.wrap(v, width=avail, break_long_words=True, break_on_hyphens=False) or [v]
         out.append(prefix + wrapped[0])
         for cont in wrapped[1:]:
@@ -2903,7 +2903,7 @@ def format_session_header_lines(
     wrapped: list[str] = []
     for idx, line in enumerate(aligned):
         if idx not in exposed_indices and display_width(line) > max_width:
-            wrapped.extend(textwrap.wrap(line, width=max_width, subsequent_indent="  ") or [line])
+            wrapped.extend(_wrap_box_line(line, max_width))
         else:
             wrapped.append(line)
     return wrapped
@@ -2939,7 +2939,7 @@ def format_safety_box(
         work_dir=wdir or None,
         sandbox_mode=sb_mode or None,
         cd_dirs=cd_dirs,
-        max_width=max_row_len,
+        clamp_width=max_row_len,
     )
     if summary:
         detail_lines: list[str] = []
@@ -3034,9 +3034,7 @@ def _fit_prompt_content_lines(lines: list[str], max_width: int) -> list[str]:
             avail = max(8, max_width - len(prefix))
             fitted.append(prefix + _truncate_display_width(val_txt, avail))
         else:
-            fitted.extend(
-                textwrap.wrap(line, width=max_width, subsequent_indent="  ") or [line]
-            )
+            fitted.append(line)
     return fitted
 
 
@@ -3131,7 +3129,10 @@ def prompt_yes_no_box(
     )
     _, border_col = _block_colors(title)
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prefixed_prompt = _prefix_block_line(prompt_line, border_color=border_col)
+    box_lines_init = box.splitlines()
+    prefixed_prompt = (
+        box_lines_init[-2] if len(box_lines_init) >= 2 else _prefix_block_line(prompt_line, border_color=border_col)
+    )
     try:
         if tty_streams is not None:
             tty_w, tty_r = tty_streams
@@ -3168,7 +3169,12 @@ def prompt_yes_no_box(
                             status_lines=status_list,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        prefixed_prompt = _prefix_block_line(prompt_line, border_color=border_col)
+                        box_lines_res = box.splitlines()
+                        prefixed_prompt = (
+                            box_lines_res[-2]
+                            if len(box_lines_res) >= 2
+                            else _prefix_block_line(prompt_line, border_color=border_col)
+                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -3430,7 +3436,10 @@ def confirm_execution(
     )
     _, border_col = _block_colors("PLAN")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+    ce_lines = box.splitlines()
+    prefixed_prompt = (
+        ce_lines[-2] if len(ce_lines) >= 2 else _safety_prompt_prefix(default_yes, bool(findings), border_col)
+    )
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -3455,7 +3464,12 @@ def confirm_execution(
                             edited=is_edited,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                        ce_lines = box.splitlines()
+                        prefixed_prompt = (
+                            ce_lines[-2]
+                            if len(ce_lines) >= 2
+                            else _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -3505,7 +3519,12 @@ def confirm_execution(
                                 edited=is_edited,
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                            ce_lines = box.splitlines()
+                            prefixed_prompt = (
+                                ce_lines[-2]
+                                if len(ce_lines) >= 2
+                                else _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                            )
                             move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
@@ -3524,7 +3543,12 @@ def confirm_execution(
                                     edited=is_edited,
                                 )
                                 bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                                prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                                ce_lines = box.splitlines()
+                                prefixed_prompt = (
+                                    ce_lines[-2]
+                                    if len(ce_lines) >= 2
+                                    else _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                                )
                                 move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                                 tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             else:
@@ -3912,7 +3936,8 @@ def display_width(text: str) -> int:
 
 
 def _hr_width() -> int:
-    return max(40, shutil.get_terminal_size((80, 24)).columns)
+    cols = shutil.get_terminal_size((80, 24)).columns
+    return max(40, cols if cols > 0 else 80)
 
 
 def _format_top_rule(
@@ -3956,6 +3981,210 @@ def _prefix_block_line(line: str, border_color: str | None = None) -> str:
     return f"{bar} {line}" if line else bar
 
 
+_BOX_TAG_ITEM_RE = re.compile(
+    r"^(\s*(?:\S+%\s+\S+\s+ch\s+\S+L\s+~\S+\s+tok\s+)?(?:\d+\.\s+)?"
+    r"(?:(?:├─|└─|\|-|`-)\s+)?\[[^\]]+\]\s+(?:(?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))?(?:\d+\.\s+)?)(.*)$"
+)
+_BOX_TREE_ITEM_RE = re.compile(
+    r"^(\s*(?:(?:│  |\|  |   )*(?:├─ |└─ |\|- |`- )|\d+\.\s+|[-*•]\s+))(.*)$"
+)
+_BOX_PROMPT_ARROW_RE = re.compile(r"^(->\s+)(.*)$")
+_BOX_WS_INDENT_RE = re.compile(r"^(\s+)(.*\S.*)$")
+
+
+def _detect_box_hanging_indent(plain: str, max_width: int) -> tuple[int, str]:
+    m_kv = _KV_LINE_RE.match(plain)
+    if m_kv:
+        m_prefix = re.match(r"^([A-Za-z][A-Za-z0-9_-]*:\s+)(.*)$", plain)
+        if m_prefix:
+            pfx = m_prefix.group(1)
+            indent_w = display_width(pfx)
+            sub = (" " * indent_w) if (max_width - indent_w >= 8) else "  "
+            return len(pfx), sub
+    m_pr = _BOX_PROMPT_ARROW_RE.match(plain)
+    if m_pr:
+        pfx = m_pr.group(1)
+        indent_w = display_width(pfx)
+        sub = (" " * indent_w) if (max_width - indent_w >= 8) else "  "
+        return len(pfx), sub
+    lead_ws = re.match(r"^\s*", plain).group(0)  # type: ignore[union-attr]
+    lead_w = display_width(lead_ws)
+    for pat in (_BOX_TAG_ITEM_RE, _BOX_TREE_ITEM_RE):
+        m_it = pat.match(plain)
+        if m_it:
+            pfx = m_it.group(1)
+            indent_w = display_width(pfx)
+            if max_width - indent_w >= 8:
+                return len(pfx), " " * indent_w
+            if max_width - lead_w >= 8:
+                return len(pfx), lead_ws
+            return len(pfx), ("  " if max_width >= 10 else "")
+    m_ws = _BOX_WS_INDENT_RE.match(plain)
+    if m_ws:
+        pfx = m_ws.group(1)
+        if max_width - lead_w >= 8:
+            return len(pfx), pfx
+        return len(pfx), ("  " if max_width >= 10 else "")
+    return 0, ""
+
+
+def _split_ansi_prefix(line: str, visible_count: int) -> tuple[str, str, str]:
+    if visible_count <= 0:
+        return "", line, ""
+    pos = 0
+    seen = 0
+    active_sgr = ""
+    n = len(line)
+    while pos < n and seen < visible_count:
+        m_ansi = ANSI_RE.match(line, pos)
+        if m_ansi:
+            seq = m_ansi.group(0)
+            if seq in ("\x1b[0m", "\x1b[m"):
+                active_sgr = ""
+            elif seq.endswith("m"):
+                active_sgr += seq
+            pos = m_ansi.end()
+            continue
+        seen += 1
+        pos += 1
+    return line[:pos], line[pos:], active_sgr
+
+
+def _wrap_box_line(line: str, max_width: int) -> list[str]:
+    if max_width <= 0 or display_width(line) <= max_width:
+        return [line]
+    plain = ANSI_RE.sub("", line)
+    if not plain.strip():
+        return [line]
+    prefix_chars, sub_indent = _detect_box_hanging_indent(plain, max_width)
+    prefix_raw, body_raw, active_after_prefix = _split_ansi_prefix(line, prefix_chars)
+    prefix_w = display_width(prefix_raw)
+    if prefix_w >= max_width:
+        if not prefix_raw.strip():
+            prefix_raw = "  " if max_width >= 10 else ""
+            sub_indent = prefix_raw
+            prefix_w = display_width(prefix_raw)
+        else:
+            prefix_raw, body_raw, active_after_prefix = "", line, ""
+            sub_indent = ""
+            prefix_w = 0
+
+    # Parse body_raw into visible char elements: (ch, width, ansi_before, sgr_after)
+    elems: list[tuple[str, int, str, str]] = []
+    pos = 0
+    n = len(body_raw)
+    pending_ansi = ""
+    cur_sgr = active_after_prefix
+    while pos < n:
+        m_ansi = ANSI_RE.match(body_raw, pos)
+        if m_ansi:
+            seq = m_ansi.group(0)
+            pending_ansi += seq
+            if seq in ("\x1b[0m", "\x1b[m"):
+                cur_sgr = ""
+            elif seq.endswith("m"):
+                cur_sgr += seq
+            pos = m_ansi.end()
+            continue
+        ch = body_raw[pos]
+        cw = display_width(ch)
+        elems.append((ch, cw, pending_ansi, cur_sgr))
+        pending_ansi = ""
+        pos += 1
+    tail_ansi = pending_ansi
+
+    if not elems:
+        return [line]
+
+    # Group elements into whitespace runs and non-whitespace words
+    tokens: list[tuple[bool, list[tuple[str, int, str, str]]]] = []
+    cur_tok: list[tuple[str, int, str, str]] = []
+    cur_is_ws: bool | None = None
+    for el in elems:
+        el_ws = el[0].isspace()
+        if cur_is_ws is None or el_ws == cur_is_ws:
+            cur_tok.append(el)
+            cur_is_ws = el_ws
+        else:
+            tokens.append((cur_is_ws, cur_tok))
+            cur_tok = [el]
+            cur_is_ws = el_ws
+    if cur_tok and cur_is_ws is not None:
+        tokens.append((cur_is_ws, cur_tok))
+
+    first_avail = max(1, max_width - prefix_w)
+    cont_avail = max(1, max_width - display_width(sub_indent))
+    wrapped_lines: list[tuple[list[tuple[str, int, str, str]], str]] = []
+    cur_line: list[tuple[str, int, str, str]] = []
+    cur_w = 0
+    cur_avail = first_avail
+    line_start_sgr = active_after_prefix
+
+    def _flush_line(next_start_sgr: str) -> None:
+        nonlocal cur_line, cur_w, cur_avail, line_start_sgr
+        while cur_line and cur_line[-1][0].isspace():
+            cur_line.pop()
+        wrapped_lines.append((cur_line, line_start_sgr))
+        cur_line = []
+        cur_w = 0
+        cur_avail = cont_avail
+        line_start_sgr = next_start_sgr
+
+    for is_ws, tok in tokens:
+        tok_w = sum(e[1] for e in tok)
+        if is_ws:
+            if not cur_line:
+                line_start_sgr = tok[-1][3]
+                continue
+            if cur_w + tok_w <= cur_avail:
+                cur_line.extend(tok)
+                cur_w += tok_w
+            else:
+                _flush_line(tok[-1][3])
+            continue
+
+        if cur_w + tok_w <= cur_avail:
+            cur_line.extend(tok)
+            cur_w += tok_w
+        elif cur_line and tok_w <= cont_avail:
+            prev_sgr = cur_line[-1][3]
+            _flush_line(prev_sgr)
+            cur_line.extend(tok)
+            cur_w = tok_w
+        else:
+            for el in tok:
+                if cur_line and cur_w + el[1] > cur_avail:
+                    prev_sgr = cur_line[-1][3]
+                    _flush_line(prev_sgr)
+                cur_line.append(el)
+                cur_w += el[1]
+
+    if cur_line or not wrapped_lines:
+        wrapped_lines.append((cur_line, line_start_sgr))
+
+    out: list[str] = []
+    last_idx = len(wrapped_lines) - 1
+    for idx, (l_elems, start_sgr) in enumerate(wrapped_lines):
+        body_str = "".join(e[2] + e[0] for e in l_elems)
+        if idx == 0:
+            row = prefix_raw + body_str
+            end_sgr = l_elems[-1][3] if l_elems else active_after_prefix
+        else:
+            reopen = ""
+            if start_sgr:
+                first_ansi = l_elems[0][2] if l_elems else ""
+                if not (first_ansi.startswith("\x1b[0m") or first_ansi.startswith("\x1b[m")):
+                    reopen = start_sgr
+            row = sub_indent + reopen + body_str
+            end_sgr = l_elems[-1][3] if l_elems else start_sgr
+        if idx == last_idx:
+            row += tail_ansi
+        elif end_sgr:
+            row += _ANSI_RESET
+        out.append(row)
+    return out
+
+
 def _render_block(
     title: str,
     content_lines: list[str],
@@ -3966,21 +4195,27 @@ def _render_block(
     hdr = clean_title
     cols = term_cols if term_cols is not None else _hr_width()
     width = max(min(cols, 48), display_width(hdr) + 8)
+    max_content_w = max(1, cols - 2)
     aligned_lines = _align_kv_lines(content_lines)
     has_exit = any(l.startswith("Exit:") for l in aligned_lines)
     title_color, border_color = _block_colors(clean_title, has_exit=has_exit)
     top = _format_top_rule(title, width, title_color=title_color, border_color=border_color)
     bottom = _format_bottom_rule(width, border_color=border_color)
-    rows = [_prefix_block_line(_colorize_kv_line(line), border_color=border_color) for line in aligned_lines]
+    rows: list[str] = []
+    for line in aligned_lines:
+        colored = _colorize_kv_line(line)
+        for wline in _wrap_box_line(colored, max_content_w):
+            rows.append(_prefix_block_line(wline, border_color=border_color))
     if not rows and prompt_line is None:
         rows = [_prefix_block_line("", border_color=border_color)]
     cursor_col_offset = 0
     if prompt_line is not None:
         if aligned_lines:
             rows.append(_prefix_block_line("", border_color=border_color))
-        prefixed_prompt = _prefix_block_line(prompt_line, border_color=border_color)
-        rows.append(prefixed_prompt)
-        cursor_col_offset = display_width(prefixed_prompt)
+        for wprompt in _wrap_box_line(prompt_line, max_content_w):
+            prefixed_prompt = _prefix_block_line(wprompt, border_color=border_color)
+            rows.append(prefixed_prompt)
+            cursor_col_offset = display_width(prefixed_prompt)
     box = "\n".join([top, *rows, bottom])
     return box, width, cursor_col_offset
 
@@ -3998,13 +4233,22 @@ def _last_nonempty_line(path: Path, skip_prefixes: tuple[str, ...], max_len: int
             continue
         if skip_prefixes and any(s.startswith(p) for p in skip_prefixes):
             continue
-        if len(s) > max_len:
-            return s[: max_len - 3] + "..."
+        if display_width(s) > max_len:
+            budget = max(1, max_len - 3)
+            acc: list[str] = []
+            cur_w = 0
+            for ch in s:
+                cw = display_width(ch)
+                if cur_w + cw > budget:
+                    break
+                acc.append(ch)
+                cur_w += cw
+            return "".join(acc).rstrip() + "..."
         return s
     return ""
 
 
-def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
+def _extract_last_error_line(out_path: Path, label: str | None = None, max_width: int | None = None) -> str:
     skip_prefixes: tuple[str, ...] = ()
     if label:
         skip_prefixes = (
@@ -4015,7 +4259,8 @@ def _extract_last_error_line(out_path: Path, label: str | None = None) -> str:
             f"[{label}] patched ",
             f"[{label}] SECURITY WARNING:",
         )
-    max_len = max(60, _hr_width() - 8)
+    content_w = max_width if max_width is not None else max(24, _hr_width() - 2)
+    max_len = max(24, content_w - 6)
     if out_path.name == "out" and not _is_file_edited(out_path):
         err_line = _last_nonempty_line(out_path.with_name("err"), skip_prefixes, max_len)
         if err_line:
@@ -4168,7 +4413,7 @@ def build_box_body_lines(
         detail_lines = []
         if rc is not None and rc != 0:
             detail_lines.append(f"Exit: {rc}")
-            last_err = _extract_last_error_line(err_src, label=label)
+            last_err = _extract_last_error_line(err_src, label=label, max_width=max_width)
             if last_err:
                 detail_lines.append(f"Error: {last_err}")
             if label:
@@ -4354,7 +4599,10 @@ def offer_clipboard_copy(
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+    occ_lines = box.splitlines()
+    prefixed_line2 = (
+        occ_lines[-2] if len(occ_lines) >= 2 else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+    )
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -4387,7 +4635,12 @@ def offer_clipboard_copy(
                             sdir=sdir,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                        occ_lines = box.splitlines()
+                        prefixed_line2 = (
+                            occ_lines[-2]
+                            if len(occ_lines) >= 2
+                            else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -4415,7 +4668,12 @@ def offer_clipboard_copy(
                         sdir=sdir,
                     )
                     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                    prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                    occ_lines = box.splitlines()
+                    prefixed_line2 = (
+                        occ_lines[-2]
+                        if len(occ_lines) >= 2
+                        else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                    )
                     move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                     tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                     tty_w.flush()
@@ -4468,7 +4726,12 @@ def offer_clipboard_copy(
                                 sdir=sdir,
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                            occ_lines = box.splitlines()
+                            prefixed_line2 = (
+                                occ_lines[-2]
+                                if len(occ_lines) >= 2
+                                else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                            )
                             move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
@@ -4495,7 +4758,12 @@ def offer_clipboard_copy(
                                     sdir=sdir,
                                 )
                                 bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                                prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                                occ_lines = box.splitlines()
+                                prefixed_line2 = (
+                                    occ_lines[-2]
+                                    if len(occ_lines) >= 2
+                                    else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                                )
                                 move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                                 tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             else:

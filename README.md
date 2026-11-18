@@ -95,7 +95,9 @@ recalculating line/char/token statistics, `Error:` lines, and clipboard targets
 in place. While any interactive TUI box (`BUNDLE`, `PLAN`, `END`, or
 confirmation prompt) is waiting for input on a POSIX TTY, resizing the
 terminal window (`SIGWINCH`) automatically erases and redraws the active box
-in place to match the new width.
+in place to match the new width. Long lines inside TUI boxes (paths, outputs,
+errors, stats, steps, headers, and prompts) wrap cleanly to the terminal width
+with `│ ` borders and aligned hanging indents.
 
 ### 3. Patching a failed block (`--fix`)
 

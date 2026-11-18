@@ -8,12 +8,6 @@
 - Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `BUNDLE` instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
 - Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py`, rebuild `./run_block`, and bump `VERSION` for a MINOR release.
 
-# 🎯 [NEXT] F58: Wrap long lines inside all TUI boxes while preserving hanging indents
-
-- Enforce terminal-width wrapping (`_hr_width() - 2`) inside `_render_block()` in `src/ui.py` for all rendered TUI boxes (`BUNDLE`, `PLAN`, `END`, `NOT RUN`, `SYNTAX ERROR`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`, and `prompt_yes_no_box`), so no content or prompt line exceeds the terminal width and breaks the left `│ ` border.
-- Preserve hanging indentation on wrapped lines: align continuation lines under the value column for `Key:   value` rows, preserve leading list/tree indentation (`  `, `    `, `├─ `, `└─ `) on already-indented items without double-wrapping lines that already fit, and clamp `_extract_last_error_line()` in `src/ui.py` to the available box content width.
-- Acceptance criteria: on narrow terminals (40–70 columns), long `Workdir:`, `Output:`, `Error:`, `Stats:`, `Steps:`, headers, and prompt lines wrap cleanly with `│ ` on every visual row and aligned continuation indents across all TUI box types; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
-
 # 🎯 [NEXT] F57: Add a(ppend) prompt editor action in BUNDLE — *Commit backlog task for BUNDLE prompt append*
 
 - Add an `a(ppend)` action to the `BUNDLE` prompt in `src/ui.py` (`-> Copy to clipboard? [Enter/a(ppend)/e(dit)/Esc]:`), recognizing `a`/`A` (and `append` in line-input mode) without affecting `END` or conflicting with `e(dit)`, `i(nfo)`, or `d(etails)`.

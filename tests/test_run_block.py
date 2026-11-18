@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import contextlib
@@ -301,7 +302,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
-        box_err, _, _ = self.mod.format_clipboard_box("s2/2", f, ok=False, rc=2, stats=s)
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
+            box_err, _, _ = self.mod.format_clipboard_box("s2/2", f, ok=False, rc=2, stats=s)
         self.assertIn("╭─ END ", box_err)
         self.assertIn("Block:   s2/2", box_err)
         self.assertIn("Exit:   2", box_err)
@@ -1370,7 +1372,10 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(rc_f2, 2)
         f2_rendered = buf_fix2.getvalue()
         self.assertIn("Target: s1/1_1 -> s1/1_2", f2_rendered)
-        self.assertIn("Guard:  reached 2/2 failed --fix attempts for s1/1; switch to a fresh s1/2 block instead.", f2_rendered)
+        self.assertIn(
+            "Guard:  reached 2/2 failed --fix attempts for s1/1; switch to a fresh s1/2 block instead.",
+            re.sub(r"\n│\s+", " ", f2_rendered),
+        )
         self.assertNotIn("[s1/1_2] STOP --fix:", f2_rendered)
         f2_clip = (self.tmp / "s1/1_2/out").read_text(encoding="utf-8")
         self.assertIn("[s1/1_2] STOP --fix: reached 2/2 failed --fix attempts for s1/1", f2_clip)
@@ -2298,7 +2303,8 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        self.assertIn(str(target.resolve()), r_start.stdout)
+        unwrapped_start = re.sub(r"\n│\s+", "", r_start.stdout)
+        self.assertIn(str(target.resolve()), unwrapped_start)
         bundle_txt = (sessions_dir / "s1" / "0").read_text(encoding="utf-8")
         self.assertIn(f"Workdir: {target.resolve()}\n", bundle_txt)
         r_step = subprocess.run(
@@ -2630,7 +2636,7 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
              unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_end_editor), \
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy, \
-             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((120, 24))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
             self.mod.offer_clipboard_copy("s1/1", f, ok=False, rc=2)
 
@@ -4128,6 +4134,261 @@ class TestRunBlock(unittest.TestCase):
         finally:
             os.close(m_fd4)
             os.close(s_fd4)
+
+
+    def test_f58_tui_box_wrapping_and_hanging_indents(self):
+        def _assert_box_fits(box: str, max_cols: int, context: str) -> None:
+            lines = box.splitlines()
+            self.assertGreaterEqual(len(lines), 3, context)
+            for idx, ln in enumerate(lines):
+                with self.subTest(context=context, row=idx):
+                    self.assertLessEqual(self.mod.display_width(ln), max_cols, f"{context}: {ln!r}")
+                    if 0 < idx < len(lines) - 1:
+                        plain = self.mod.ANSI_RE.sub("", ln)
+                        self.assertTrue(plain == "│" or plain.startswith("│ "), f"{context}: {ln!r}")
+
+        # 1. _wrap_box_line: no double-wrapping when fitting, aligned KV/list/tree/prompt hanging indents,
+        #    and ANSI color preservation across wrapped rows
+        self.assertEqual(self.mod._wrap_box_line("  1. [read]  short cmd", 40), ["  1. [read]  short cmd"])
+
+        kv_wrapped = self.mod._wrap_box_line(
+            "Workdir:   /Users/vitaly/Projects/very_long_repository_name/nested/subdir", 42
+        )
+        self.assertGreater(len(kv_wrapped), 1)
+        self.assertTrue(kv_wrapped[0].startswith("Workdir:   /Users/"))
+        for cont in kv_wrapped[1:]:
+            self.assertTrue(cont.startswith("           "), repr(cont))
+            self.assertLessEqual(self.mod.display_width(cont), 42)
+
+        tree_wrapped = self.mod._wrap_box_line(
+            "  ├─ [write]   alpha_file.py, beta_file.py, gamma_file.py, delta_file.py", 42
+        )
+        self.assertGreater(len(tree_wrapped), 1)
+        for cont in tree_wrapped[1:]:
+            self.assertTrue(cont.startswith("               "), repr(cont))
+            self.assertLessEqual(self.mod.display_width(cont), 42)
+
+        ws_wrapped = self.mod._wrap_box_line(
+            "    indented detail message with many words that must wrap cleanly here", 38
+        )
+        self.assertGreater(len(ws_wrapped), 1)
+        for cont in ws_wrapped[1:]:
+            self.assertTrue(cont.startswith("    ") and not cont.startswith("     "), repr(cont))
+            self.assertLessEqual(self.mod.display_width(cont), 38)
+
+        pr_wrapped = self.mod._wrap_box_line(
+            "-> Step s154/8 already exists. r(enumber) to s154/9 or R(estart)? [r/R/N/s(cript)/o(utput)/c(opy)]:",
+            44,
+        )
+        self.assertGreater(len(pr_wrapped), 1)
+        for cont in pr_wrapped[1:]:
+            self.assertTrue(cont.startswith("   ") and not cont.startswith("    "), repr(cont))
+            self.assertLessEqual(self.mod.display_width(cont), 44)
+
+        # 2. _extract_last_error_line clamps to narrow box width instead of 60-col floor
+        narrow_step = self.tmp / "s58_err" / "1"
+        narrow_step.mkdir(parents=True)
+        long_err = "ValueError: " + ("x" * 120)
+        (narrow_step / "out").write_text("[s58_err/1] START\n", encoding="utf-8")
+        (narrow_step / "err").write_text(long_err + "\n", encoding="utf-8")
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((44, 24))):
+            clamped_err = self.mod._extract_last_error_line(narrow_step / "out", label="s58_err/1")
+        self.assertTrue(clamped_err.endswith("..."))
+        self.assertLessEqual(self.mod.display_width(clamped_err), 36)
+
+        # 3. All TUI box types wrap cleanly on 40, 48, 60, and 70 column terminals
+        proj = self.tmp / "f58_proj_with_a_very_long_directory_name_segment"
+        proj.mkdir()
+        sessions = self.tmp / "f58_sessions_storage_dir"
+        sdir = sessions / "s58"
+        step1 = sdir / "1"
+        step1.mkdir(parents=True)
+        out_p = step1 / "out"
+        err_p = step1 / "err"
+        scr_p = step1 / "block.sh"
+        scr_p.write_text("cat " + "/".join(["segment"] * 8) + "/file.txt\nrm -rf /tmp/f58_warn_target\n", encoding="utf-8")
+        out_p.write_text("line one\nline two\n", encoding="utf-8")
+        err_p.write_text("AssertionError: expected narrow terminal wrapping to preserve border alignment\n", encoding="utf-8")
+        bundle_p = sdir / "0"
+        bundle_p.write_text(
+            "Session: s58\n"
+            "Next-Block: s58/1\n"
+            f"Workdir: {proj}\n"
+            "Sandbox: strict (rw: Workdir, /tmp; secrets: hidden; net: on)\n"
+            "Date: 2026-11-18 18:45 UTC\n\n"
+            "===== Prompt =====\nBody\n",
+            encoding="utf-8",
+        )
+        self.mod.write_session_meta(
+            sdir,
+            [
+                ("Bundle-Expose", "Role, Task, Title"),
+                ("Role", "execute"),
+                ("Task", "F58"),
+                ("Title", "Wrap long lines inside all TUI boxes while preserving hanging indents across narrow terminals"),
+            ],
+        )
+
+        old_base = self.mod.BASE_DIR
+        self.mod.BASE_DIR = sessions
+        try:
+            op_timings = [
+                {"step": 1, "tag": "read", "desc": "cat file", "duration_ms": 15},
+                {"step": 2, "tag": "write", "desc": "write file", "duration_ms": 230},
+                {"step": 3, "tag": "exec", "desc": "pytest -q", "duration_ms": 1400},
+            ]
+            findings = self.mod.scan_script_risks(scr_p.read_text(encoding="utf-8"))
+            summary = self.mod.summarize_script_actions(scr_p.read_text(encoding="utf-8"), work_dir=proj)
+            summary["sandbox"] = "strict"
+            summary["cd_dirs"] = ["apps/very_long_subproject_a", "apps/very_long_subproject_b"]
+
+            for cols in (40, 50, 64, 70):
+                with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((cols, 24))):
+                    # BUNDLE
+                    bundle_box, _, _ = self.mod.format_clipboard_box(
+                        "s58/0",
+                        bundle_p,
+                        ok=True,
+                        rc=0,
+                        stats="120 lines · 4.2k chars · ~1.1k–1.2k tokens",
+                        title_kind="BUNDLE",
+                        extra_lines=[f"Bundle: {bundle_p}"],
+                        sdir=sdir,
+                    )
+                    _assert_box_fits(bundle_box, cols, f"BUNDLE@{cols}")
+                    self.assertIn("│ Workdir:    ", bundle_box)
+                    self.assertIn("│             ", bundle_box)
+
+                    # PLAN
+                    plan_box, _, _ = self.mod.format_safety_box(
+                        "s58/1",
+                        findings,
+                        default_yes=False,
+                        summary=summary,
+                        note="Analyzer note with enough words to verify wrapping inside PLAN box",
+                        script_path=scr_p,
+                    )
+                    _assert_box_fits(plan_box, cols, f"PLAN@{cols}")
+
+                    # END
+                    end_box, _, _ = self.mod.format_clipboard_box(
+                        "s58/1",
+                        out_p,
+                        ok=False,
+                        rc=1,
+                        stats="45 lines · 1.8k chars · ~450–515 tokens · 1.6s",
+                        title_kind="END",
+                        op_timings=op_timings,
+                        failed_step=3,
+                        sdir=sdir,
+                    )
+                    _assert_box_fits(end_box, cols, f"END@{cols}")
+                    self.assertIn("│ Steps:  ", end_box)
+                    self.assertIn("│         ", end_box)
+
+                    # NOT RUN & SYNTAX ERROR
+                    nr_lines = self.mod.build_box_body_lines(
+                        out_p,
+                        rc=2,
+                        stats="2 lines · 80 chars · ~20–23 tokens",
+                        extra_lines=[
+                            "Target: s58/1 -> s58/1_1",
+                            "Reason: fix assertion failed because expected anchor did not match script content",
+                            "  at line 4: assert text.count('very_long_anchor_name_exceeding_forty_cols') == 1",
+                            "Guard: reached 2/2 failed --fix attempts for s58/1; switch to a fresh s58/2 block instead.",
+                            f"Output: {out_p}",
+                        ],
+                        label="s58/1_1",
+                        sdir=sdir,
+                    )
+                    nr_box = self.mod.format_info_box("NOT RUN", nr_lines)
+                    _assert_box_fits(nr_box, cols, f"NOT_RUN@{cols}")
+
+                    syn_lines = self.mod.build_box_body_lines(
+                        out_p,
+                        rc=2,
+                        stats="3 lines · 95 chars · ~24–27 tokens",
+                        extra_lines=[
+                            "Exit: 2",
+                            f"Script: {scr_p}",
+                            f"Output: {out_p}",
+                            "Error: syntax error near unexpected token in very_long_function_definition()",
+                            "  line 12: if [ -f /very/long/path/inside/syntax/error/detail/message ]; then",
+                        ],
+                        label="s58/1",
+                        sdir=sdir,
+                    )
+                    syn_box = self.mod.format_info_box("SYNTAX ERROR", syn_lines)
+                    _assert_box_fits(syn_box, cols, f"SYNTAX_ERROR@{cols}")
+
+                    # MISSING PREVIOUS STEP & STEP ALREADY EXISTS via prompt_yes_no_box
+                    tty_w_miss = io.StringIO()
+                    tty_r_miss = io.StringIO("y\n")
+                    miss_ok = self.mod.prompt_yes_no_box(
+                        "MISSING PREVIOUS STEP",
+                        self.mod.format_session_header_lines(label="s58/3", sdir=sdir) + ["", "Missing: s58/2"],
+                        "Run s58/3 even though previous step s58/2 has not run yet?",
+                        default_yes=False,
+                        tty_streams=(tty_w_miss, tty_r_miss),
+                    )
+                    self.assertTrue(miss_ok)
+                    miss_box_part = tty_w_miss.getvalue().split("\r\033[1A")[0]
+                    _assert_box_fits(miss_box_part, cols, f"MISSING_PREV@{cols}")
+
+                    tty_w_exists = io.StringIO()
+                    tty_r_exists = io.StringIO("r\n")
+                    ex_res = self.mod.prompt_yes_no_box(
+                        "STEP ALREADY EXISTS",
+                        self.mod.format_session_header_lines(label="s58/1", sdir=sdir)
+                        + ["", "Next: s58/2", f"Script: {scr_p}", f"Output: {out_p}"],
+                        "Step s58/1 already exists. r(enumber) to s58/2 or R(estart)?",
+                        default_yes=False,
+                        tty_streams=(tty_w_exists, tty_r_exists),
+                        script_path=scr_p,
+                        out_path=out_p,
+                        renumber_label="s58/2",
+                    )
+                    self.assertEqual(ex_res, "renumber")
+                    ex_box_part = tty_w_exists.getvalue().split("\r\033[1A")[0]
+                    _assert_box_fits(ex_box_part, cols, f"STEP_EXISTS@{cols}")
+
+            # 4. TTY color mode keeps ANSI colors intact across wrapped KV and prompt lines
+            tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+            tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+            saved_nc = os.environ.pop("NO_COLOR", None)
+            try:
+                with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
+                     unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((44, 24))):
+                    col_plan, _, col_off = self.mod.format_safety_box(
+                        "s58/1", findings, default_yes=False, summary=summary, script_path=scr_p
+                    )
+                    _assert_box_fits(col_plan, 44, "COLOR_PLAN@44")
+                    self.assertIn("\x1b[1;33m", col_plan)
+                    self.assertIn("\x1b[0m\n\x1b[93m│\x1b[0m          \x1b[1;33m", col_plan)
+                    last_prompt_row = col_plan.splitlines()[-2]
+                    self.assertEqual(col_off, self.mod.display_width(last_prompt_row))
+
+                    col_end, _, _ = self.mod.format_clipboard_box(
+                        "s58/1", out_p, ok=False, rc=1, stats="10 lines · 200 chars", title_kind="END", sdir=sdir
+                    )
+                    _assert_box_fits(col_end, 44, "COLOR_END@44")
+                    self.assertIn("\x1b[1;91mAssertionError:", col_end)
+
+                with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream):
+                    col_wrap_box, _, col_wrap_off = self.mod._render_block(
+                        "PLAN",
+                        ["Block: s58/1", "Workdir: /tmp/f58_proj"],
+                        prompt_line="\x1b[1;93m-> Execute this block? [y/n/e(dit)]:\x1b[0m",
+                        term_cols=36,
+                    )
+                    _assert_box_fits(col_wrap_box, 36, "COLOR_PROMPT@36")
+                    self.assertIn("\x1b[0m\n\x1b[93m│\x1b[0m    \x1b[1;93m", col_wrap_box)
+                    self.assertEqual(col_wrap_off, self.mod.display_width(col_wrap_box.splitlines()[-2]))
+            finally:
+                if saved_nc is not None:
+                    os.environ["NO_COLOR"] = saved_nc
+        finally:
+            self.mod.BASE_DIR = old_base
 
 
 if __name__ == "__main__":
