@@ -83,7 +83,10 @@ terminal editor. The first edit preserves the original script as
 safety warnings in place, and re-validates syntax before execution. During execution,
 `run_block` records wall-clock block duration (excluding confirmation prompts) and
 per-operation elapsed timings in `<session>/<step>/meta.json`, `[<session>/<step>] END
-(<duration>)`, `Stats:`, and live progress output. When a block targets a step number that already exists on disk,
+(<duration>)`, `Stats:`, and live progress output (silent steps collapse in
+place on a TTY into a single aligned `✓ [N/M] [tag] desc (dur)` line, while
+steps with output keep the `▸` header above and align `✓`/`✗` at column 0
+below). When a block targets a step number that already exists on disk,
 `STEP ALREADY EXISTS` prompts to `r(enumber)` to the next free step (preserving
 existing outputs and updating the block label/metadata) or `R(estart)` to
 overwrite it. Across all interactive TUI confirmation prompts (`PLAN`, `END`,

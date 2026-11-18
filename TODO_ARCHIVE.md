@@ -1,3 +1,10 @@
+# ✅ [DONE] F56: Align operation progress lines, update status colors, and collapse silent steps — *2026-11-19*
+
+- Remove the 2-space leading indentation on step completion lines in `_ProgressLineFilter._format_step_done()` (`src/runner.py`) so `✓` and `✗` (plus ASCII `+` and `x`) align at column 0 directly beneath `▸` and `>`.
+- Update `_ProgressLineFilter` ANSI styling in `src/runner.py`: render start banners (`▸`) and successful completion lines (`✓`) in neutral gray (`\x1b[90m`), and failed completion lines (`✗`) in red (`\x1b[31m`).
+- Track in `_ProgressLineFilter` (`src/runner.py`) whether any `out` text was emitted while a step was active: when a step finishes without output on a TTY, overwrite the start banner line in place (`\033[1A\r\033[2K`) with a single-line summary `✓ [N/M] [tag] desc (dur)` (truncated to `_hr_width()`); when output was emitted, keep the `▸` header above the output and print `✓ [N/M] (dur)` or `✗ [N/M] (dur)` below at column 0.
+- Acceptance criteria: silent steps collapse into a single column-0 line with duration on TTY; steps with output keep `▸` above and `✓`/`✗` at column 0 below; colors use gray for normal progress and red for failures; `README.md` and unit tests in `tests/test_run_block.py` are updated.
+
 # ✅ [DONE] F58: Wrap long lines inside all TUI boxes while preserving hanging indents — *2026-11-18, Enforced terminal-width wrapping with hanging indents across all TUI boxes*
 
 - Enforce terminal-width wrapping (`_hr_width() - 2`) inside `_render_block()` in `src/ui.py` for all rendered TUI boxes (`BUNDLE`, `PLAN`, `END`, `NOT RUN`, `SYNTAX ERROR`, `MISSING PREVIOUS STEP`, `STEP ALREADY EXISTS`, and `prompt_yes_no_box`), so no content or prompt line exceeds the terminal width and breaks the left `│ ` border.

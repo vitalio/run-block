@@ -4391,5 +4391,117 @@ class TestRunBlock(unittest.TestCase):
             self.mod.BASE_DIR = old_base
 
 
+    def test_f56_progress_alignment_colors_and_silent_collapse(self):
+        step_map = {
+            1: {"step": 1, "tag": "exec", "desc": "mkdir -p out"},
+            2: {"step": 2, "tag": "read", "desc": "cat a.txt"},
+            3: {"step": 3, "tag": "exec", "desc": "very_long_command " + ("x" * 90)},
+        }
+
+        # 1. Column-0 alignment, neutral gray & red ANSI colors on TTY
+        tty_utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_utf8.isatty = lambda: True  # type: ignore[method-assign]
+        saved_nc = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_utf8), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 24))):
+                t_seq = iter([10.0, 10.05, 10.30, 10.80])
+                pf = self.mod._ProgressLineFilter(step_map, total_steps=3, clock=lambda: next(t_seq))
+                # Step 1 has no output -> collapses in place on step 2 start
+                ev1 = pf.feed_events("__RB_STEP__:1\n__RB_STEP__:2\n")
+                self.assertEqual(ev1[0], ("prog", "\x1b[90m▸ [1/3] [exec] mkdir -p out\x1b[0m\n"))
+                self.assertEqual(
+                    ev1[1],
+                    (
+                        "prog",
+                        "\033[1A\r\033[2K\x1b[90m✓ [1/3] [exec] mkdir -p out (50ms)\x1b[0m\n"
+                        "\x1b[90m▸ [2/3] [read] cat a.txt\x1b[0m\n",
+                    ),
+                )
+                # Step 2 emits output -> keeps banner above, prints ✓ at column 0 below
+                ev2 = pf.feed_events("alpha\n__RB_STEP__:3\n")
+                self.assertEqual(ev2[0], ("out", "alpha\n"))
+                self.assertTrue(ev2[1][1].startswith("\x1b[90m✓ [2/3] (250ms)\x1b[0m\n"))
+                self.assertNotIn("\033[1A", ev2[1][1])
+                # Step 3 is silent and fails (rc=1) -> collapses in place in red, truncated to _hr_width()
+                rem_out, rem_prog = pf.flush(rc=1)
+                self.assertEqual(rem_out, "")
+                self.assertTrue(rem_prog.startswith("\033[1A\r\033[2K\x1b[31m✗ [3/3] [exec] "))
+                self.assertTrue(rem_prog.endswith("... (500ms)\x1b[0m\n"))
+                plain_collapsed = self.mod.ANSI_RE.sub("", rem_prog[len("\033[1A\r\033[2K") :]).rstrip("\n")
+                self.assertLessEqual(self.mod.display_width(plain_collapsed), 80)
+
+                # Step with output that fails prints red ✗ at column 0 without 2-space indent
+                pf_fail_out = self.mod._ProgressLineFilter(
+                    {1: {"step": 1, "tag": "exec", "desc": "run"}},
+                    total_steps=1,
+                    clock=iter([1.0, 2.5]).__next__,
+                )
+                pf_fail_out.feed_events("__RB_STEP__:1\nerror line\n")
+                _, fail_prog = pf_fail_out.flush(rc=2)
+                self.assertEqual(fail_prog, "\x1b[31m✗ [1/1] (1.5s)\x1b[0m\n")
+        finally:
+            if saved_nc is not None:
+                os.environ["NO_COLOR"] = saved_nc
+
+        # 2. ASCII fallback (+ / x / >) at column 0 without ANSI when NO_COLOR=1
+        tty_ascii = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
+        tty_ascii.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdout", tty_ascii), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((50, 24))):
+            pf_asc = self.mod._ProgressLineFilter(
+                {
+                    1: {"step": 1, "tag": "exec", "desc": "silent_cmd"},
+                    2: {"step": 2, "tag": "exec", "desc": "noisy_fail"},
+                },
+                total_steps=2,
+                clock=iter([0.0, 0.01, 0.21]).__next__,
+            )
+            ev_asc = pf_asc.feed_events("__RB_STEP__:1\n__RB_STEP__:2\nbad\n")
+            self.assertEqual(ev_asc[0], ("prog", "> [1/2] [exec] silent_cmd\n"))
+            self.assertEqual(
+                ev_asc[1],
+                ("prog", "\033[1A\r\033[2K+ [1/2] [exec] silent_cmd (10ms)\n> [2/2] [exec] noisy_fail\n"),
+            )
+            _, rem_asc = pf_asc.flush(rc=1)
+            self.assertEqual(rem_asc, "x [2/2] (200ms)\n")
+
+        # 3. Non-TTY suppresses in-place ANSI cursor overwrite even for silent steps
+        pf_nontty = self.mod._ProgressLineFilter(
+            {1: {"step": 1, "tag": "exec", "desc": "silent"}},
+            total_steps=1,
+            clock=iter([0.0, 0.02]).__next__,
+            is_tty=False,
+        )
+        pf_nontty.feed_events("__RB_STEP__:1\n")
+        _, rem_nontty = pf_nontty.flush(rc=0)
+        self.assertEqual(rem_nontty, "✓ [1/1] (20ms)\n")
+        self.assertNotIn("\033[1A", rem_nontty)
+
+        # 4. End-to-end run_script: silent step collapses, stdout & stderr steps keep header and align at col 0
+        work = self.tmp / "f56_work"
+        work.mkdir()
+        (work / "a.txt").write_text("hello_f56\n", encoding="utf-8")
+        sdir = self.tmp / "s56"
+        step1_dir = sdir / "1"
+        step1_dir.mkdir(parents=True)
+        script_p = step1_dir / "block.sh"
+        out_p = step1_dir / "out"
+        script_p.write_text("mkdir -p sub_dir\ncat a.txt\necho err_f56 >&2\n", encoding="utf-8")
+        os.environ["RUN_BLOCK_CWD"] = str(work)
+        buf_e2e = io.StringIO()
+        buf_e2e.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdout", buf_e2e), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, "")), \
+             unittest.mock.patch.object(self.mod, "offer_clipboard_copy"):
+            rc_e2e = self.mod.run_script("s56/1", script_p, out_p, auto_yes=False)
+        self.assertEqual(rc_e2e, 0)
+        live_e2e = buf_e2e.getvalue()
+        self.assertIn("\033[1A\r\033[2K✓ [1/3] [write] mkdir -p sub_dir (", live_e2e)
+        self.assertIn("▸ [2/3] [read] cat a.txt\nhello_f56\n✓ [2/3] (", live_e2e)
+        self.assertIn("▸ [3/3] [exec] echo err_f56 >&2\nerr_f56\n✓ [3/3] (", live_e2e)
+        self.assertNotIn("  ✓ [", live_e2e)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -396,6 +396,7 @@ class _ProgressLineFilter:
         total_steps: int,
         marker_prefix: str = "__RB_STEP__:",
         clock: object = None,
+        is_tty: bool | None = None,
     ) -> None:
         self.step_map = step_map
         self.total_steps = total_steps
@@ -403,10 +404,47 @@ class _ProgressLineFilter:
         self.buf = ""
         self._marker_re = re.compile(rf"^{re.escape(marker_prefix)}(\d+)\r?$")
         self._clock = clock if callable(clock) else time.monotonic
+        if is_tty is None:
+            try:
+                self._is_tty = bool(sys.stdout.isatty())
+            except Exception:
+                self._is_tty = False
+        else:
+            self._is_tty = bool(is_tty)
         self.active_step: int | None = None
         self._active_started: float | None = None
+        self._active_has_output: bool = False
         self.step_durations: dict[int, float] = {}
         self.step_order: list[int] = []
+
+    def mark_output(self) -> None:
+        if self.active_step is not None:
+            self._active_has_output = True
+
+    @staticmethod
+    def _truncate_width(text: str, max_w: int) -> str:
+        if display_width(text) <= max_w:
+            return text
+        if max_w <= 3:
+            out_chars: list[str] = []
+            cur_w = 0
+            for ch in text:
+                cw = display_width(ch)
+                if cur_w + cw > max(0, max_w):
+                    break
+                out_chars.append(ch)
+                cur_w += cw
+            return "".join(out_chars)
+        out_chars = []
+        cur_w = 0
+        limit = max_w - 3
+        for ch in text:
+            cw = display_width(ch)
+            if cur_w + cw > limit:
+                break
+            out_chars.append(ch)
+            cur_w += cw
+        return "".join(out_chars).rstrip() + "..."
 
     def _format_step_banner(self, step_num: int) -> str:
         info = self.step_map.get(step_num)
@@ -424,19 +462,49 @@ class _ProgressLineFilter:
         line = f"{prefix} {desc}".rstrip()
         arrow = "▸" if _supports_utf8() else ">"
         if _use_color():
-            return f"\x1b[2;36m{arrow} {line}\x1b[0m\n"
+            return f"\x1b[90m{arrow} {line}\x1b[0m\n"
         return f"{arrow} {line}\n"
 
-    def _format_step_done(self, step_num: int, elapsed: float, failed: bool = False) -> str:
-        if step_num not in self.step_map:
+    def _format_step_done(
+        self,
+        step_num: int,
+        elapsed: float,
+        failed: bool = False,
+        collapsed: bool = False,
+    ) -> str:
+        info = self.step_map.get(step_num)
+        if info is None:
             return ""
         dur_str = format_duration(elapsed)
         mark = ("✗" if failed else "✓") if _supports_utf8() else ("x" if failed else "+")
-        line = f"  {mark} [{step_num}/{self.total_steps}] ({dur_str})"
+        if collapsed:
+            tag = str(info.get("tag") or "")
+            desc = str(info.get("desc") or "").replace("\n", " ").strip()
+            prefix = f"{mark} [{step_num}/{self.total_steps}]"
+            if tag:
+                prefix = f"{prefix} [{tag}]"
+            suffix = f"({dur_str})"
+            max_cols = _hr_width()
+            if desc:
+                avail = max_cols - display_width(prefix) - display_width(suffix) - 2
+                if avail >= 4:
+                    desc = self._truncate_width(desc, avail)
+                    line = f"{prefix} {desc} {suffix}"
+                elif avail > 0 and display_width(desc) <= avail:
+                    line = f"{prefix} {desc} {suffix}"
+                else:
+                    line = f"{prefix} {suffix}"
+            else:
+                line = f"{prefix} {suffix}"
+            line = self._truncate_width(line, max_cols)
+            ctrl = "\033[1A\r\033[2K"
+        else:
+            line = f"{mark} [{step_num}/{self.total_steps}] ({dur_str})"
+            ctrl = ""
         if _use_color():
-            col = "\x1b[2;31m" if failed else "\x1b[2;32m"
-            return f"{col}{line}\x1b[0m\n"
-        return f"{line}\n"
+            col = "\x1b[31m" if failed else "\x1b[90m"
+            return f"{ctrl}{col}{line}\x1b[0m\n"
+        return f"{ctrl}{line}\n"
 
     def _start_step(self, step_num: int) -> str:
         now = float(self._clock())
@@ -444,11 +512,15 @@ class _ProgressLineFilter:
         if self.active_step is not None and self._active_started is not None:
             elapsed = max(0.0, now - self._active_started)
             self.step_durations[self.active_step] = elapsed
-            done_line = self._format_step_done(self.active_step, elapsed)
+            collapsed = self._is_tty and not self._active_has_output
+            done_line = self._format_step_done(
+                self.active_step, elapsed, collapsed=collapsed
+            )
             if done_line:
                 parts.append(done_line)
         self.active_step = step_num
         self._active_started = now
+        self._active_has_output = False
         if step_num not in self.step_order:
             self.step_order.append(step_num)
         banner = self._format_step_banner(step_num)
@@ -468,12 +540,16 @@ class _ProgressLineFilter:
                 if prog:
                     events.append(("prog", prog))
             else:
+                if self.active_step is not None:
+                    self._active_has_output = True
                 events.append(("out", line + "\n"))
         if self.buf:
             if not (
                 self.marker_prefix.startswith(self.buf)
                 or self.buf.startswith(self.marker_prefix)
             ):
+                if self.active_step is not None:
+                    self._active_has_output = True
                 events.append(("out", self.buf))
                 self.buf = ""
         return events
@@ -500,11 +576,16 @@ class _ProgressLineFilter:
                 if prog:
                     prog_parts.append(prog)
             else:
+                if self.active_step is not None:
+                    self._active_has_output = True
                 rem_out = rem
         if self.active_step is not None and self._active_started is not None:
             elapsed = max(0.0, float(self._clock()) - self._active_started)
             self.step_durations[self.active_step] = elapsed
-            done_line = self._format_step_done(self.active_step, elapsed, failed=(rc != 0))
+            collapsed = self._is_tty and not self._active_has_output
+            done_line = self._format_step_done(
+                self.active_step, elapsed, failed=(rc != 0), collapsed=collapsed
+            )
             if done_line:
                 prog_parts.append(done_line)
             self._active_started = None
@@ -757,6 +838,8 @@ def run_script(
         if is_err:
             err_chunks.append(text)
             log_chunks.append(text)
+            if progress_filter is not None and text:
+                progress_filter.mark_output()
             sys.stdout.write(text)
             sys.stdout.flush()
             return
