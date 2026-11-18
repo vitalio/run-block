@@ -1,3 +1,12 @@
+# 🎯 [NEXT] F63: Render hierarchical tabular bundle Summary and Details with char sizes and clean Preamble
+
+- Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
+- Fix false `[text] Preamble` fragments in `parse_bundle_fragments()` (`src/bundle_plan.py`): ignore standalone `===== ... =====` section headers (such as `===== Rules =====`) outside `<!-- bundle:<nonce>:part ... -->` markers so only real unframed preamble text creates a `Preamble` part.
+- Eliminate duplicate `<prefix>: <prefix>:<name>` labels in `format_bundle_group_items()` and `format_bundle_part_items()` (`src/bundle_plan.py`) when the item name already starts with the group/chain prefix.
+- Expand root-level items (`chain: []` or empty `group`) directly in `Summary` and expand nested `chain` levels (`bundle` / `ruleset` hierarchies) in `Summary` and `d(etails)` (`src/bundle_plan.py`, `src/ui.py`).
+- Compute and store `chars` per part in `_build_bundle_plan()` (falling back to `bytes` for older `meta.json`) and render `Summary` and `Parts` as right-aligned numeric columns (`%`, `chars`, `L`, `tokens`) followed by `[kind]` and the description column, wrapping only the description column cleanly on narrow terminals (`src/bundle_plan.py`, `src/ui.py`).
+- Update `README.md` and unit tests in `tests/test_run_block.py`.
+
 # 🎯 [NEXT] F62: Colorize full BLOCK PLAN operation lines with bold tags and regular body tint
 
 - Update `_colorize_operation_lines()` and `_colorize_python_op_rest()` in `src/ui.py` so every operation tag in `_TAG_COLORS` (`read`, `write`, `exec`, `git`, `python`) renders only the `[tag]` bracket in bold (`\x1b[1;...m`) while the operation body and any wrapped continuation lines render in the matching non-bold color (`\x1b[...m` without `1;`), keeping step numbers, tree connectors (`├─`, `└─`), and `NO_COLOR`/non-TTY output unchanged.
@@ -75,6 +84,14 @@
   - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`prompt_yes_no_box`, default `No`); on confirmation (`y`/`Enter`), clear the completion marker in `meta.json` and proceed to `BLOCK PLAN`, otherwise exit with `NOT RUN`.
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
 - Document session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` (bundled via `src/bundles/run_block.bundle`), plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
+
+# 🎯 [NEXT] F64: Record part line ranges and support viewing individual parts by number in Details and CLI
+
+- Depends on: F63
+- Record 1-based `line_start` and `line_end` line ranges in cleaned `<session>/0` for each part in `parse_bundle_fragments()` (`src/bundle_plan.py`) without duplicating fragment text in `meta.json`.
+- When `d(etails)` is active in `START BUNDLE` (`src/ui.py`), allow selecting any numbered part (`p(art)` or typing part number `1..N`) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `START BUNDLE`.
+- Add `--part N` option to `run_block --show <session>` and `run_block --bundle-plan <session>` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`.
+- Update `README.md` and unit tests in `tests/test_run_block.py`.
 
 # ⚪ [NEW] F15: Move exported rules/bundles to agents/ and forbid trailing prose after closing fence
 
