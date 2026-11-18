@@ -1,3 +1,9 @@
+# ✅ [DONE] F59: Redraw active TUI box in place on terminal resize (SIGWINCH) — *2026-11-18, Redraw active TUI box in place on terminal resize (SIGWINCH)*
+
+- Monitor terminal window resize events (`SIGWINCH` via a self-pipe registered in `select()`) while waiting for user input in `read_clipboard_key()` and `read_confirm_key()` in `src/ui.py`, debouncing rapid resize events (~25ms) and restoring the previous `SIGWINCH` handler cleanly on exit.
+- When terminal width (`_hr_width()`) changes during `offer_clipboard_copy()`, `confirm_execution()`, or `prompt_yes_no_box()` in `src/ui.py`, recalculate the visual row count of the previously rendered box under the new width (`_box_rows_above_prompt()`), erase the old box in place, and re-render the active box (`BUNDLE`, `PLAN`, `END`, or confirmation dialog) for the new width with the cursor restored at the prompt.
+- Acceptance criteria: shrinking or widening a POSIX TTY while an interactive TUI prompt is waiting redraws the active box cleanly in place without broken `│ ` borders or duplicate lines, and subsequent `e(dit)` redraws remain aligned; `README.md` and offline unit tests in `tests/test_run_block.py` are updated.
+
 # ✅ [DONE] F61: Auto-detect existing step number collisions in run_block and offer interactive renumbering to the next free step — *2026-11-18, Offer interactive r(enumber) to next free step on step number collision*
 
 - When starting a step that already exists on disk (e.g., trying to run s154/8 when it already ran), prompt the user in the interactive TUI block confirmation: `Step s154/8 already exists. r(enumber) to next free step / r(estart) / Esc [r/R/Esc]:` (or similar prompt).

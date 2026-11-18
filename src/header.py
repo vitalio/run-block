@@ -39,6 +39,7 @@ import re
 import select
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile

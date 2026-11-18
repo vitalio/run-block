@@ -91,7 +91,11 @@ overwrite it. Across all interactive TUI confirmation prompts (`PLAN`, `END`,
 `CLEAN SESSIONS`), `Esc` consistently cancels or exits without proceeding. In the `END` clipboard prompt (and
 `BUNDLE`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
 `<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
-recalculating line/char/token statistics, `Error:` lines, and clipboard targets in place.
+recalculating line/char/token statistics, `Error:` lines, and clipboard targets
+in place. While any interactive TUI box (`BUNDLE`, `PLAN`, `END`, or
+confirmation prompt) is waiting for input on a POSIX TTY, resizing the
+terminal window (`SIGWINCH`) automatically erases and redraws the active box
+in place to match the new width.
 
 ### 3. Patching a failed block (`--fix`)
 

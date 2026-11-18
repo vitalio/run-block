@@ -3925,5 +3925,210 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("chars ·", r_bp.stdout)
         self.assertNotIn(" B ·", r_bp.stdout)
 
+    def test_f59_sigwinch_in_place_box_redraw(self):
+        import pty
+        import signal
+        import threading
+        import time
+
+        if not (self.mod.HAS_PTY and hasattr(signal, "SIGWINCH")):
+            self.skipTest("POSIX PTY and SIGWINCH required")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        # 1. read_clipboard_key & read_confirm_key detect SIGWINCH via self-pipe,
+        #    debounce rapid bursts (~25ms), and restore previous SIGWINCH handler on exit
+        prev_calls: list[int] = []
+        orig_handler = signal.getsignal(signal.SIGWINCH)
+
+        def custom_prev_handler(signum, _frame):
+            prev_calls.append(signum)
+
+        signal.signal(signal.SIGWINCH, custom_prev_handler)
+        try:
+            m_fd, s_fd = pty.openpty()
+            try:
+                tty_r = os.fdopen(os.dup(s_fd), "r", encoding="utf-8", errors="replace")
+                with tty_r:
+                    t1 = threading.Timer(0.02, lambda: os.kill(os.getpid(), signal.SIGWINCH))
+                    t2 = threading.Timer(0.03, lambda: os.kill(os.getpid(), signal.SIGWINCH))
+                    t1.start()
+                    t2.start()
+                    try:
+                        act1 = self.mod.read_clipboard_key(tty_r)
+                    finally:
+                        t1.join(timeout=1.0)
+                        t2.join(timeout=1.0)
+                    self.assertEqual(act1, "resize")
+                    self.assertIs(signal.getsignal(signal.SIGWINCH), custom_prev_handler)
+                    self.assertEqual(len(prev_calls), 2)
+
+                tty_r2 = os.fdopen(os.dup(s_fd), "r", encoding="utf-8", errors="replace")
+                with tty_r2:
+                    t3 = threading.Timer(0.02, lambda: os.kill(os.getpid(), signal.SIGWINCH))
+                    t3.start()
+                    try:
+                        act2 = self.mod.read_confirm_key(tty_r2, default_yes=True)
+                    finally:
+                        t3.join(timeout=1.0)
+                    self.assertEqual(act2, "resize")
+                    self.assertIs(signal.getsignal(signal.SIGWINCH), custom_prev_handler)
+            finally:
+                os.close(m_fd)
+                os.close(s_fd)
+        finally:
+            signal.signal(signal.SIGWINCH, orig_handler)
+
+        # 2. offer_clipboard_copy redraws BUNDLE in place on shrink (96 -> 52) & widen (52 -> 96),
+        #    and subsequent e(dit) redraws stay aligned
+        sdir = self.tmp / "s59"
+        sdir.mkdir(parents=True, exist_ok=True)
+        b0 = sdir / "0"
+        b0.write_text(
+            "Session: s59\nNext-Block: s59/1\n"
+            f"Workdir: {self.tmp}\nSandbox: off\nDate: 2026-11-18 18:00 UTC\n"
+            "Title: Long session title that clamps cleanly when terminal shrinks and expands on widen\n\n"
+            "Initial bundle body\n",
+            encoding="utf-8",
+        )
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        cur_cols = [96]
+
+        def fake_term_size(_fallback=(80, 24)):
+            return os.terminal_size((cur_cols[0], 24))
+
+        def fake_edit(p: Path, _r, _w) -> None:
+            p.write_text(p.read_text(encoding="utf-8") + "Edited line\n", encoding="utf-8")
+
+        m_fd2, s_fd2 = pty.openpty()
+        try:
+            tty_w2 = _KeepOpenStringIO()
+            tty_r2 = os.fdopen(os.dup(s_fd2), "r", encoding="utf-8", errors="replace")
+            with tty_r2:
+                def _shrink_then_widen_then_edit():
+                    time.sleep(0.05)
+                    cur_cols[0] = 52
+                    os.kill(os.getpid(), signal.SIGWINCH)
+                    time.sleep(0.08)
+                    cur_cols[0] = 96
+                    os.kill(os.getpid(), signal.SIGWINCH)
+                    time.sleep(0.08)
+                    os.write(m_fd2, b"e")
+                    time.sleep(0.05)
+                    os.write(m_fd2, b"\x1b")
+
+                driver = threading.Thread(target=_shrink_then_widen_then_edit, daemon=True)
+                with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                     unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+                     unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0}")), \
+                     unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w2, tty_r2)), \
+                     unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_edit), \
+                     unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=fake_term_size), \
+                     unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                    driver.start()
+                    self.mod.offer_clipboard_copy("s59/0", b0, title_kind="BUNDLE", sdir=sdir)
+                    driver.join(timeout=2.0)
+
+            rendered_b = tty_w2.getvalue()
+            # Initial (96) + shrink (52) + widen (96) + e(dit) (96) = 4 BUNDLE renders
+            self.assertEqual(rendered_b.count("╭─ BUNDLE "), 4)
+            self.assertIn("\033[J╭─ BUNDLE ", rendered_b)
+            self.assertIn("Title:      Long session title that clamps", rendered_b)
+            self.assertIn("(edited)", rendered_b)
+            self.assertIn("│ Skipped clipboard copy.\n", rendered_b)
+        finally:
+            os.close(m_fd2)
+            os.close(s_fd2)
+
+        # 3. confirm_execution redraws PLAN in place on shrink (96 -> 50) and keeps subsequent e(dit) aligned
+        step1 = sdir / "1"
+        step1.mkdir(parents=True, exist_ok=True)
+        sc1 = step1 / "block.sh"
+        sc1.write_text("cat " + "/".join(["segment"] * 10) + "/file.txt\n", encoding="utf-8")
+        sum1 = self.mod.summarize_script_actions(sc1.read_text(encoding="utf-8"), work_dir=self.tmp)
+        cur_cols[0] = 96
+
+        m_fd3, s_fd3 = pty.openpty()
+        try:
+            tty_w3 = _KeepOpenStringIO()
+            tty_r3 = os.fdopen(os.dup(s_fd3), "r", encoding="utf-8", errors="replace")
+            with tty_r3:
+                def _plan_resize_and_edit():
+                    time.sleep(0.05)
+                    cur_cols[0] = 50
+                    os.kill(os.getpid(), signal.SIGWINCH)
+                    time.sleep(0.08)
+                    os.write(m_fd3, b"e")
+                    time.sleep(0.05)
+                    os.write(m_fd3, b"n")
+
+                driver3 = threading.Thread(target=_plan_resize_and_edit, daemon=True)
+                with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                     unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w3, tty_r3)), \
+                     unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=lambda p, _r, _w: p.write_text("ls -la\n", encoding="utf-8")), \
+                     unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=fake_term_size), \
+                     unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                    driver3.start()
+                    approved, reason = self.mod.confirm_execution(
+                        "s59/1", sc1.read_text(encoding="utf-8"), summary=sum1, script_path=sc1
+                    )
+                    driver3.join(timeout=2.0)
+
+            self.assertFalse(approved)
+            self.assertEqual(reason, "USER_ABORTED")
+            rendered_p = tty_w3.getvalue()
+            # Initial (96) + shrink (50) + e(dit) (50) = 3 PLAN renders
+            self.assertEqual(rendered_p.count("╭─ PLAN "), 3)
+            self.assertIn("1. [read]  ls -la", rendered_p)
+            self.assertIn("(edited)", rendered_p)
+            self.assertIn("│ ✗ Aborted (--retry s59/1)\n", rendered_p)
+        finally:
+            os.close(m_fd3)
+            os.close(s_fd3)
+
+        # 4. prompt_yes_no_box redraws confirmation box in place on shrink (96 -> 48) and widen (48 -> 96)
+        cur_cols[0] = 96
+        m_fd4, s_fd4 = pty.openpty()
+        try:
+            tty_w4 = _KeepOpenStringIO()
+            tty_r4 = os.fdopen(os.dup(s_fd4), "r", encoding="utf-8", errors="replace")
+            with tty_r4:
+                def _confirm_resize():
+                    time.sleep(0.05)
+                    cur_cols[0] = 48
+                    os.kill(os.getpid(), signal.SIGWINCH)
+                    time.sleep(0.08)
+                    cur_cols[0] = 96
+                    os.kill(os.getpid(), signal.SIGWINCH)
+                    time.sleep(0.08)
+                    os.write(m_fd4, b"y")
+
+                driver4 = threading.Thread(target=_confirm_resize, daemon=True)
+                with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=fake_term_size), \
+                     unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                    driver4.start()
+                    res_yn = self.mod.prompt_yes_no_box(
+                        "STEP ALREADY EXISTS",
+                        ["Block:   s59/1", "Title:   Very long title that clamps at 48 cols and restores at 96 cols"],
+                        "Overwrite s59/1?",
+                        default_yes=False,
+                        tty_streams=(tty_w4, tty_r4),
+                    )
+                    driver4.join(timeout=2.0)
+
+            self.assertIs(res_yn, True)
+            rendered_yn = tty_w4.getvalue()
+            self.assertEqual(rendered_yn.count("╭─ STEP ALREADY EXISTS "), 3)
+            self.assertIn("Title: Very long title that clamps at 48 cols…", rendered_yn)
+            self.assertIn("Title: Very long title that clamps at 48 cols and restores at 96 cols", rendered_yn)
+            self.assertIn("│ ✓ Confirmed by user.\n", rendered_yn)
+        finally:
+            os.close(m_fd4)
+            os.close(s_fd4)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -32,16 +32,20 @@ def start_session(name: str | None = None, force: bool = False, sandbox_mode: st
             if not sys.stdin.isatty():
                 raise SystemExit(f"{prog_name()}: session {sdir} already exists (use --force to overwrite)")
             if sys.stdout.isatty() and not no_clipboard():
-                sess_hdr = format_session_header_lines(
-                    label=name, sdir=sdir, sandbox_mode=sandbox_mode
-                )
+                def _sess_exists_lines() -> list[str]:
+                    hdr = format_session_header_lines(
+                        label=name, sdir=sdir, sandbox_mode=sandbox_mode
+                    )
+                    return [*hdr, "", f"Directory: {sdir}"]
+
                 ok = prompt_yes_no_box(
                     "SESSION ALREADY EXISTS",
-                    [*sess_hdr, "", f"Directory: {sdir}"],
+                    _sess_exists_lines(),
                     f"Overwrite session {name}?",
                     default_yes=False,
                     yes_status=f"✓ Overwriting session {name}.",
                     no_status=f"✗ Aborted overwriting session {name}.",
+                    content_builder=_sess_exists_lines,
                 )
                 if not ok:
                     raise SystemExit(f"{prog_name()}: aborted")
@@ -1087,12 +1091,15 @@ def cmd_normal(
                 existing_lines.append(f"Script: {script_path}")
             if out_path.exists():
                 existing_lines.append(f"Output: {out_path}")
-            step_hdr = format_session_header_lines(
-                label=label, sdir=sdir, sandbox_mode=sandbox_override
-            )
+            def _step_exists_lines() -> list[str]:
+                hdr = format_session_header_lines(
+                    label=label, sdir=sdir, sandbox_mode=sandbox_override
+                )
+                return [*hdr, "", *existing_lines]
+
             choice = prompt_yes_no_box(
                 "STEP ALREADY EXISTS",
-                [*step_hdr, "", *existing_lines],
+                _step_exists_lines(),
                 f"Step {label} already exists. r(enumber) to {next_label} or R(estart)?",
                 default_yes=False,
                 yes_status=f"✓ Overwriting {label}.",
@@ -1101,6 +1108,7 @@ def cmd_normal(
                 out_path=out_path if out_path.exists() else None,
                 renumber_label=next_label,
                 renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                content_builder=_step_exists_lines,
             )
             if choice == "renumber":
                 renumbered_from = label
@@ -1127,16 +1135,20 @@ def cmd_normal(
         prev_label = f"{session}/{step_num - 1}"
         allow_skip = False
         if sys.stdout.isatty() and not no_clipboard() and not headless:
-            step_hdr = format_session_header_lines(
-                label=label, sdir=sdir, sandbox_mode=sandbox_override
-            )
+            def _missing_prev_lines() -> list[str]:
+                hdr = format_session_header_lines(
+                    label=label, sdir=sdir, sandbox_mode=sandbox_override
+                )
+                return [*hdr, "", f"Missing: {prev_label}"]
+
             allow_skip = prompt_yes_no_box(
                 "MISSING PREVIOUS STEP",
-                [*step_hdr, "", f"Missing: {prev_label}"],
+                _missing_prev_lines(),
                 f"Run {label} anyway?",
                 default_yes=False,
                 yes_status=f"✓ Proceeding with {label} (skipped {prev_label}).",
                 no_status=f"✗ Canceled {label} (run {prev_label} first).",
+                content_builder=_missing_prev_lines,
             )
             if not allow_skip:
                 return 2

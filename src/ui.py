@@ -15,9 +15,104 @@ def flush_tty_input(tty_r) -> None:
             pass
 
 
-def read_clipboard_key(tty_r) -> str:
-    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', or 'details'."""
-    flush_tty_input(tty_r)
+def _drain_fd_nonblock(fd: int) -> None:
+    while True:
+        try:
+            chunk = os.read(fd, 256)
+            if not chunk:
+                break
+        except OSError:
+            break
+
+
+def _drain_and_debounce_sigwinch(
+    win_fd: int,
+    debounce_s: float = 0.025,
+    max_wait_s: float = 0.10,
+) -> None:
+    _drain_fd_nonblock(win_fd)
+    start = time.monotonic()
+    deadline = start + debounce_s
+    max_deadline = start + max_wait_s
+    while True:
+        rem = deadline - time.monotonic()
+        if rem <= 0:
+            break
+        try:
+            rlist, _, _ = select.select([win_fd], [], [], rem)
+        except (InterruptedError, OSError):
+            continue
+        if not rlist:
+            break
+        _drain_fd_nonblock(win_fd)
+        now = time.monotonic()
+        if now >= max_deadline:
+            break
+        deadline = min(max_deadline, now + debounce_s)
+
+
+class _SigwinchWatcher:
+    """Monitors POSIX SIGWINCH via a self-pipe and restores the prior handler on exit."""
+
+    def __init__(self) -> None:
+        self._r_fd = -1
+        self._w_fd = -1
+        self._prev_handler = None
+        self._installed = False
+
+    def __enter__(self) -> int | None:
+        if not hasattr(signal, "SIGWINCH") or not hasattr(os, "pipe"):
+            return None
+        try:
+            r_fd, w_fd = os.pipe()
+            os.set_blocking(r_fd, False)
+            os.set_blocking(w_fd, False)
+            self._r_fd = r_fd
+            self._w_fd = w_fd
+            prev = signal.getsignal(signal.SIGWINCH)
+
+            def _on_sigwinch(signum, frame) -> None:
+                try:
+                    os.write(w_fd, b"1")
+                except OSError:
+                    pass
+                if callable(prev):
+                    try:
+                        prev(signum, frame)
+                    except Exception:
+                        pass
+
+            self._prev_handler = signal.signal(signal.SIGWINCH, _on_sigwinch)
+            self._installed = True
+            return self._r_fd
+        except (ValueError, OSError, AttributeError):
+            self._cleanup()
+            return None
+
+    def _cleanup(self) -> None:
+        if self._installed:
+            try:
+                signal.signal(signal.SIGWINCH, self._prev_handler)
+            except (ValueError, OSError, AttributeError):
+                pass
+            self._installed = False
+        for fd_to_close in (self._r_fd, self._w_fd):
+            if fd_to_close >= 0:
+                try:
+                    os.close(fd_to_close)
+                except OSError:
+                    pass
+        self._r_fd = -1
+        self._w_fd = -1
+
+    def __exit__(self, _exc_type, _exc, _tb) -> None:
+        self._cleanup()
+
+
+def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
+    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'details', or 'resize'."""
+    if flush:
+        flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
         ans = tty_r.readline().strip().lower()
         if ans in ("d", "details"):
@@ -39,27 +134,38 @@ def read_clipboard_key(tty_r) -> str:
         return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
-        while True:
-            ch = os.read(fd, 1)
-            if not ch:
-                return "skip"
-            if ch in (b"d", b"D"):
-                return "details"
-            if ch in (b"e", b"E"):
-                return "edit"
-            if ch in (b"v", b"V"):
-                return "view"
-            if ch in (b"\r", b"\n", b"y", b"Y"):
-                return "copy"
-            if ch in (b"n", b"N", b"q", b"Q", b"\x03", b"\x04"):
-                return "skip"
-            if ch == b"\x1b":
-                # Distinguish standalone Esc from multi-byte escape sequences (like arrow keys)
-                rlist, _, _ = select.select([fd], [], [], 0.05)
-                if rlist:
-                    os.read(fd, 32)
-                    continue
-                return "skip"
+        with _SigwinchWatcher() as win_fd:
+            while True:
+                if win_fd is not None:
+                    try:
+                        rlist, _, _ = select.select([fd, win_fd], [], [])
+                    except (InterruptedError, OSError):
+                        continue
+                    if win_fd in rlist:
+                        _drain_and_debounce_sigwinch(win_fd)
+                        return "resize"
+                    if fd not in rlist:
+                        continue
+                ch = os.read(fd, 1)
+                if not ch:
+                    return "skip"
+                if ch in (b"d", b"D"):
+                    return "details"
+                if ch in (b"e", b"E"):
+                    return "edit"
+                if ch in (b"v", b"V"):
+                    return "view"
+                if ch in (b"\r", b"\n", b"y", b"Y"):
+                    return "copy"
+                if ch in (b"n", b"N", b"q", b"Q", b"\x03", b"\x04"):
+                    return "skip"
+                if ch == b"\x1b":
+                    # Distinguish standalone Esc from multi-byte escape sequences (like arrow keys)
+                    rlist, _, _ = select.select([fd], [], [], 0.05)
+                    if rlist:
+                        os.read(fd, 32)
+                        continue
+                    return "skip"
     finally:
         try:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
@@ -455,6 +561,30 @@ def format_prompt_box(
     return _render_block(title, content_lines, prompt_line=prompt_line)
 
 
+def _fit_prompt_content_lines(lines: list[str], max_width: int) -> list[str]:
+    aligned = _align_kv_lines(lines)
+    if max_width <= 0:
+        return aligned
+    fitted: list[str] = []
+    for line in aligned:
+        if display_width(line) <= max_width:
+            fitted.append(line)
+            continue
+        m_kv = _KV_LINE_RE.match(line)
+        if m_kv and m_kv.group(1) == "Title:":
+            key_lbl = m_kv.group(1)
+            val_txt = m_kv.group(2).lstrip()
+            gap = len(line) - len(key_lbl) - len(val_txt)
+            prefix = key_lbl + (" " * max(1, gap))
+            avail = max(8, max_width - len(prefix))
+            fitted.append(prefix + _truncate_display_width(val_txt, avail))
+        else:
+            fitted.extend(
+                textwrap.wrap(line, width=max_width, subsequent_indent="  ") or [line]
+            )
+    return fitted
+
+
 def _build_prompt_yes_no_suffix(
     default_yes: bool,
     has_script: bool = False,
@@ -487,6 +617,7 @@ def prompt_yes_no_box(
     out_path: Path | None = None,
     renumber_label: str | None = None,
     renumber_status: str | None = None,
+    content_builder=None,
 ) -> bool | str:
     has_script = script_path is not None and script_path.is_file()
     has_output = out_path is not None and out_path.is_file()
@@ -535,8 +666,13 @@ def prompt_yes_no_box(
     if can_copy:
         extra_keys["c"] = "copy"
         extra_keys["copy"] = "copy"
+    prev_cols = _hr_width()
+    init_lines = content_builder() if callable(content_builder) else content_lines
     box, rule_width, cursor_offset = format_prompt_box(
-        title, content_lines, prompt_line, status_lines=status_list
+        title,
+        _fit_prompt_content_lines(init_lines, max(24, prev_cols - 2)),
+        prompt_line,
+        status_lines=status_list,
     )
     _, border_col = _block_colors(title)
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
@@ -553,6 +689,7 @@ def prompt_yes_no_box(
             tty_w.flush()
             status_line: str | None = None
             result: bool | str = False
+            first_read = True
             while True:
                 action = read_confirm_key(
                     tty_r,
@@ -560,7 +697,27 @@ def prompt_yes_no_box(
                     default_no=not default_yes,
                     extra_keys=extra_keys,
                     case_sensitive_keys=case_sensitive_keys,
+                    flush=first_read,
                 )
+                first_read = False
+                if action == "resize":
+                    new_cols = _hr_width()
+                    if new_cols != prev_cols:
+                        up_rows = _box_rows_above_prompt(box, new_cols)
+                        prev_cols = new_cols
+                        cur_lines = content_builder() if callable(content_builder) else content_lines
+                        box, rule_width, cursor_offset = format_prompt_box(
+                            title,
+                            _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
+                            prompt_line,
+                            status_lines=status_list,
+                        )
+                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                        prefixed_prompt = _prefix_block_line(prompt_line, border_color=border_col)
+                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.flush()
+                    continue
                 if action == "script" and has_script and script_path is not None:
                     open_script_in_editor(script_path, tty_r, tty_w)
                     tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
@@ -670,9 +827,12 @@ def read_confirm_key(
     default_no: bool = False,
     extra_keys: dict[str, str] | None = None,
     case_sensitive_keys: dict[str, str] | None = None,
+    *,
+    flush: bool = True,
 ) -> str:
-    """Reads a single key: returns 'yes', 'no', 'view', or an extra_keys action."""
-    flush_tty_input(tty_r)
+    """Reads a single key: returns 'yes', 'no', 'view', 'resize', or an extra_keys action."""
+    if flush:
+        flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
         return _parse_confirm_line(
             tty_r.readline(),
@@ -694,35 +854,46 @@ def read_confirm_key(
         )
     try:
         tty.setraw(fd, termios.TCSANOW)
-        while True:
-            ch = os.read(fd, 1)
-            if not ch:
-                return "no"
-            ch_str = ch.decode("latin1")
-            if case_sensitive_keys and ch_str in case_sensitive_keys:
-                return case_sensitive_keys[ch_str]
-            ch_low = ch_str.lower()
-            if extra_keys and ch_low in extra_keys:
-                return extra_keys[ch_low]
-            if ch in (b"e", b"E"):
-                return "edit"
-            if ch in (b"v", b"V"):
-                return "view"
-            if ch in (b"y", b"Y"):
-                return "yes"
-            if ch in (b"\r", b"\n"):
-                if default_yes:
-                    return "yes"
-                if default_no:
+        with _SigwinchWatcher() as win_fd:
+            while True:
+                if win_fd is not None:
+                    try:
+                        rlist, _, _ = select.select([fd, win_fd], [], [])
+                    except (InterruptedError, OSError):
+                        continue
+                    if win_fd in rlist:
+                        _drain_and_debounce_sigwinch(win_fd)
+                        return "resize"
+                    if fd not in rlist:
+                        continue
+                ch = os.read(fd, 1)
+                if not ch:
                     return "no"
-            if ch in (b"n", b"N", b"q", b"Q", b"\x03", b"\x04"):
-                return "no"
-            if ch == b"\x1b":
-                rlist, _, _ = select.select([fd], [], [], 0.05)
-                if rlist:
-                    os.read(fd, 32)
-                    continue
-                return "no"
+                ch_str = ch.decode("latin1")
+                if case_sensitive_keys and ch_str in case_sensitive_keys:
+                    return case_sensitive_keys[ch_str]
+                ch_low = ch_str.lower()
+                if extra_keys and ch_low in extra_keys:
+                    return extra_keys[ch_low]
+                if ch in (b"e", b"E"):
+                    return "edit"
+                if ch in (b"v", b"V"):
+                    return "view"
+                if ch in (b"y", b"Y"):
+                    return "yes"
+                if ch in (b"\r", b"\n"):
+                    if default_yes:
+                        return "yes"
+                    if default_no:
+                        return "no"
+                if ch in (b"n", b"N", b"q", b"Q", b"\x03", b"\x04"):
+                    return "no"
+                if ch == b"\x1b":
+                    rlist, _, _ = select.select([fd], [], [], 0.05)
+                    if rlist:
+                        os.read(fd, 32)
+                        continue
+                    return "no"
     finally:
         try:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
@@ -810,8 +981,30 @@ def confirm_execution(
         with tty_w, tty_r:
             tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
+            first_read = True
             while True:
-                action = read_confirm_key(tty_r, default_yes=default_yes)
+                action = read_confirm_key(tty_r, default_yes=default_yes, flush=first_read)
+                first_read = False
+                if action == "resize":
+                    new_cols = _hr_width()
+                    if new_cols != prev_cols:
+                        up_rows = _box_rows_above_prompt(box, new_cols)
+                        prev_cols = new_cols
+                        box, rule_width, cursor_offset = format_safety_box(
+                            label,
+                            findings,
+                            default_yes=default_yes,
+                            summary=summary,
+                            note=note,
+                            script_path=script_path,
+                            edited=is_edited,
+                        )
+                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                        prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.flush()
+                    continue
                 if action in ("edit", "view"):
                     if script_path is not None and script_path.is_file():
                         try:
@@ -844,8 +1037,9 @@ def confirm_execution(
                                     return False, reject_msg
                             default_yes = (len(findings) == 0 and approve_decision != "prompt")
                             is_edited = _is_file_edited(script_path, orig_path)
-                            up_rows = _box_rows_above_prompt(box, prev_cols)
-                            prev_cols = _hr_width()
+                            new_cols = _hr_width()
+                            up_rows = _box_rows_above_prompt(box, new_cols)
+                            prev_cols = new_cols
                             box, rule_width, cursor_offset = format_safety_box(
                                 label,
                                 findings,
@@ -861,7 +1055,25 @@ def confirm_execution(
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                         else:
-                            tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                            new_cols = _hr_width()
+                            if new_cols != prev_cols:
+                                up_rows = _box_rows_above_prompt(box, new_cols)
+                                prev_cols = new_cols
+                                box, rule_width, cursor_offset = format_safety_box(
+                                    label,
+                                    findings,
+                                    default_yes=default_yes,
+                                    summary=summary,
+                                    note=note,
+                                    script_path=script_path,
+                                    edited=is_edited,
+                                )
+                                bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                                prefixed_prompt = _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                                move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                                tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                            else:
+                                tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                     continue
                 if action == "yes":
@@ -1614,7 +1826,11 @@ def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
     if len(lines) <= 2:
         return 0
     cols = max(1, term_cols)
-    return sum(max(1, (display_width(ln) + cols - 1) // cols) for ln in lines[:-2])
+    above = sum(max(1, (display_width(ln) + cols - 1) // cols) for ln in lines[:-2])
+    prompt_w = display_width(lines[-2])
+    if prompt_w > cols:
+        above += (prompt_w - 1) // cols
+    return above
 
 
 def offer_clipboard_copy(
@@ -1689,12 +1905,43 @@ def offer_clipboard_copy(
         with tty_w, tty_r:
             tty_w.write(f"\n{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
+            first_read = True
             while True:
-                action = read_clipboard_key(tty_r)
+                action = read_clipboard_key(tty_r, flush=first_read)
+                first_read = False
+                if action == "resize":
+                    new_cols = _hr_width()
+                    if new_cols != prev_cols:
+                        up_rows = _box_rows_above_prompt(box, new_cols)
+                        prev_cols = new_cols
+                        box, rule_width, cursor_offset = format_clipboard_box(
+                            label,
+                            copy_target,
+                            ok=ok,
+                            rc=rc,
+                            stats=stats_line(copy_target),
+                            title_kind=title_kind,
+                            extra_lines=extra_lines,
+                            cmd_str=cmd_str,
+                            edited=is_edited,
+                            error_source=edit_target,
+                            duration_s=duration_s,
+                            op_timings=op_timings,
+                            failed_step=failed_step,
+                            bundle_details=show_details,
+                            sdir=sdir,
+                        )
+                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                        prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.flush()
+                    continue
                 if is_start_bundle and action == "details":
                     show_details = not show_details
-                    up_rows = _box_rows_above_prompt(box, prev_cols)
-                    prev_cols = _hr_width()
+                    new_cols = _hr_width()
+                    up_rows = _box_rows_above_prompt(box, new_cols)
+                    prev_cols = new_cols
                     box, rule_width, cursor_offset = format_clipboard_box(
                         label,
                         copy_target,
@@ -1745,8 +1992,9 @@ def offer_clipboard_copy(
                                     cmd, cmd_str = new_clip
                         if is_start_bundle or changed:
                             is_edited = _is_file_edited(edit_target, orig_path)
-                            up_rows = _box_rows_above_prompt(box, prev_cols)
-                            prev_cols = _hr_width()
+                            new_cols = _hr_width()
+                            up_rows = _box_rows_above_prompt(box, new_cols)
+                            prev_cols = new_cols
                             box, rule_width, cursor_offset = format_clipboard_box(
                                 label,
                                 copy_target,
@@ -1770,7 +2018,33 @@ def offer_clipboard_copy(
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                         else:
-                            tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
+                            new_cols = _hr_width()
+                            if new_cols != prev_cols:
+                                up_rows = _box_rows_above_prompt(box, new_cols)
+                                prev_cols = new_cols
+                                box, rule_width, cursor_offset = format_clipboard_box(
+                                    label,
+                                    copy_target,
+                                    ok=ok,
+                                    rc=rc,
+                                    stats=stats_line(copy_target),
+                                    title_kind=title_kind,
+                                    extra_lines=extra_lines,
+                                    cmd_str=cmd_str,
+                                    edited=is_edited,
+                                    error_source=edit_target,
+                                    duration_s=duration_s,
+                                    op_timings=op_timings,
+                                    failed_step=failed_step,
+                                    bundle_details=show_details,
+                                    sdir=sdir,
+                                )
+                                bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                                prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
+                                move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                                tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                            else:
+                                tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                     continue
                 if not is_start_bundle and not is_end_box and action == "view":
