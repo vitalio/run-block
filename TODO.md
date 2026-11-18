@@ -4,13 +4,15 @@
 - Update CLI `--help` text in `src/header.py`, project docs in `AGENTS.md` and `README.md`, and all assertions and box-title fixtures in `tests/test_run_block.py`.
 - Acceptance criteria: TUI box headers render `BUNDLE`, `PLAN`, and `END` consistently with existing border/title colors and prompt behaviors; `build.py --check` and full `tests/test_run_block.py` pass; `run_block` is rebuilt via `build.py`.
 
-# 🎯 [NEXT] F63: Render hierarchical tabular bundle Summary and Details with char sizes and clean Preamble
+# 🎯 [NEXT] F63: Unify Stats and hierarchical tabular bundle Summary/Details with char sizes and clean Preamble
 
 - Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
 - Fix false `[text] Preamble` fragments in `parse_bundle_fragments()` (`src/bundle_plan.py`): ignore standalone `===== ... =====` section headers (such as `===== Rules =====`) outside `<!-- bundle:<nonce>:part ... -->` markers so only real unframed preamble text creates a `Preamble` part.
 - Eliminate duplicate `<prefix>: <prefix>:<name>` labels in `format_bundle_group_items()` and `format_bundle_part_items()` (`src/bundle_plan.py`) when the item name already starts with the group/chain prefix.
 - Expand root-level items (`chain: []` or empty `group`) directly in `Summary` and expand nested `chain` levels (`bundle` / `ruleset` hierarchies) in `Summary` and `d(etails)` (`src/bundle_plan.py`, `src/ui.py`).
-- Compute and store `chars` per part in `_build_bundle_plan()` (falling back to `bytes` for older `meta.json`) and render `Summary` and `Parts` as right-aligned numeric columns (`%`, `chars`, `L`, `tokens`) followed by `[kind]` and the description column, wrapping only the description column cleanly on narrow terminals (`src/bundle_plan.py`, `src/ui.py`).
+- Unify `Stats`, `Summary`, `Parts` (`d(etails)`), and `--bundle-plan` `Total:` around `chars` as the shared size unit (`count_tokens()` and `format_stats()` in `src/ui.py`, `format_bundle_plan_text()` in `src/bundle_plan.py`, `format_start_bundle()` in `src/bundle.py`, and `Script:` sizing in `src/safety.py`), storing `chars` per part in `_build_bundle_plan()` (falling back to `bytes` for older `meta.json`).
+- Visually attach `Summary` / `Parts` directly under `Stats:` in the bundle box without a blank separator line (showing part count and `(edited)` on `Stats:` and keeping `RUN_BLOCK_TOKEN_STATS=false` behavior consistent), and account for `<session>/0` headers and inter-section spacing (e.g. a `[header]` entry when non-zero) so lines, `chars`, tokens, and `%` in the breakdown reconcile to 100% of `Stats:`.
+- Render `Summary` and `Parts` as right-aligned numeric columns (`%`, `chars`, `L`, `tokens`) followed by `[kind]` and the description column, wrapping only the description column cleanly on narrow terminals (`src/bundle_plan.py`, `src/ui.py`).
 - Update `README.md` and unit tests in `tests/test_run_block.py`.
 
 # 🎯 [NEXT] F62: Colorize full PLAN operation lines with bold tags and regular body tint
