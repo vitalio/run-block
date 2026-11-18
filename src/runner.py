@@ -342,7 +342,7 @@ def not_run_exit(
         and clipboard_command(err_target) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines)
+        offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             err_target, rc=rc, stats=stats_line(err_target), extra_lines=body_lines, label=label, sdir=sdir
@@ -350,7 +350,7 @@ def not_run_exit(
         sys.stdout.write(format_info_box("NOT RUN", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines)
+            offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     return rc
 
 
@@ -627,7 +627,7 @@ def _validate_step_script_syntax(
         and clipboard_command(out_path) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
@@ -635,7 +635,7 @@ def _validate_step_script_syntax(
         sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     return chk.returncode
 
 
@@ -942,6 +942,7 @@ def run_script(
             duration_s=duration_s,
             op_timings=op_timings,
             failed_step=failed_step,
+            sdir=sdir,
         )
     return rc
 

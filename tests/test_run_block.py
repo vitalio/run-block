@@ -3320,7 +3320,7 @@ class TestRunBlock(unittest.TestCase):
         try:
             with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((72, 24))):
                 plan_box, _, _ = self.mod.format_safety_box(
-                    "s1/1", [], default_yes=True, summary={"work_dir": str(proj), "meta": "1 line, bash"}
+                    "s1/1", [], default_yes=True, summary={"work_dir": str(proj.resolve()), "meta": "1 line, bash"}
                 )
                 end_box, _, _ = self.mod.format_clipboard_box("s1/1", s1_dir / "1" / "out", ok=True, rc=0)
                 hdr_confirm = self.mod.format_session_header_lines(label="s1/1", sdir=s1_dir, work_dir=proj)
@@ -3484,6 +3484,127 @@ class TestRunBlock(unittest.TestCase):
                 ascii_box, _, _ = self.mod.format_safety_box("s1/6", [], default_yes=True, summary=sum_root)
         self.assertIn("     |- [write]   build.py, run_block", ascii_box)
         self.assertIn("     `- [read]    VERSION", ascii_box)
+
+    def test_b10_end_not_run_syntax_error_headers_with_step_meta(self):
+        import json
+
+        # 1. _resolve_session_dir ignores <session>/<step>/meta.json and resolves parent session dir
+        custom_sdir = self.tmp / "custom_sess"
+        custom_step = custom_sdir / "1"
+        custom_step.mkdir(parents=True)
+        (custom_sdir / "0").write_text("Session: custom_sess\nNext-Block: custom_sess/1\n\nBody\n", encoding="utf-8")
+        (custom_sdir / "meta.json").write_text(json.dumps({"headers": [["Role", "execute"]]}), encoding="utf-8")
+        (custom_step / "meta.json").write_text(json.dumps({"duration_ms": 42, "exit_code": 0}), encoding="utf-8")
+        (custom_step / "out").write_text("[custom_sess/1] START\nok\n[custom_sess/1] END (42ms)\n", encoding="utf-8")
+        (custom_step / "block.sh").write_text("echo ok\n", encoding="utf-8")
+        self.assertEqual(self.mod._resolve_session_dir("custom_sess/1", custom_step / "out"), custom_sdir)
+        self.assertEqual(self.mod._resolve_session_dir("custom_sess/1", custom_step / "block.sh"), custom_sdir)
+
+        # Also when 0 is absent, step meta.json does not mask session meta.json
+        (custom_sdir / "0").unlink()
+        self.assertEqual(self.mod._resolve_session_dir("custom_sess/1", custom_step / "out"), custom_sdir)
+
+        # 2. Interactive & direct END, NOT RUN, and SYNTAX ERROR render all exposed headers identically to PLAN
+        proj = self.tmp / "b10_proj"
+        proj.mkdir()
+        sessions = self.tmp / "b10_sessions"
+        sessions.mkdir()
+        sdir = sessions / "s1"
+        sdir.mkdir()
+        bundle_txt = (
+            "Bundle-Command: agents_bundle role=execute task=B10\n"
+            "Bundle-Expose: Chat-Lang, Role, Task, Title\n"
+            f"Workdir: {proj}\n"
+            "Chat-Lang: Russian\n"
+            "Role: execute\n"
+            "Task: B10\n"
+            "Title: Forward headers into END\n\n"
+            "===== Prompt =====\nDo B10\n"
+        )
+        res = self.mod.format_start_bundle("s1", stdin_body=bundle_txt, work_dir=proj)
+        (sdir / "0").write_text(str(res["full"]), encoding="utf-8")
+        self.mod.write_session_meta(sdir, list(res["stdin_headers"]), bundle_plan=res["bundle_plan"])
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        saved_base = self.mod.BASE_DIR
+        saved_cwd_env = os.environ.pop("RUN_BLOCK_CWD", None)
+        self.mod.BASE_DIR = sessions
+        try:
+            with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
+                plan_box, _, _ = self.mod.format_safety_box(
+                    "s1/1", [], default_yes=True, summary={"work_dir": str(proj.resolve()), "meta": "1 line, bash"}
+                )
+            expected_headers = [
+                f"Workdir:   {proj.resolve()}",
+                "Chat-Lang: Russian",
+                "Role:      execute",
+                "Task:      B10",
+                "Title:     Forward headers into END",
+            ]
+            for hdr_ln in expected_headers:
+                with self.subTest(plan_hdr=hdr_ln):
+                    self.assertIn(hdr_ln, plan_box)
+            self.assertNotIn("Bundle-Command:", plan_box)
+
+            # Interactive run_script creates s1/1/meta.json and invokes offer_clipboard_copy(..., sdir=sdir)
+            fake_stdout = io.StringIO()
+            fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+            tty_w_end = _KeepOpenStringIO()
+            tty_r_end = io.StringIO("\n")
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),                  unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),                  unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")),                  unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_end, tty_r_end)),                  unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True),                  unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, "")),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))),                  unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                rc_end = self.mod.cmd_normal("s1/1", "echo b10_ok\n", auto_yes=False)
+            self.assertEqual(rc_end, 0)
+            self.assertTrue((sdir / "1" / "meta.json").is_file())
+            end_rendered = tty_w_end.getvalue()
+            self.assertIn("╭─ END ", end_rendered)
+            for hdr_ln in expected_headers:
+                with self.subTest(end_hdr=hdr_ln):
+                    self.assertIn(hdr_ln, end_rendered)
+            self.assertNotIn("Bundle-Command:", end_rendered)
+
+            # Direct format_clipboard_box WITHOUT explicit sdir also resolves s1 (not s1/1)
+            with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
+                direct_end, _, _ = self.mod.format_clipboard_box("s1/1", sdir / "1" / "out", ok=True, rc=0)
+            for hdr_ln in expected_headers:
+                with self.subTest(direct_end_hdr=hdr_ln):
+                    self.assertIn(hdr_ln, direct_end)
+
+            # SYNTAX ERROR with step meta.json present renders all exposed headers in interactive prompt
+            (sdir / "2").mkdir(parents=True, exist_ok=True)
+            (sdir / "2" / "meta.json").write_text(json.dumps({"duration_ms": 1, "exit_code": 2}), encoding="utf-8")
+            tty_w_syn = _KeepOpenStringIO()
+            tty_r_syn = io.StringIO("esc\n")
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),                  unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),                  unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")),                  unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_syn, tty_r_syn)),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))),                  unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                rc_syn = self.mod.cmd_normal("s1/2", "if true; then\n", auto_yes=False)
+            self.assertNotEqual(rc_syn, 0)
+            syn_rendered = tty_w_syn.getvalue()
+            self.assertIn("╭─ SYNTAX ERROR ", syn_rendered)
+            for hdr_ln in expected_headers:
+                with self.subTest(syn_hdr=hdr_ln):
+                    self.assertIn(hdr_ln, syn_rendered)
+            self.assertNotIn("Bundle-Command:", syn_rendered)
+
+            # NOT RUN with step meta.json present renders all exposed headers in interactive prompt
+            (sdir / "4").mkdir(parents=True, exist_ok=True)
+            (sdir / "4" / "meta.json").write_text(json.dumps({"duration_ms": 1, "exit_code": 2}), encoding="utf-8")
+            tty_w_nr = _KeepOpenStringIO()
+            tty_r_nr = io.StringIO("esc\n")
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),                  unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),                  unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")),                  unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_nr, tty_r_nr)),                  unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=True),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))),                  unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                rc_nr = self.mod.cmd_normal("s1/4", "", auto_yes=False)
+            self.assertEqual(rc_nr, 2)
+            nr_rendered = tty_w_nr.getvalue()
+            self.assertIn("╭─ NOT RUN ", nr_rendered)
+            for hdr_ln in expected_headers:
+                with self.subTest(nr_hdr=hdr_ln):
+                    self.assertIn(hdr_ln, nr_rendered)
+            self.assertNotIn("Bundle-Command:", nr_rendered)
+        finally:
+            self.mod.BASE_DIR = saved_base
+            if saved_cwd_env is not None:
+                os.environ["RUN_BLOCK_CWD"] = saved_cwd_env
 
 if __name__ == "__main__":
     unittest.main()

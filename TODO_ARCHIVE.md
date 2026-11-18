@@ -1,3 +1,9 @@
+# ✅ [DONE] B10: Forward all session headers into END and fix session dir resolution — *2026-11-18, Fixed _resolve_session_dir(), passed sdir into offer_clipboard_copy(), added regression tests, and rebuilt run_block.*
+
+- Fix `_resolve_session_dir()` in `src/ui.py` so a step directory containing step metadata (`<session>/<step>/meta.json`) never masks the parent session directory (`<session>/0` and `<session>/meta.json`).
+- Pass `sdir` explicitly from `src/runner.py` to `offer_clipboard_copy()` (and forward it to `format_clipboard_box()` / `build_box_body_lines()` in `src/ui.py`) so `END`, `NOT RUN`, and `SYNTAX ERROR` boxes always receive the session directory directly.
+- Acceptance criteria: `END` (as well as `NOT RUN` and `SYNTAX ERROR`) renders all exposed session headers (`Workdir`, `Role`, `Task`, `Title`, etc.) identically to `PLAN` even after `<session>/<step>/meta.json` has been written; add regression tests in `tests/test_run_block.py` covering `END`, `NOT RUN`, and `SYNTAX ERROR` with real `<session>/<step>/meta.json` files, update `README.md` if needed, and rebuild `run_block` via `build.py`.
+
 # ✅ [DONE] F60: Unify [python] operation tree expansion in BLOCK PLAN — *2026-11-18, Unified [python] operation tree expansion in BLOCK PLAN*
 
 - Update `_emit_py_op()` in `src/safety.py` so `[python]` operations expand into nested child items (`├─` / `└─`) consistently whenever a Python block touches multiple files or combines reads and writes (`total_paths > 1`), regardless of whether those files live in different subdirectories (`len(dir_buckets) > 1`) or in the same directory / repository root (such as `build.py, run_block`), keeping the single-line summary only for trivial 0–1 file Python blocks.

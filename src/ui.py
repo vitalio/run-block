@@ -201,10 +201,32 @@ def _group_operations_for_display(
     return [(g_dir, items, nums) for g_dir, items, nums in merged]
 
 
+def _is_step_meta_file(meta_path: Path) -> bool:
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
+        if isinstance(data, dict):
+            if "headers" in data or "bundle_plan" in data or "completed" in data:
+                return False
+            if "duration_ms" in data or "exit_code" in data or "operations" in data:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
 def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None) -> Path | None:
     if path_hint is not None:
-        for anc in (path_hint.parent, path_hint.parent.parent):
-            if (anc / "0").is_file() or (anc / "meta.json").is_file():
+        ancestors = (path_hint.parent, path_hint.parent.parent)
+        for anc in ancestors:
+            if (anc / "0").is_file():
+                return anc
+        for anc in ancestors:
+            meta_p = anc / "meta.json"
+            if meta_p.is_file():
+                if _is_step_meta_file(meta_p):
+                    continue
+                if re.fullmatch(r"\d+(?:_\d+)?", anc.name) and not (anc / "0").is_file():
+                    continue
                 return anc
     if label:
         sess = label.split("/", 1)[0].strip()
@@ -1450,6 +1472,7 @@ def format_clipboard_box(
     op_timings: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
     bundle_details: bool = False,
+    sdir: Path | None = None,
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
     cols = _hr_width()
@@ -1459,6 +1482,7 @@ def format_clipboard_box(
         stats=stats,
         extra_lines=extra_lines,
         label=label,
+        sdir=sdir,
         edited=edited,
         error_source=error_source,
         duration_s=duration_s,
@@ -1490,6 +1514,7 @@ def offer_clipboard_copy(
     duration_s: float | None = None,
     op_timings: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
+    sdir: Path | None = None,
 ) -> None:
     if in_run_block():
         return
@@ -1541,6 +1566,7 @@ def offer_clipboard_copy(
         op_timings=op_timings,
         failed_step=failed_step,
         bundle_details=show_details,
+        sdir=sdir,
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
@@ -1571,6 +1597,7 @@ def offer_clipboard_copy(
                         op_timings=op_timings,
                         failed_step=failed_step,
                         bundle_details=show_details,
+                        sdir=sdir,
                     )
                     bottom = _format_bottom_rule(rule_width, border_color=border_col)
                     prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
@@ -1622,6 +1649,7 @@ def offer_clipboard_copy(
                                 op_timings=op_timings,
                                 failed_step=failed_step,
                                 bundle_details=show_details,
+                                sdir=sdir,
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
                             prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)

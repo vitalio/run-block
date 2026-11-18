@@ -61,7 +61,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.22.2"
+VERSION = "0.22.3"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 
@@ -2652,10 +2652,32 @@ def _group_operations_for_display(
     return [(g_dir, items, nums) for g_dir, items, nums in merged]
 
 
+def _is_step_meta_file(meta_path: Path) -> bool:
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8", errors="replace"))
+        if isinstance(data, dict):
+            if "headers" in data or "bundle_plan" in data or "completed" in data:
+                return False
+            if "duration_ms" in data or "exit_code" in data or "operations" in data:
+                return True
+    except (OSError, ValueError):
+        pass
+    return False
+
+
 def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None) -> Path | None:
     if path_hint is not None:
-        for anc in (path_hint.parent, path_hint.parent.parent):
-            if (anc / "0").is_file() or (anc / "meta.json").is_file():
+        ancestors = (path_hint.parent, path_hint.parent.parent)
+        for anc in ancestors:
+            if (anc / "0").is_file():
+                return anc
+        for anc in ancestors:
+            meta_p = anc / "meta.json"
+            if meta_p.is_file():
+                if _is_step_meta_file(meta_p):
+                    continue
+                if re.fullmatch(r"\d+(?:_\d+)?", anc.name) and not (anc / "0").is_file():
+                    continue
                 return anc
     if label:
         sess = label.split("/", 1)[0].strip()
@@ -3901,6 +3923,7 @@ def format_clipboard_box(
     op_timings: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
     bundle_details: bool = False,
+    sdir: Path | None = None,
 ) -> tuple[str, int, int]:
     _ = ok, cmd_str
     cols = _hr_width()
@@ -3910,6 +3933,7 @@ def format_clipboard_box(
         stats=stats,
         extra_lines=extra_lines,
         label=label,
+        sdir=sdir,
         edited=edited,
         error_source=error_source,
         duration_s=duration_s,
@@ -3941,6 +3965,7 @@ def offer_clipboard_copy(
     duration_s: float | None = None,
     op_timings: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
+    sdir: Path | None = None,
 ) -> None:
     if in_run_block():
         return
@@ -3992,6 +4017,7 @@ def offer_clipboard_copy(
         op_timings=op_timings,
         failed_step=failed_step,
         bundle_details=show_details,
+        sdir=sdir,
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
@@ -4022,6 +4048,7 @@ def offer_clipboard_copy(
                         op_timings=op_timings,
                         failed_step=failed_step,
                         bundle_details=show_details,
+                        sdir=sdir,
                     )
                     bottom = _format_bottom_rule(rule_width, border_color=border_col)
                     prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
@@ -4073,6 +4100,7 @@ def offer_clipboard_copy(
                                 op_timings=op_timings,
                                 failed_step=failed_step,
                                 bundle_details=show_details,
+                                sdir=sdir,
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
                             prefixed_line2 = _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
@@ -5073,7 +5101,7 @@ def not_run_exit(
         and clipboard_command(err_target) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines)
+        offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             err_target, rc=rc, stats=stats_line(err_target), extra_lines=body_lines, label=label, sdir=sdir
@@ -5081,7 +5109,7 @@ def not_run_exit(
         sys.stdout.write(format_info_box("NOT RUN", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines)
+            offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     return rc
 
 
@@ -5358,7 +5386,7 @@ def _validate_step_script_syntax(
         and clipboard_command(out_path) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
@@ -5366,7 +5394,7 @@ def _validate_step_script_syntax(
         sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines)
+            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     return chk.returncode
 
 
@@ -5673,6 +5701,7 @@ def run_script(
             duration_s=duration_s,
             op_timings=op_timings,
             failed_step=failed_step,
+            sdir=sdir,
         )
     return rc
 
@@ -6566,15 +6595,15 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
     if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:
-        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START BUNDLE", extra_lines=body_lines)
+        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START BUNDLE", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
-            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, title_kind="START BUNDLE"
+            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="START BUNDLE"
         )
         sys.stdout.write(format_info_box("START BUNDLE", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START BUNDLE", extra_lines=body_lines)
+            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START BUNDLE", extra_lines=body_lines, sdir=sdir)
     return 0
 
 

@@ -4,12 +4,6 @@
 - Update CLI `--help` text in `src/header.py`, project docs in `AGENTS.md` and `README.md`, and all assertions and box-title fixtures in `tests/test_run_block.py`.
 - Acceptance criteria: TUI box headers render `BUNDLE`, `PLAN`, and `END` consistently with existing border/title colors and prompt behaviors; `build.py --check` and full `tests/test_run_block.py` pass; `run_block` is rebuilt via `build.py`.
 
-# 🎯 [NEXT] B10: Forward all session headers into END and fix session dir resolution
-
-- Fix `_resolve_session_dir()` in `src/ui.py` so a step directory containing step metadata (`<session>/<step>/meta.json`) never masks the parent session directory (`<session>/0` and `<session>/meta.json`).
-- Pass `sdir` explicitly from `src/runner.py` to `offer_clipboard_copy()` (and forward it to `format_clipboard_box()` / `build_box_body_lines()` in `src/ui.py`) so `END`, `NOT RUN`, and `SYNTAX ERROR` boxes always receive the session directory directly.
-- Acceptance criteria: `END` (as well as `NOT RUN` and `SYNTAX ERROR`) renders all exposed session headers (`Workdir`, `Role`, `Task`, `Title`, etc.) identically to `PLAN` even after `<session>/<step>/meta.json` has been written; add regression tests in `tests/test_run_block.py` covering `END`, `NOT RUN`, and `SYNTAX ERROR` with real `<session>/<step>/meta.json` files, update `README.md` if needed, and rebuild `run_block` via `build.py`.
-
 # 🎯 [NEXT] F63: Render hierarchical tabular bundle Summary and Details with char sizes and clean Preamble
 
 - Keep `run_block` strictly generator-agnostic under the Bundle Input Protocol (`AGENTS.md`): never special-case producer filenames (such as `.agents_bundle`), and instead derive hierarchy from neutral `chain` (with fallback to legacy `group`/`via` fields when `chain` is absent).
