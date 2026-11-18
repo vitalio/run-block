@@ -24,6 +24,8 @@ rules are loaded via `.agents_bundle`.
   headless mode. Child `stdout` and `stderr` are read via separate
   descriptors and merged into `out`; `stderr` is also saved to `err`, which
   the `END` box prefers for its `Error:` line.
+- `src/bundle_plan.py` — Bundle Input Protocol header filtering, boundary/section
+  fragment parser, and per-part token/size accounting persisted to `meta.json`.
 - `src/bundle.py` — session initialization from `stdin`
   (`<command> | run_block` -> `<session>/0` and `<session>/meta.json`). Parses
   optional leading `Key: Value` header lines (separated from the body by a

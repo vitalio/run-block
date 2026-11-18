@@ -2834,6 +2834,187 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", end_box_act)
 
+    def test_f46_bundle_input_protocol_headers_and_fragment_parser(self):
+        # 1. Header filtering: Bundle-* never forwarded to <session>/0; Bundle-Expose / Bundle-Hide
+        #    control forwarding without overriding Session, Next-Block, Workdir, Sandbox, or Date.
+        proj = self.tmp / "f46_proj"
+        proj.mkdir()
+        sessions = self.tmp / "f46_sessions"
+        env = {**os.environ, "RUN_BLOCK_DIR": str(sessions), "RUN_BLOCK_CWD": str(proj)}
+        nonce = "deadbeef1234"
+        cmd_prefix = chr(36)
+
+        bundle_payload = (
+            "Bundle-Command: agents_bundle role=execute task=F46\n"
+            f"Bundle-Boundary: {nonce}\n"
+            "Bundle-Expose: Chat-Lang, Role, Task, Bundle-Command, Workdir, Sandbox, Session, Next-Block, Date, Secret-Tag\n"
+            "Bundle-Hide: Secret-Tag\n"
+            "Session: fake_session\n"
+            "Next-Block: fake_session/99\n"
+            "Workdir: /nonexistent/hijack\n"
+            "Sandbox: strict\n"
+            "Date: 1999-01-01 00:00 UTC\n"
+            "Chat-Lang: Russian\n"
+            "Role: execute\n"
+            "Task: F46\n"
+            "Secret-Tag: hidden-value\n"
+            "Unlisted-Header: meta-only\n\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"vitalio/run_block:blocks/bash\", \"group\": \"vitalio/run_block\", \"via\": \"vitalio/run_block\"}} -->\n"
+            "## Terminal blocks\n"
+            "Rule body line 2\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"cmd\", \"name\": \"git status -sb\", \"group\": \".agents_bundle\", \"via\": \".agents_bundle\", \"rc\": 0, \"ms\": 7}} -->\n"
+            f"===== {cmd_prefix} git status -sb =====\n"
+            "## main...origin/main\n"
+            f"<!-- bundle:{nonce}:end -->\n\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"include\", \"name\": \"AGENTS.md\", \"group\": \"local\", \"via\": \".agents_bundle\"}} -->\n"
+            f"===== {cmd_prefix} cat AGENTS.md =====\n"
+            "# Rules\n"
+            "<!-- bundle:other_nonce:part {\"kind\": \"literal\"} -->\n"
+            f"<!-- bundle:{nonce}:end -->\n\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"group\": \"cli\", \"via\": \"cli\"}} -->\n"
+            "===== Prompt =====\n"
+            "Implement F46\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+
+        r_start = subprocess.run(
+            [str(SCRIPT)],
+            input=bundle_payload,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_start.returncode, 0, r_start.stderr)
+
+        b0 = (sessions / "s1" / "0").read_text(encoding="utf-8")
+        # Core 5 headers cannot be overridden by stdin preamble
+        self.assertIn("Session: s1\n", b0)
+        self.assertIn("Next-Block: s1/1\n", b0)
+        self.assertIn(f"Workdir: {proj.resolve()}\n", b0)
+        self.assertIn("Sandbox: off\n", b0)
+        self.assertNotIn("fake_session", b0)
+        self.assertNotIn("/nonexistent/hijack", b0)
+        self.assertNotIn("1999-01-01", b0)
+        # Bundle-* transport headers never appear in <session>/0
+        self.assertNotIn("Bundle-Command:", b0)
+        self.assertNotIn("Bundle-Boundary:", b0)
+        self.assertNotIn("Bundle-Expose:", b0)
+        self.assertNotIn("Bundle-Hide:", b0)
+        # Exposed non-hidden headers appear in <session>/0; hidden/unlisted do not
+        self.assertIn("Chat-Lang: Russian\n", b0)
+        self.assertIn("Role: execute\n", b0)
+        self.assertIn("Task: F46\n", b0)
+        self.assertNotIn("Secret-Tag:", b0)
+        self.assertNotIn("Unlisted-Header:", b0)
+        # Matching boundary markers are stripped, non-matching inner comment preserved
+        self.assertNotIn(f"bundle:{nonce}:", b0)
+        self.assertIn("<!-- bundle:other_nonce:part", b0)
+        self.assertIn("## Terminal blocks\nRule body line 2\n", b0)
+        self.assertIn("Implement F46", b0)
+
+        # meta.json keeps all headers and structured bundle_plan without raw text bodies
+        meta = self.mod.read_session_meta(sessions / "s1")
+        hdr_dict = dict(meta["headers"])
+        self.assertEqual(hdr_dict.get("Bundle-Boundary"), nonce)
+        self.assertEqual(hdr_dict.get("Secret-Tag"), "hidden-value")
+        self.assertEqual(hdr_dict.get("Unlisted-Header"), "meta-only")
+
+        plan = meta.get("bundle_plan")
+        self.assertIsInstance(plan, dict)
+        self.assertEqual(plan["protocol"], "boundary")
+        self.assertEqual(plan["boundary"], nonce)
+        self.assertEqual(plan["part_count"], 4)
+        parts = plan["parts"]
+        self.assertEqual([p["kind"] for p in parts], ["rule", "cmd", "include", "prompt"])
+        self.assertEqual(parts[0]["id"], "vitalio/run_block:blocks/bash")
+        self.assertEqual(parts[0]["name"], "vitalio/run_block:blocks/bash")
+        self.assertEqual(parts[1]["rc"], 0)
+        self.assertEqual(parts[1]["ms"], 7)
+        self.assertEqual(parts[2]["name"], "AGENTS.md")
+        for p in parts:
+            self.assertNotIn("body", p)
+            self.assertNotIn("text", p)
+            self.assertGreater(p["lines"], 0)
+            self.assertGreater(p["bytes"], 0)
+            self.assertGreater(p["gpt"], 0)
+            self.assertGreater(p["claude"], 0)
+            self.assertGreater(p["share_pct"], 0.0)
+        self.assertAlmostEqual(sum(p["share_pct"] for p in parts), 100.0, delta=0.5)
+        self.assertEqual(plan["bytes"], sum(p["bytes"] for p in parts))
+        self.assertEqual(plan["lines"], sum(p["lines"] for p in parts))
+        self.assertEqual(plan["gpt"], sum(p["gpt"] for p in parts))
+        self.assertEqual(plan["claude"], sum(p["claude"] for p in parts))
+
+        # 2. Bundle-Expose: * with Bundle-Hide forwards all non-Bundle non-reserved headers except hidden
+        exp_all = self.mod.filter_exposed_headers([
+            ("Bundle-Expose", "*"),
+            ("Bundle-Hide", "Internal-Id"),
+            ("Bundle-Command", "cmd"),
+            ("Workdir", "/tmp"),
+            ("Role", "plan"),
+            ("Internal-Id", "42"),
+            ("Task", "F46"),
+        ])
+        self.assertEqual(exp_all, [("Role", "plan"), ("Task", "F46")])
+
+        # 3. Fallback to ===== ... ===== section splitting when no Bundle-Boundary is present
+        sec_body = (
+            "===== Rules =====\n"
+            "Rule A\n\n"
+            f"===== {cmd_prefix} git status -sb =====\n"
+            "## main\n\n"
+            "===== File: README.md =====\n"
+            "# Title\n\n"
+            "===== Prompt =====\n"
+            "Do work\n"
+        )
+        clean_sec, sec_plan = self.mod.parse_bundle_fragments(sec_body, boundary=None)
+        self.assertEqual(clean_sec, sec_body.strip())
+        self.assertEqual(sec_plan["protocol"], "sections")
+        self.assertIsNone(sec_plan["boundary"])
+        self.assertEqual(sec_plan["part_count"], 4)
+        self.assertEqual(
+            [(p["kind"], p.get("name")) for p in sec_plan["parts"]],
+            [
+                ("rules", "Rules"),
+                ("cmd", "git status -sb"),
+                ("file", "README.md"),
+                ("prompt", "Prompt"),
+            ],
+        )
+
+        # 4. Plain bundle without boundary and without headers still creates meta.json for bundle_plan
+        r_plain = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s2"],
+            input="Plain prompt without headers or sections\n",
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertEqual(r_plain.returncode, 0, r_plain.stderr)
+        meta2 = self.mod.read_session_meta(sessions / "s2")
+        self.assertNotIn("headers", meta2)
+        self.assertEqual(meta2["bundle_plan"]["protocol"], "body")
+        self.assertEqual(meta2["bundle_plan"]["part_count"], 1)
+
+        # 5. Editing <session>/0 refreshes bundle_plan in meta.json via refresh_bundle_meta
+        b0_path = sessions / "s1" / "0"
+        b0_path.write_text(
+            "Session: s1\nNext-Block: s1/1\nWorkdir: /tmp\nSandbox: off\nDate: 2026-11-18 08:00 UTC\n\n"
+            "===== Prompt =====\nUpdated body line 1\nUpdated body line 2\n",
+            encoding="utf-8",
+        )
+        self.mod.refresh_bundle_meta(b0_path)
+        meta_after = self.mod.read_session_meta(sessions / "s1")
+        self.assertEqual(meta_after["bundle_plan"]["protocol"], "sections")
+        self.assertEqual(meta_after["bundle_plan"]["part_count"], 1)
+        self.assertEqual(dict(meta_after["headers"]).get("Bundle-Boundary"), nonce)
+
 
 if __name__ == "__main__":
     unittest.main()

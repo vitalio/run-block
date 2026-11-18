@@ -139,13 +139,6 @@
 - Reproduce first with a unit test that interleaves `echo` and `echo >&2` in a loop and compares the order in `out` with the write order; then pick an approach (for example keep one shared descriptor for `out` and obtain `err` separately, such as a per-command stderr tee in the instrumented script, or accept and document the ordering limits).
 - After the approach is decided, document the `err` file and the ordering guarantees in `README.md` (step directory contents: `out`, `err`, `error`, `aborted`) and keep `AGENTS.md` in sync in the same commit.
 
-# ⚪ [NEW] F46: Implement Bundle Input Protocol header filtering and fragment marker parser
-
-- Define `src/bundle_plan.py` and integrate with `src/bundle.py` and `src/config.py` to implement the generator-agnostic Bundle Input Protocol.
-- Treat `Bundle-*` preamble headers (`Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) as transport metadata stored in `<session>/meta.json` only, and forward `stdin` headers into `<session>/0` per `Bundle-Expose` / `Bundle-Hide` without overriding `Session`, `Next-Block`, `Workdir`, `Sandbox`, or `Date`.
-- When `Bundle-Boundary: <nonce>` is present, parse `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->` markers, strip them cleanly from `<session>/0`, and fall back to `===== ... =====` section splitting when no boundary is present.
-- Compute per-part lines, bytes, GPT/Claude token counts, and percentage share, persisting structured `bundle_plan` metadata (without raw text bodies) in `<session>/meta.json`, with unit tests in `tests/test_run_block.py`.
-
 # ⚪ [NEW] F47: Add bundle diagnostics, START BUNDLE details view, and --bundle-plan CLI
 
 - Depends on: F46

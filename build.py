@@ -22,6 +22,7 @@ MODULE_ORDER = [
     "config.py",
     "safety.py",
     "ui.py",
+    "bundle_plan.py",
     "runner.py",
     "bundle.py",
     "cli.py",

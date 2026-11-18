@@ -1,3 +1,10 @@
+# ✅ [DONE] F46: Implement Bundle Input Protocol header filtering and fragment marker parser — *2026-11-18*
+
+- Define `src/bundle_plan.py` and integrate with `src/bundle.py` and `src/config.py` to implement the generator-agnostic Bundle Input Protocol.
+- Treat `Bundle-*` preamble headers (`Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) as transport metadata stored in `<session>/meta.json` only, and forward `stdin` headers into `<session>/0` per `Bundle-Expose` / `Bundle-Hide` without overriding `Session`, `Next-Block`, `Workdir`, `Sandbox`, or `Date`.
+- When `Bundle-Boundary: <nonce>` is present, parse `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->` markers, strip them cleanly from `<session>/0`, and fall back to `===== ... =====` section splitting when no boundary is present.
+- Compute per-part lines, bytes, GPT/Claude token counts, and percentage share, persisting structured `bundle_plan` metadata (without raw text bodies) in `<session>/meta.json`, with unit tests in `tests/test_run_block.py`.
+
 # ✅ [DONE] F53: Hide Sandbox: off in TUI boxes and show Sandbox only when enabled — *2026-11-18, Omit Sandbox: off in TUI boxes while keeping it in session bundles and --sandbox status*
 
 - Omit the `Sandbox:` header line in `format_session_header_lines()` (`src/ui.py`) when the normalized sandbox mode is `off` (or empty), so `START BUNDLE`, `BLOCK PLAN`, `END`, `NOT RUN`, and `SYNTAX ERROR` boxes only display `Sandbox: <mode>` when sandboxing is enabled (`strict`, `nonet`, or a custom wrapper).

@@ -16,7 +16,10 @@ def format_start_bundle(
     now: datetime | None = None,
     sandbox_mode: str | None = None,
 ) -> dict[str, object]:
-    stdin_headers, clean_body = parse_stdin_preamble(stdin_body)
+    stdin_headers, raw_body = parse_stdin_preamble(stdin_body)
+    boundary = get_bundle_boundary(stdin_headers)
+    clean_body, bundle_plan = parse_bundle_fragments(raw_body, boundary=boundary)
+    exposed_headers = filter_exposed_headers(stdin_headers)
     if work_dir is not None:
         wdir = work_dir.resolve()
     else:
@@ -37,6 +40,8 @@ def format_start_bundle(
         f"Sandbox: {sb_hdr}",
         f"Date: {ts}",
     ]
+    for exp_k, exp_v in exposed_headers:
+        bundle_header_lines.append(f"{exp_k}: {exp_v}")
     bundle_header_text = "\n".join(bundle_header_lines) + "\n"
     full_text = bundle_header_text + ("\n" + clean_body + "\n" if clean_body else "")
     total_lines = len(full_text.splitlines())
@@ -53,6 +58,8 @@ def format_start_bundle(
         "console_lines": console_lines,
         "full": full_text,
         "stdin_headers": stdin_headers,
+        "exposed_headers": exposed_headers,
+        "bundle_plan": bundle_plan,
         "total_lines": total_lines,
         "total_tokens": total_tokens,
         "sandbox": sb_mode,
@@ -144,7 +151,12 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     res = format_start_bundle(session_name=session_name, stdin_body=stdin_text, sandbox_mode=sb_arg)
     write_private(bundle_path, str(res["full"]), overwrite=True)
     stdin_headers = list(res.get("stdin_headers") or [])
-    write_session_meta(sdir, stdin_headers)
+    bundle_plan = res.get("bundle_plan")
+    write_session_meta(
+        sdir,
+        stdin_headers,
+        bundle_plan=bundle_plan if isinstance(bundle_plan, dict) else None,
+    )
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
     if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:

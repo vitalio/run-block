@@ -255,12 +255,39 @@ def read_session_meta(session_dir: Path | None) -> dict[str, object]:
         return {}
 
 
-def write_session_meta(session_dir: Path, headers: list[tuple[str, str]]) -> Path | None:
+def write_session_meta(
+    session_dir: Path,
+    headers: list[tuple[str, str]],
+    bundle_plan: dict[str, object] | None = None,
+) -> Path | None:
     meta_file = session_dir / "meta.json"
-    if not headers:
+    data: dict[str, object] = {}
+    if headers:
+        data["headers"] = [[k, v] for k, v in headers]
+    if bundle_plan is not None:
+        data["bundle_plan"] = bundle_plan
+    if not data:
         meta_file.unlink(missing_ok=True)
         return None
-    payload = json.dumps({"headers": [[k, v] for k, v in headers]}, indent=2, ensure_ascii=False) + "\n"
+    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(payload)
+    return meta_file
+
+
+def update_session_meta(session_dir: Path, **updates: object) -> Path | None:
+    meta_file = session_dir / "meta.json"
+    data = read_session_meta(session_dir)
+    for k, v in updates.items():
+        if v is None:
+            data.pop(k, None)
+        else:
+            data[k] = v
+    if not data:
+        meta_file.unlink(missing_ok=True)
+        return None
+    payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(payload)

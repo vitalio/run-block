@@ -29,8 +29,16 @@ Pipe any context bundle on `stdin` into `run_block` to initialize
 `~/.local/state/run_block/<session>/0` and copy it to your clipboard.
 Optional leading `Key: Value` header lines on `stdin` (separated from the
 body by a blank line) are parsed into `<session>/meta.json` and displayed in
-TUI headers, while `<session>/0` stores only `run_block`'s own headers
-(`Session`, `Next-Block`, `Workdir`, `Sandbox`, `Date`) and the prompt body.
+TUI headers. `Bundle-*` transport headers (`Bundle-Command`, `Bundle-Boundary`,
+`Bundle-Expose`, `Bundle-Hide`) stay in `<session>/meta.json` only, while
+`Bundle-Expose` / `Bundle-Hide` control which remaining `stdin` headers are
+forwarded into `<session>/0` alongside `run_block`'s own headers (`Session`,
+`Next-Block`, `Workdir`, `Sandbox`, `Date`). When `Bundle-Boundary: <nonce>` is
+present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
+markers are parsed into per-part `bundle_plan` metrics (lines, bytes, GPT/Claude
+tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
+`<session>/0` (falling back to `===== ... =====` sections when no boundary is
+provided).
 When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 `Workdir` directory, that path is preferred over the current directory or
 Git root and written to `<session>/0`:
