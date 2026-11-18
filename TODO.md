@@ -1,3 +1,29 @@
+# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
+
+- Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
+- When `e(dit)` is triggered on `BUNDLE` (`src/ui.py`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`.
+- Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `BUNDLE` exits (`Enter`, `Esc`, or non-interactive mode), keeping `0.orig` backup and `F57` `a(ppend)` compatibility intact.
+- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_run_block.py` verify the roundtrip.
+
+# 🎯 [NEXT] F68: Redesign bundle breakdown table in top style, fix header/kind attribution, and highlight heavy parts
+
+- Redesign `Summary` and `Parts` tables in `src/bundle_plan.py` and `src/ui.py` (displayed in fullscreen `i(nfo)` and `--bundle-plan`) with a `top`-inspired column header row showing units once (`%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`) and omitting repeated unit suffixes (`ch`, `L`, `tok`) from data rows while retaining `%` and `~` markers.
+- Remove automatic numeric prefixes (`1.`, `2.`, ...) from `Parts` rows in `_collect_hierarchy_rows()` / `_render_bundle_table()` (`src/bundle_plan.py`) so the tree structure stays clean.
+- Highlight heavy fragments (bold and/or accent/warning color) based on clear `%` share and absolute token/character thresholds so dominant context contributors stand out immediately.
+- Render the `Stats:` value in white foreground inside the fullscreen `i(nfo)` / details view (`src/ui.py`), keeping `Stats:` dimmed in the compact inline box.
+- Fix `reconcile_bundle_plan()` (`src/bundle_plan.py`) so `[header] Headers & spacing` is computed reliably from `<session>/0` headers and inter-section spacing in `boundary` mode instead of disappearing when raw fragment sums differ due to collapsed blank lines.
+- Clarify provenance and `kind` attribution in `src/bundle_plan.py`: separate `.agents_bundle`-originated items (marking multi-part groups/packages like `vitalio/agents-rules:default` and bundle entries accurately as `[bundle]`/`[ruleset]` rather than `[rule]`, and fixing single-bundle vs single-rule labeling such as `vitalio/agents_bundle:agents_bundle`) from non-`.agents_bundle` items (`[header]`, `[prompt]`, and external stdin sections).
+- Acceptance criteria: `top`-style column header with units, no repeated cell unit suffixes, no `Parts` numeric prefixes, heavy items highlighted, white `Stats:` inside `i(nfo)`, `[header]` visible in `boundary` mode, `.agents_bundle` vs external provenance clear; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+
+# 🎯 [NEXT] B11: Fix TUI box height overflow, header duplication on redraw, and keep inline boxes minimal
+
+- Keep inline TUI boxes compact so they stay within visible terminal height (`shutil.get_terminal_size().lines`): remove the `Summary:` table from the inline `BUNDLE` box (retaining core headers, `Bundle:`, dim `Stats:`, and `Bundle warnings` when present), and clamp long inline sections in `PLAN`, `END`, and confirmation dialogs to available `term_rows` with a `... +N more` hint so the top border (`╭─ ...`) never scrolls into scrollback before a redraw.
+- Display expanded bundle details in an alternate-screen fullscreen panel (`\033[?1049h` / `\033[?1049l`, modeled after `top`/`less`) with keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), clean return (`Esc`/`q`/`d`/`i`), and clipboard copy on `Enter` so toggling details never leaves duplicate headers or stale lines in scrollback.
+- Fix `display_width()` in `src/ui.py` to count Unicode combining and zero-width format characters (`Mn`, `Me`, `Cf`) as width `0` and normalize/expand tabs (`\t`) during rendering so `_box_rows_above_prompt()` always matches actual terminal row wrapping.
+- Track both `cols` and `rows` (`term_rows`) across `offer_clipboard_copy()`, `confirm_execution()`, and `prompt_yes_no_box()` (`src/ui.py`) so `SIGWINCH` height or width changes reflow cleanly without leaving stale `╭─ ...` rows.
+- Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `README.md`, `tests/test_run_block.py`.
+- Acceptance criteria: toggling details, resizing terminal width or height, or returning from `e(dit)` never produces duplicate `╭─ ...` headers; inline boxes fit within `term_rows`; fullscreen details scroll cleanly on alternate screen; `README.md` and offline tests in `tests/test_run_block.py` cover height clamping, alternate-screen redraw, and `display_width()` edge cases.
+
 # 🎯 [NEXT] F66: Embed terminal block rules in run_block and start rule-only session on bare invocation
 
 - Embed `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` into the built `./run_block` script via `build.py` (with `--check` verifying embedded rules match `src/rules/blocks/*.md`), stripping leading `# Description:` lines, selecting `bash` vs `pwsh` via `get_setting("shell")` / `_is_powershell()`, and substituting `{cmd:run_block}` with `prog_name()`.
@@ -26,11 +52,11 @@
 # 🎯 [NEXT] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks
 
 - Remove the `Steps: 1. [tag] ...` summary line from the main `END` box in `build_box_body_lines()` (`src/ui.py`), keeping `END` focused on `Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
-- Add an interactive `i(nfo)` action across all interactive TUI prompts (`BUNDLE`, `PLAN`, `END`, and confirmation dialogs such as `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `SESSION COMPLETED`) in `src/ui.py` and `src/runner.py`:
-  - Update prompt hints to include `i(nfo)` without conflicting with existing hotkeys (`[Enter/e(dit)/i(nfo)/Esc]:` on `BUNDLE` and `END`, `[Y/n/e(dit)/i(nfo)]:` / `[y/n/e(dit)/i(nfo)]:` on `PLAN`).
-  - Pressing `i` opens a styled alternate-screen TUI info panel showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/byte/token counts, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and the original pre-execution `PLAN` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
-  - Support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), returning cleanly to the active block prompt on `q`/`Esc`/`Enter`/`i`, and opening the plain-text report in the configured viewer/editor (`resolve_editor_command()`) when pressing `v` (`v(iew)`).
-- Acceptance criteria: `END` box omits `Steps:`; pressing `i` in `BUNDLE`, `PLAN`, `END`, and confirmation boxes displays complete headers, stats, operation timings, and original plan in the TUI info screen; pressing `v` inside `i(nfo)` opens the report in the external viewer/editor; closing returns cleanly to the prompt; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+- Unify detail inspection behind a single `i(nfo)` hotkey across all interactive TUI prompts (`BUNDLE`, `PLAN`, `END`, and confirmation dialogs such as `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `SESSION COMPLETED`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py`:
+  - Replace `d(etails)` in `BUNDLE` with `i(nfo)` (`[Enter/e(dit)/i(nfo)/Esc]:` on `BUNDLE` and `END`, `[Y/n/e(dit)/i(nfo)]:` / `[y/n/e(dit)/i(nfo)]:` on `PLAN`).
+  - Pressing `i` opens a styled alternate-screen fullscreen `i(nfo)` view showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/char/token counts with `Stats:` value rendered in white foreground (while keeping inline `Stats:` dimmed in the compact box), full `BUNDLE` `Summary`/`Parts`/warnings breakdown, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and pre-execution `PLAN` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
+  - Support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), returning cleanly to the active block prompt on `q`/`Esc`/`i` (and `Enter`, or copying on `Enter` in `BUNDLE`/`END` if configured), and opening the plain-text report in the configured viewer/editor (`resolve_editor_command()`) on `v(iew)`.
+- Acceptance criteria: `BUNDLE` uses `i(nfo)` instead of `d(etails)`; `END` omits `Steps:`; compact inline boxes stay minimal while `i(nfo)` shows full metadata, white `Stats:`, bundle breakdown, operation timings, and original plan on alternate screen; `v(iew)` opens the external viewer/editor; `README.md` and offline tests in `tests/test_run_block.py` are updated.
 
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
@@ -67,7 +93,7 @@
 
 - Depends on: F63
 - Record 1-based `line_start` and `line_end` line ranges in the final cleaned `<session>/0` for each part in `src/bundle_plan.py` and `src/bundle.py` (`format_start_bundle()`, `refresh_bundle_plan_meta()`), covering both boundary-marked fragments and `_split_section_fallback()` while accounting for `<session>/0` header lines and collapsed blank lines (and body-relative 1-based ranges for `stdin` `--bundle-plan`) without duplicating fragment text in `meta.json`.
-- When `d(etails)` is active in `BUNDLE` (`src/ui.py`), allow selecting any numbered part via `p(art)` (prompting for part number `1..N` in line input so multi-digit parts `10+` work in raw TTY; optional `1..9` shortcut when `N <= 9`) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
+- When `i(nfo)` (or bundle details view) is active in `BUNDLE` (`src/ui.py`), allow selecting a part directly (e.g. cursor selection in the fullscreen list and/or `p(art)` prompt by 1..N index without cluttering the `Parts` tree with numeric prefixes) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `BUNDLE`.
 - Add `--part N` option to `run_block --show` and `run_block --bundle-plan` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`; accept `--show <session> --part N`, `--show <session>/0 --part N`, and `--show --part N` (latest session `/0`), failing cleanly on non-zero steps or out-of-range part numbers.
 - Update `README.md` and unit tests in `tests/test_run_block.py`, and rebuild `run_block` via `build.py`.
 
@@ -137,3 +163,8 @@
 - Depends on: F66
 - Delete `src/bundles/run_block.bundle` (and empty `src/bundles/`) and remove `bundle vitalio/run_block` from `.agents_bundle` once downstream repositories stop referencing `vitalio/run_block`.
 - Update `AGENTS.md` (documenting `src/rules/blocks/*.md` as internal embedded sources instead of an exported `vitalio/run_block` bundle), `README.md`, and `tests/test_run_block.py`.
+
+# ⚪ [NEW] F70: Support model-aware token counting once model API integration is added
+
+- Future enhancement (blocked on model API integration): replace the current fixed `tiktoken` (`o200k_base`) / char-heuristic (`~lo–hi tokens`) estimator in `src/ui.py` and `src/bundle_plan.py` with model-specific token counting (provider tokenizer or count-tokens API) based on the active selected model.
+- Retain offline stdlib/local heuristic fallback when no model API or tokenizer is configured.
