@@ -1,4 +1,4 @@
-# 🎯 [NEXT] F71: Rename TUI boxes to START SESSION / START STEP / END STEP, unify [Y/n] prompts, and improve renumber UX
+# 🎯 [NEXT] F71: Rename TUI boxes to START SESSION / START STEP / END STEP, unify [Y/n] prompts, and improve renumber UX — *Return to NEXT*
 
 - Rename TUI box titles in `src/ui.py`, `src/bundle.py`, and `src/runner.py`: `BUNDLE` -> `START SESSION`, `PLAN` -> `START STEP`, `END` -> `END STEP`, and display `Step: <label>` in step boxes (keeping `Next-Block:` / `# Block:` in agent protocol headers).
 - Standardize prompt suffixes in `src/ui.py` and `src/runner.py`: omit `Enter` and `Esc` labels from `[...]` brackets (replace `[Enter/.../Esc]:` with `[Y/n/...]:`), use a single uppercase letter exclusively for the `Enter` default (fixing `START STEP` warnings `[y/n/...]` -> `[y/N/...]`), remove `r`/`R` case-sensitive collisions, while preserving `Enter`, `n`/`q`/`Esc` behavior.
