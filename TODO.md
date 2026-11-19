@@ -48,21 +48,6 @@
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
 - Document `END SESSION` and session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md`, plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
 
-# 🎯 [NEXT] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks
-
-- Depends on: B11
-- Remove the `Steps: 1. [tag] ...` summary line from the main `END STEP` (`END`) box in `build_box_body_lines()` (`src/ui.py`), keeping `END STEP` focused on `Step`/`Block`, `Workdir`, active `Sandbox`, `Exit`/`Error`/`Fix` on failure, `Output`, and `Stats`.
-- Unify detail inspection and editing behind a single `i(nfo)` hotkey across all interactive TUI prompts (`START SESSION`, `START STEP`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `SESSION COMPLETED`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py`:
-  - Move `e(dit)` (for `<session>/0`, `block.*`, and `out`), `s(cript)`/`o(utput)` view/edit, and rare collision overwrite/re-run inside the fullscreen `i(nfo)` inspector so compact inline prompts drop `e(dit)`, `s(cript)`, `o(utput)`, and `d(etails)`:
-    - `START SESSION` / `END STEP` / `SYNTAX ERROR` / `NOT RUN`: `[Y/n/a(ppend)/i(nfo)]:` (coordinating `a(ppend)` with `F57`)
-    - `START STEP`: `[Y/n/i(nfo)]:` / `[y/N/i(nfo)]:`
-    - `STEP ALREADY EXISTS`: `[Y/n/r(enumber)/i(nfo)]:` (with `out`) or `[r(enumber)/n/i(nfo)]:` (without `out`)
-    - `MISSING PREVIOUS STEP`: `[r(enumber)/n/i(nfo)]:` (no `Enter` default)
-    - `SESSION COMPLETED`: `[y/N/i(nfo)]:`
-  - Pressing `i` opens a styled alternate-screen fullscreen `i(nfo)` view showing unfiltered headers (including `Sandbox: off` and all `meta.json` headers), artifact paths and edit backups (`0.orig`, `block.orig.*`, `out.orig`), line/char/token counts with `Stats:` value rendered in white foreground (while keeping inline `Stats:` dimmed in the compact box), full `START SESSION` `Summary`/`Parts`/warnings breakdown, per-operation execution timings with percentage shares and `(failed)` markers from `<session>/<step>/meta.json` (`src/config.py`), and pre-execution `START STEP` analysis (`analyze_script()` on `block.orig.*` when edited, else `block.*`).
-  - Inside `i(nfo)`, support keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), `e(dit)` on the active artifact (recalculating plan/stats on return), `s(cript)`/`o(utput)` inspection/editing and `o(verwrite)` on step collisions, `v(iew)` to open the plain-text report in `resolve_editor_command()`, and clean return to the active prompt on `q`/`Esc`/`i`.
-- Acceptance criteria: compact inline boxes stay minimal (`i(nfo)` replaces `d(etails)`/`e(dit)`/`s(cript)`/`o(utput)`); `END STEP` omits `Steps:`; `i(nfo)` shows full metadata, white `Stats:`, bundle breakdown, operation timings, and original plan on alternate screen with `e(dit)` and `v(iew)` actions; `README.md` and offline tests in `tests/test_run_block.py` are updated.
-
 # 🎯 [NEXT] F68: Redesign bundle breakdown table in top style, fix header/kind attribution, and highlight heavy parts
 
 - Depends on: F54

@@ -1189,6 +1189,10 @@ def cmd_normal(
                     renumber_status=f"✓ Renumbering {label} -> {next_label}.",
                     content_builder=_step_exists_lines,
                     copy_on_yes=True,
+                    label=label,
+                    sdir=sdir,
+                    sandbox_mode=sandbox_override,
+                    allow_overwrite=True,
                 )
             else:
                 choice = prompt_yes_no_box(
@@ -1202,6 +1206,10 @@ def cmd_normal(
                     renumber_status=f"✓ Renumbering {label} -> {next_label}.",
                     content_builder=_step_exists_lines,
                     renumber_only=True,
+                    label=label,
+                    sdir=sdir,
+                    sandbox_mode=sandbox_override,
+                    allow_overwrite=True,
                 )
             if choice == "renumber":
                 renumbered_from = label
@@ -1214,6 +1222,15 @@ def cmd_normal(
                 out_path = step_dir / "out"
                 aborted_marker = step_dir / "aborted"
                 overwrite = False
+            elif choice == "overwrite":
+                out_path.unlink(missing_ok=True)
+                (step_dir / "meta.json").unlink(missing_ok=True)
+                (step_dir / "error").unlink(missing_ok=True)
+                (step_dir / "err").unlink(missing_ok=True)
+                aborted_marker.unlink(missing_ok=True)
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                    orig_p.unlink(missing_ok=True)
+                overwrite = True
             elif choice == "copy":
                 return 0
             else:
@@ -1244,6 +1261,9 @@ def cmd_normal(
                 renumber_status=f"✓ Renumbering {label} -> {first_missing_label}.",
                 content_builder=_missing_prev_lines,
                 renumber_only=True,
+                label=label,
+                sdir=sdir,
+                sandbox_mode=sandbox_override,
             )
             if choice == "renumber":
                 renumbered_from = label

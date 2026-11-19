@@ -110,13 +110,13 @@ class _SigwinchWatcher:
 
 
 def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
-    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'details', or 'resize'."""
+    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'info', or 'resize'."""
     if flush:
         flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
         ans = tty_r.readline().strip().lower()
-        if ans in ("d", "details", "i", "inspect"):
-            return "details"
+        if ans in ("i", "info", "inspect", "d", "details"):
+            return "info"
         if ans in ("e", "edit"):
             return "edit"
         if ans in ("v", "view"):
@@ -127,8 +127,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
         old_attrs = termios.tcgetattr(fd)
     except Exception:
         ans = tty_r.readline().strip().lower()
-        if ans in ("d", "details", "i", "inspect"):
-            return "details"
+        if ans in ("i", "info", "inspect", "d", "details"):
+            return "info"
         if ans in ("e", "edit"):
             return "edit"
         return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy")
@@ -149,8 +149,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
                 ch = os.read(fd, 1)
                 if not ch:
                     return "skip"
-                if ch in (b"d", b"D", b"i", b"I"):
-                    return "details"
+                if ch in (b"i", b"I", b"d", b"D"):
+                    return "info"
                 if ch in (b"e", b"E"):
                     return "edit"
                 if ch in (b"v", b"V"):
@@ -455,7 +455,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/e(dit)]:" if default_yes else "[y/N/e(dit)]:"
+    return "[Y/n/i(nfo)]:" if default_yes else "[y/N/i(nfo)]:"
 
 
 def format_safety_box(
@@ -612,7 +612,9 @@ def _build_prompt_yes_no_suffix(
     has_renumber: bool = False,
     renumber_only: bool = False,
     copy_on_yes: bool = False,
+    has_info: bool = False,
 ) -> str:
+    _ = has_script, has_output, can_copy
     if renumber_only:
         parts = ["r(enumber)", "n"]
     elif copy_on_yes and has_renumber:
@@ -621,12 +623,8 @@ def _build_prompt_yes_no_suffix(
         parts = ["Y", "n"] if default_yes else ["y", "N"]
         if has_renumber:
             parts.append("r(enumber)")
-    if has_script:
-        parts.append("s(cript)")
-    if has_output:
-        parts.append("o(utput)")
-    if can_copy and not copy_on_yes:
-        parts.append("c(opy)")
+    if has_info:
+        parts.append("i(nfo)")
     return f"[{'/'.join(parts)}]:"
 
 
@@ -645,15 +643,23 @@ def prompt_yes_no_box(
     content_builder=None,
     renumber_only: bool = False,
     copy_on_yes: bool = False,
+    label: str | None = None,
+    sdir: Path | None = None,
+    sandbox_mode: str | None = None,
+    enable_info: bool | None = None,
+    allow_overwrite: bool = False,
+    overwrite_status: str | None = None,
 ) -> bool | str:
     has_script = script_path is not None and script_path.is_file()
     has_output = out_path is not None and out_path.is_file()
     can_copy = has_output
     has_renumber = bool(renumber_label)
+    has_info = (title.strip() != "CLEAN SESSIONS") if enable_info is None else bool(enable_info)
     eff_default_yes = False if renumber_only else default_yes
     eff_default_no = False if renumber_only else (not eff_default_yes)
     allow_yes = not renumber_only
     renum_msg = renumber_status or (f"✓ Renumbering to {renumber_label}." if has_renumber else "")
+    overw_msg = overwrite_status or (f"✓ Overwriting {label}." if label else "✓ Overwriting existing step.")
     suffix = _build_prompt_yes_no_suffix(
         eff_default_yes,
         has_script=has_script,
@@ -662,20 +668,30 @@ def prompt_yes_no_box(
         has_renumber=has_renumber,
         renumber_only=renumber_only,
         copy_on_yes=copy_on_yes,
+        has_info=has_info,
     )
     prompt_line = f"-> {question} {suffix}"
     status_list: list[str] = [yes_status, no_status]
     if has_renumber:
         status_list.append(renum_msg)
+    if allow_overwrite:
+        status_list.append(overw_msg)
     clip_target: Path | None = None
     clip: tuple[list[str], str] | None = None
-    if can_copy and out_path is not None:
+
+    def _refresh_clip_target() -> None:
+        nonlocal clip_target, clip
+        if not (can_copy and out_path is not None):
+            return
         try:
             full_out = out_path.read_text(encoding="utf-8", errors="replace")
         except Exception:
             full_out = ""
         clip_target = resolve_clipboard_target(out_path, full_out)
         clip = clipboard_command(clip_target)
+
+    _refresh_clip_target()
+    if can_copy and clip_target is not None:
         status_list.append(f"✓ Copied {clip_target} to clipboard.")
         if clip is not None:
             status_list.append(f"✗ Clipboard copy failed; run: {clip[1]}")
@@ -685,15 +701,11 @@ def prompt_yes_no_box(
     if has_renumber:
         extra_keys["r"] = "renumber"
         extra_keys["renumber"] = "renumber"
-    if has_script:
-        extra_keys["s"] = "script"
-        extra_keys["script"] = "script"
-    if has_output:
-        extra_keys["o"] = "output"
-        extra_keys["output"] = "output"
-    if can_copy and not copy_on_yes:
-        extra_keys["c"] = "copy"
-        extra_keys["copy"] = "copy"
+    if has_info:
+        extra_keys["i"] = "info"
+        extra_keys["info"] = "info"
+        extra_keys["d"] = "info"
+        extra_keys["details"] = "info"
     prev_cols, prev_rows = _term_size()
     init_lines = content_builder() if callable(content_builder) else content_lines
     box, rule_width, cursor_offset = format_prompt_box(
@@ -758,10 +770,30 @@ def prompt_yes_no_box(
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
-                if action == "script" and has_script and script_path is not None:
-                    open_script_in_editor(script_path, tty_r, tty_w)
+                if action == "info" and has_info:
+                    info_edit_target = out_path if (has_output and out_path is not None) else (script_path if has_script else None)
+                    info_state = _show_info_fullscreen(
+                        title_kind=title.strip(),
+                        label=label or title.strip(),
+                        sdir=sdir,
+                        out_path=out_path if has_output else None,
+                        script_path=script_path if has_script else None,
+                        edit_target=info_edit_target,
+                        sandbox_mode=sandbox_mode,
+                        extra_lines=content_builder() if callable(content_builder) else content_lines,
+                        tty_r=tty_r,
+                        tty_w=tty_w,
+                        allow_copy=False,
+                        allow_overwrite=allow_overwrite,
+                    )
+                    if info_state.get("edited"):
+                        _refresh_clip_target()
+                    if info_state.get("action") == "overwrite" and allow_overwrite:
+                        status_line = overw_msg
+                        result = "overwrite"
+                        break
                     new_cols, new_rows = _term_size()
-                    if (new_cols, new_rows) != (prev_cols, prev_rows):
+                    if info_state.get("edited") or (new_cols, new_rows) != (prev_cols, prev_rows):
                         up_rows = _box_rows_above_prompt(box, new_cols)
                         prev_cols, prev_rows = new_cols, new_rows
                         cur_lines = content_builder() if callable(content_builder) else content_lines
@@ -782,66 +814,6 @@ def prompt_yes_no_box(
                         )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                    else:
-                        tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                    tty_w.flush()
-                    continue
-                if action == "output" and has_output and out_path is not None:
-                    open_script_in_editor(out_path, tty_r, tty_w)
-                    new_cols, new_rows = _term_size()
-                    if (new_cols, new_rows) != (prev_cols, prev_rows):
-                        up_rows = _box_rows_above_prompt(box, new_cols)
-                        prev_cols, prev_rows = new_cols, new_rows
-                        cur_lines = content_builder() if callable(content_builder) else content_lines
-                        box, rule_width, cursor_offset = format_prompt_box(
-                            title,
-                            _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
-                            prompt_line,
-                            status_lines=status_list,
-                            term_cols=new_cols,
-                            term_rows=new_rows,
-                        )
-                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        box_lines_res = box.splitlines()
-                        prefixed_prompt = (
-                            box_lines_res[-2]
-                            if len(box_lines_res) >= 2
-                            else _prefix_block_line(prompt_line, border_color=border_col)
-                        )
-                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                    else:
-                        tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                    tty_w.flush()
-                    continue
-                if action in ("view", "edit") and (has_output or has_script):
-                    view_target = out_path if (has_output and out_path is not None) else script_path
-                    if view_target is not None:
-                        open_script_in_editor(view_target, tty_r, tty_w)
-                        new_cols, new_rows = _term_size()
-                        if (new_cols, new_rows) != (prev_cols, prev_rows):
-                            up_rows = _box_rows_above_prompt(box, new_cols)
-                            prev_cols, prev_rows = new_cols, new_rows
-                            cur_lines = content_builder() if callable(content_builder) else content_lines
-                            box, rule_width, cursor_offset = format_prompt_box(
-                                title,
-                                _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
-                                prompt_line,
-                                status_lines=status_list,
-                                term_cols=new_cols,
-                                term_rows=new_rows,
-                            )
-                            bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            box_lines_res = box.splitlines()
-                            prefixed_prompt = (
-                                box_lines_res[-2]
-                                if len(box_lines_res) >= 2
-                                else _prefix_block_line(prompt_line, border_color=border_col)
-                            )
-                            move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                            tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                        else:
-                            tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
                 if (action == "copy" or (copy_on_yes and action == "yes")) and can_copy and clip_target is not None:
@@ -1102,8 +1074,15 @@ def confirm_execution(
             tty_w.write(f"{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
             first_read = True
+            info_extra_keys = {"i": "info", "info": "info", "d": "info", "details": "info"}
             while True:
-                action = read_confirm_key(tty_r, default_yes=default_yes, default_no=not default_yes, flush=first_read)
+                action = read_confirm_key(
+                    tty_r,
+                    default_yes=default_yes,
+                    default_no=not default_yes,
+                    extra_keys=info_extra_keys,
+                    flush=first_read,
+                )
                 first_read = False
                 if action == "resize":
                     new_cols, new_rows = _term_size()
@@ -1132,90 +1111,82 @@ def confirm_execution(
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
-                if action in ("edit", "view"):
-                    if script_path is not None and script_path.is_file():
-                        try:
-                            before_bytes: bytes | None = script_path.read_bytes()
-                        except OSError:
-                            before_bytes = None
-                        open_script_in_editor(script_path, tty_r, tty_w)
-                        try:
-                            after_bytes: bytes | None = script_path.read_bytes() if script_path.is_file() else None
-                        except OSError:
-                            after_bytes = None
-                        if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
-                            if orig_path is not None:
-                                _write_orig_backup_once(orig_path, before_bytes)
-                            script_text = after_bytes.decode("utf-8", errors="replace")
-                            summary = summarize_script_actions(script_text, work_dir=wdir)
-                            if orig_sandbox:
-                                summary["sandbox"] = orig_sandbox
-                            findings = scan_script_risks(script_text)
-                            if approve_cmd:
-                                plan_obj = analyze_script(script_text, work_dir=wdir, label=label, check_syntax=False)
-                                approve_decision, note = run_approve_cmd(
-                                    approve_cmd, label, script_text, plan_obj, script_path=script_path
-                                )
-                                if approve_decision == "reject":
-                                    reject_msg = note or "rejected by RUN_BLOCK_APPROVE_CMD"
-                                    prefixed_rej = _prefix_block_line(f"✗ {reject_msg}", border_color=border_col)
-                                    tty_w.write(f"\r\033[K{prefixed_rej}\n\r\033[K{bottom}\n")
-                                    tty_w.flush()
-                                    return False, reject_msg
-                            default_yes = (len(findings) == 0 and approve_decision != "prompt")
-                            is_edited = _is_file_edited(script_path, orig_path)
-                            new_cols, new_rows = _term_size()
-                            up_rows = _box_rows_above_prompt(box, new_cols)
-                            prev_cols, prev_rows = new_cols, new_rows
-                            box, rule_width, cursor_offset = format_safety_box(
-                                label,
-                                findings,
-                                default_yes=default_yes,
-                                summary=summary,
-                                note=note,
-                                script_path=script_path,
-                                edited=is_edited,
-                                term_cols=new_cols,
-                                term_rows=new_rows,
+                if action == "info":
+                    ce_sdir = _resolve_session_dir(label, script_path)
+
+                    def _on_start_step_edit(_edited_path: Path) -> dict[str, object]:
+                        nonlocal script_text, summary, findings, approve_decision, note, default_yes, is_edited
+                        if script_path is None or not script_path.is_file():
+                            return {}
+                        new_text = script_path.read_text(encoding="utf-8", errors="replace")
+                        script_text = new_text
+                        summary = summarize_script_actions(script_text, work_dir=wdir)
+                        if orig_sandbox:
+                            summary["sandbox"] = orig_sandbox
+                        findings = scan_script_risks(script_text)
+                        if approve_cmd:
+                            plan_obj = analyze_script(script_text, work_dir=wdir, label=label, check_syntax=False)
+                            approve_decision, note = run_approve_cmd(
+                                approve_cmd, label, script_text, plan_obj, script_path=script_path
                             )
-                            bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            ce_lines = box.splitlines()
-                            prefixed_prompt = (
-                                ce_lines[-2]
-                                if len(ce_lines) >= 2
-                                else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-                            )
-                            move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                            tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                            tty_w.flush()
-                        else:
-                            new_cols, new_rows = _term_size()
-                            if (new_cols, new_rows) != (prev_cols, prev_rows):
-                                up_rows = _box_rows_above_prompt(box, new_cols)
-                                prev_cols, prev_rows = new_cols, new_rows
-                                box, rule_width, cursor_offset = format_safety_box(
-                                    label,
-                                    findings,
-                                    default_yes=default_yes,
-                                    summary=summary,
-                                    note=note,
-                                    script_path=script_path,
-                                    edited=is_edited,
-                                    term_cols=new_cols,
-                                    term_rows=new_rows,
-                                )
-                                bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                                ce_lines = box.splitlines()
-                                prefixed_prompt = (
-                                    ce_lines[-2]
-                                    if len(ce_lines) >= 2
-                                    else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-                                )
-                                move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                                tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                            else:
-                                tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                            tty_w.flush()
+                            if approve_decision == "reject":
+                                return {"reject_msg": note or "rejected by RUN_BLOCK_APPROVE_CMD"}
+                        default_yes = (len(findings) == 0 and approve_decision != "prompt")
+                        is_edited = _is_file_edited(script_path, orig_path)
+                        return {
+                            "summary": summary,
+                            "findings": findings,
+                            "note": note,
+                            "edited": is_edited,
+                        }
+
+                    info_state = _show_info_fullscreen(
+                        title_kind="START STEP",
+                        label=label,
+                        sdir=ce_sdir,
+                        script_path=script_path,
+                        edit_target=script_path,
+                        summary=summary,
+                        findings=findings,
+                        note=note,
+                        sandbox_mode=orig_sandbox or None,
+                        edited=is_edited,
+                        tty_r=tty_r,
+                        tty_w=tty_w,
+                        allow_copy=False,
+                        on_edit_callback=_on_start_step_edit,
+                    )
+                    if info_state.get("reject_msg"):
+                        reject_msg = str(info_state["reject_msg"])
+                        prefixed_rej = _prefix_block_line(f"✗ {reject_msg}", border_color=border_col)
+                        tty_w.write(f"\r\033[K{prefixed_rej}\n\r\033[K{bottom}\n")
+                        tty_w.flush()
+                        return False, reject_msg
+                    new_cols, new_rows = _term_size()
+                    if info_state.get("edited") or (new_cols, new_rows) != (prev_cols, prev_rows):
+                        up_rows = _box_rows_above_prompt(box, new_cols)
+                        prev_cols, prev_rows = new_cols, new_rows
+                        box, rule_width, cursor_offset = format_safety_box(
+                            label,
+                            findings,
+                            default_yes=default_yes,
+                            summary=summary,
+                            note=note,
+                            script_path=script_path,
+                            edited=is_edited,
+                            term_cols=new_cols,
+                            term_rows=new_rows,
+                        )
+                        bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                        ce_lines = box.splitlines()
+                        prefixed_prompt = (
+                            ce_lines[-2]
+                            if len(ce_lines) >= 2
+                            else _safety_prompt_prefix(default_yes, bool(findings), border_col)
+                        )
+                        move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                        tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                        tty_w.flush()
                     continue
                 if action == "yes":
                     approved = True
@@ -1474,7 +1445,7 @@ def _is_same_cwd(wdir_val: str) -> bool:
         return os.path.abspath(wdir_part) == os.path.abspath(os.getcwd())
 
 
-def _colorize_kv_line(line: str) -> str:
+def _colorize_kv_line(line: str, *, bright_stats: bool = False) -> str:
     if not _use_color():
         return line
     m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*:)(\s+)(.*)$", line)
@@ -1490,6 +1461,8 @@ def _colorize_kv_line(line: str) -> str:
             return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_WARN_COLOR}{val}{_ANSI_RESET}"
         if key == "Error:":
             return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_ERROR_COLOR}{val}{_ANSI_RESET}"
+        if key == "Stats:" and bright_stats:
+            return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}\x1b[97m{val}{_ANSI_RESET}"
         if key in ("Fix:", "Output:", "Stats:"):
             return f"{_KEY_COLOR}{key}{spaces}{val}{_ANSI_RESET}"
         return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{val}"
@@ -2143,27 +2116,6 @@ def _format_end_fix_status(label: str, resolved_sdir: Path | None) -> str:
     return f"{prog_name()} --fix {label} ({used}/{max_attempts} failed attempts)"
 
 
-def _format_step_timings_summary(
-    op_timings: list[dict[str, object]],
-    *,
-    failed_step: int | None = None,
-    rc: int | None = None,
-) -> str:
-    parts: list[str] = []
-    for item in op_timings:
-        step_num = item.get("step")
-        tag = str(item.get("tag") or "exec")
-        try:
-            dur_ms = int(item.get("duration_ms") or 0)
-        except (TypeError, ValueError):
-            dur_ms = 0
-        entry = f"{step_num}. [{tag}] {format_duration(dur_ms / 1000.0)}"
-        if rc is not None and rc != 0 and failed_step is not None and step_num == failed_step:
-            entry += " (failed)"
-        parts.append(entry)
-    return " · ".join(parts)
-
-
 def _build_start_bundle_parts(
     sdir: Path | None,
     bundle_path: Path,
@@ -2247,12 +2199,8 @@ def build_box_body_lines(
             op_timings = [x for x in step_meta["operations"] if isinstance(x, dict)]
         if failed_step is None and isinstance(step_meta.get("failed_step"), int):
             failed_step = int(step_meta["failed_step"])
+    _ = op_timings, failed_step
     duration_str = format_duration(duration_s) if duration_s is not None else None
-    steps_summary = (
-        _format_step_timings_summary(op_timings, failed_step=failed_step, rc=rc)
-        if op_timings
-        else ""
-    )
     if extra_lines is not None:
         detail_lines = list(extra_lines)
     else:
@@ -2266,8 +2214,6 @@ def build_box_body_lines(
                 fix_status = _format_end_fix_status(label, resolved_sdir)
                 if fix_status:
                     detail_lines.append(f"Fix: {fix_status}")
-        if steps_summary:
-            detail_lines.append(f"Steps: {steps_summary}")
         detail_lines.append(f"Output: {out_path}")
     if not any(line.startswith("Stats:") for line in detail_lines):
         stats_parts: list[str] = []
@@ -2320,12 +2266,8 @@ def build_box_body_lines(
 
 
 def _clipboard_prompt_line(title_kind: str) -> str:
-    kind = title_kind.strip()
-    if kind == "START SESSION":
-        return "-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:"
-    if kind == "END STEP":
-        return "-> Copy to clipboard? [Y/n/e(dit)]:"
-    return "-> Copy to clipboard? [Y/n/v(iew)]:"
+    _ = title_kind
+    return "-> Copy to clipboard? [Y/n/i(nfo)]:"
 
 
 def format_clipboard_box(
@@ -2393,7 +2335,10 @@ def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
 
 
 def _parse_pager_line(line: str) -> str:
-    ans = line.strip().lower()
+    raw = line.strip()
+    if raw == "O":
+        return "overwrite"
+    ans = raw.lower()
     if ans in ("j", "down"):
         return "down"
     if ans in ("k", "up"):
@@ -2408,6 +2353,14 @@ def _parse_pager_line(line: str) -> str:
         return "bottom"
     if ans in ("e", "edit"):
         return "edit"
+    if ans in ("s", "script"):
+        return "script"
+    if ans in ("o", "output"):
+        return "output"
+    if ans == "overwrite":
+        return "overwrite"
+    if ans in ("v", "view"):
+        return "view"
     if ans in ("", "y", "yes", "enter", "copy"):
         return "copy"
     return "back"
@@ -2460,6 +2413,14 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
                     return "copy"
                 if ch in (b"e", b"E"):
                     return "edit"
+                if ch in (b"s", b"S"):
+                    return "script"
+                if ch == b"o":
+                    return "output"
+                if ch == b"O":
+                    return "overwrite"
+                if ch in (b"v", b"V"):
+                    return "view"
                 if ch in (b"q", b"Q", b"d", b"D", b"i", b"I", b"\x03"):
                     return "back"
                 if ch == b"\x1b":
@@ -2486,50 +2447,488 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
             pass
 
 
-def _build_bundle_details_screen(
+def _resolve_info_step_script(
+    label: str | None,
+    resolved_sdir: Path | None,
+    script_path: Path | None,
+    out_path: Path | None,
+) -> Path | None:
+    if script_path is not None:
+        return script_path
+    if out_path is not None and out_path.name in ("out", "error"):
+        for ext in (".sh", ".ps1"):
+            cand = out_path.with_name(f"block{ext}")
+            if cand.is_file():
+                return cand
+    if label and "/" in label and resolved_sdir is not None:
+        step = label.split("/", 1)[1].strip()
+        if step and step != "0":
+            cand = _find_step_script(resolved_sdir, step)
+            if cand.is_file():
+                return cand
+    return None
+
+
+def _format_info_header_lines(
+    label: str | None = None,
+    sdir: Path | None = None,
+    work_dir: Path | str | None = None,
+    sandbox_mode: str | None = None,
+    cd_dirs: list[str] | None = None,
+) -> list[str]:
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label)
+    hdr_items = parse_bundle_header_items(resolved_sdir, include_transport=True)
+    hdr_map = {k.lower(): v for k, v in hdr_items}
+
+    lines: list[str] = []
+    if label:
+        if "/" in label:
+            sess, step = label.split("/", 1)
+            if step == "0":
+                lines.append(f"Session: {sess}")
+                nxt = hdr_map.get("next-block") or f"{sess}/1"
+                lines.append(f"Next-Block: {nxt}")
+            else:
+                lines.append(f"Step: {label}")
+        else:
+            lines.append(f"Session: {label}")
+    elif resolved_sdir is not None:
+        sess = hdr_map.get("session") or resolved_sdir.name
+        lines.append(f"Session: {sess}")
+
+    if work_dir is not None and str(work_dir):
+        wdir_str = str(work_dir)
+    else:
+        wdir_str = str(get_work_dir(resolved_sdir).resolve())
+    wline = f"Workdir: {wdir_str}" + (f"  (cd -> {', '.join(cd_dirs)})" if cd_dirs else "")
+    lines.append(wline)
+
+    sb_val = sandbox_mode if (sandbox_mode is not None and str(sandbox_mode)) else get_sandbox_mode(resolved_sdir)
+    lines.append(f"Sandbox: {format_sandbox_header(sb_val)}")
+
+    if hdr_map.get("date"):
+        lines.append(f"Date: {hdr_map['date']}")
+
+    for raw_k, val in hdr_items:
+        if raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or not val:
+            continue
+        lines.append(f"{raw_k}: {val}")
+
+    meta = read_session_meta(resolved_sdir)
+    if meta.get("completed"):
+        comp_at = str(meta.get("completed_at") or "").strip()
+        lines.append(f"Completed: {comp_at}" if comp_at else "Completed: true")
+        comp_note = str(meta.get("completed_note") or "").strip()
+        if comp_note:
+            lines.append(f"Completed-Note: {comp_note}")
+    return lines
+
+
+def _format_info_operation_timings(
+    op_timings: list[dict[str, object]],
+    *,
+    total_duration_ms: int | None = None,
+    failed_step: int | None = None,
+    rc: int | None = None,
+) -> list[str]:
+    if not op_timings:
+        return []
+    sum_ms = sum(max(0, int(item.get("duration_ms") or 0)) for item in op_timings)
+    denom_ms = total_duration_ms if (total_duration_ms is not None and total_duration_ms > 0) else sum_ms
+    raw_lines: list[str] = []
+    for item in op_timings:
+        step_num = item.get("step")
+        tag = str(item.get("tag") or "exec")
+        desc = str(item.get("desc") or "").strip()
+        try:
+            dur_ms = max(0, int(item.get("duration_ms") or 0))
+        except (TypeError, ValueError):
+            dur_ms = 0
+        pct = (100.0 * dur_ms / denom_ms) if denom_ms > 0 else 0.0
+        dur_str = format_duration(dur_ms / 1000.0)
+        is_failed = rc is not None and rc != 0 and failed_step is not None and step_num == failed_step
+        fail_lbl = " (failed)" if is_failed else ""
+        desc_part = f"  {desc}" if desc else ""
+        raw_lines.append(f"  {step_num}. [{tag}]  {dur_str} ({pct:.1f}%){fail_lbl}{desc_part}")
+    colored = _colorize_operation_lines(raw_lines)
+    if _use_color():
+        colored = [ln.replace(" (failed)", f" {_WARN_COLOR}(failed){_ANSI_RESET}") for ln in colored]
+    return colored
+
+
+def _format_info_plan_section(
+    heading: str,
+    plan_obj: dict[str, object],
+    max_width: int,
+) -> list[str]:
+    out: list[str] = [f"{_KEY_COLOR}{heading}{_ANSI_RESET}" if _use_color() else heading]
+    meta_str = str(plan_obj.get("meta") or "")
+    if meta_str:
+        out.append(f"  Script: {meta_str}")
+    ops_raw = list(plan_obj.get("operations") or [])
+    ops = [(str(op[0]), str(op[1])) for op in ops_raw if isinstance(op, (list, tuple)) and len(op) >= 2]
+    op_groups_raw = list(plan_obj.get("operation_groups") or [])
+    op_groups: list[tuple[str, list[tuple[str, str]]]] = []
+    for grp in op_groups_raw:
+        if isinstance(grp, (list, tuple)) and len(grp) >= 2:
+            g_items = [
+                (str(it[0]), str(it[1]))
+                for it in (grp[1] or [])
+                if isinstance(it, (list, tuple)) and len(it) >= 2
+            ]
+            op_groups.append((str(grp[0]), g_items))
+    op_steps = [s for s in (plan_obj.get("operation_steps") or []) if isinstance(s, dict)]
+    max_step_num = max((int(s.get("step") or 0) for s in op_steps), default=0)
+    step_num_w = len(f"{max_step_num}.") if max_step_num > 0 else None
+    wdir = str(plan_obj.get("work_dir") or ".")
+    if ops:
+        op_lines: list[str] = []
+        display_groups = _group_operations_for_display(ops, op_groups, op_steps)
+        for g_dir, g_items, g_nums in display_groups:
+            if g_dir is not None:
+                dir_hdr = g_dir if g_dir else wdir
+                op_lines.append(f"  {dir_hdr}:")
+                item_indent = "    "
+            else:
+                item_indent = "  "
+            op_lines.extend(
+                _wrap_labeled_items(
+                    g_items, max_width, indent=item_indent, step_nums=g_nums, num_width=step_num_w
+                )
+            )
+        out.extend(_colorize_operation_lines(op_lines))
+    else:
+        out.append("  (no detected operations)")
+    findings = [f for f in (plan_obj.get("findings") or []) if isinstance(f, dict)]
+    if findings:
+        whdr = f"  Safety warnings ({len(findings)}):"
+        out.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
+        warn_items = [(str(f.get("category") or "warn"), str(f.get("snippet") or "")) for f in findings]
+        out.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_width, indent="    ")))
+    return out
+
+
+def _collect_info_report(
+    *,
+    title_kind: str,
     label: str,
-    bundle_path: Path,
+    max_content_w: int,
+    sdir: Path | None = None,
+    out_path: Path | None = None,
+    script_path: Path | None = None,
+    rc: int | None = None,
+    duration_s: float | None = None,
+    op_timings: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
+    summary: dict[str, object] | None = None,
+    findings: list[dict[str, object]] | None = None,
+    note: str = "",
+    sandbox_mode: str | None = None,
+    extra_lines: list[str] | None = None,
+    edited: bool | None = None,
+) -> tuple[list[str], list[str]]:
+    kind = title_kind.strip()
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path)
+    resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+    step_dir: Path | None = None
+    if resolved_script is not None:
+        step_dir = resolved_script.parent
+    elif out_path is not None and out_path.name in ("out", "error"):
+        step_dir = out_path.parent
+    elif resolved_sdir is not None and "/" in label:
+        st_name = label.split("/", 1)[1].strip()
+        if st_name and st_name != "0":
+            step_dir = _step_dir(resolved_sdir, st_name)
+
+    step_meta = read_step_meta(step_dir) if step_dir is not None else {}
+    if duration_s is None and isinstance(step_meta.get("duration_ms"), (int, float)):
+        duration_s = float(step_meta["duration_ms"]) / 1000.0
+    if rc is None and isinstance(step_meta.get("exit_code"), int):
+        rc = int(step_meta["exit_code"])
+    if op_timings is None and isinstance(step_meta.get("operations"), list):
+        op_timings = [x for x in step_meta["operations"] if isinstance(x, dict)]
+    if failed_step is None and isinstance(step_meta.get("failed_step"), int):
+        failed_step = int(step_meta["failed_step"])
+
+    wdir = str(summary.get("work_dir") or "") if summary else ""
+    cd_dirs = list(summary.get("cd_dirs") or []) if summary else []
+    sb_val = sandbox_mode or (str(summary.get("sandbox") or "") if summary else "") or None
+    hdr_lines = _format_info_header_lines(
+        label=label,
+        sdir=resolved_sdir,
+        work_dir=wdir or None,
+        sandbox_mode=sb_val,
+        cd_dirs=cd_dirs,
+    )
+    if step_meta.get("renumbered_from"):
+        hdr_lines.append(f"Renumbered: from {step_meta['renumbered_from']}")
+
+    meta_kv: list[str] = []
+    if extra_lines:
+        known_prefixes = ("Session:", "Next-Block:", "Step:", "Workdir:", "Sandbox:", "Date:", "Bundle:", "Script:", "Output:", "Stats:")
+        for el in extra_lines:
+            stripped = el.strip()
+            if not stripped or stripped.startswith(known_prefixes):
+                continue
+            meta_kv.append(el)
+
+    if kind == "START SESSION":
+        bpath = out_path if out_path is not None else (resolved_sdir / "0" if resolved_sdir is not None else None)
+        if bpath is not None:
+            orig_b = _orig_file_backup_path(bpath)
+            b_edited = _is_file_edited(bpath, orig_b) if edited is None else edited
+            meta_kv.append(f"Bundle: {bpath}")
+            if orig_b.is_file():
+                meta_kv.append(f"Original: {orig_b}")
+            st = stats_line(bpath)
+            plan_obj = None
+            fn_load = globals().get("load_session_bundle_plan")
+            if callable(fn_load):
+                loaded = fn_load(resolved_sdir, bpath)
+                if isinstance(loaded, dict):
+                    plan_obj = loaded
+            if st:
+                st_txt = st
+                if isinstance(plan_obj, dict):
+                    p_cnt = int(plan_obj.get("part_count") or 0)
+                    if p_cnt > 0:
+                        st_txt += f" ({p_cnt} part{'s' if p_cnt != 1 else ''})"
+                meta_kv.append(f"Stats: {st_txt} (edited)" if b_edited else f"Stats: {st_txt}")
+            elif b_edited:
+                meta_kv.append("Stats: (edited)")
+            body_sections: list[str] = []
+            if isinstance(plan_obj, dict):
+                fn_sum = globals().get("format_bundle_summary_lines")
+                sum_lines = fn_sum(plan_obj, max_width=max_content_w) if callable(fn_sum) else []
+                if sum_lines:
+                    p_cnt = int(plan_obj.get("part_count") or 0)
+                    shdr = f"Summary ({p_cnt} part{'s' if p_cnt != 1 else ''}):"
+                    body_sections.append(f"{_KEY_COLOR}{shdr}{_ANSI_RESET}" if _use_color() else shdr)
+                    body_sections.extend(_colorize_bundle_lines(sum_lines))
+            breakdown, warnings_sec = _build_start_bundle_parts(
+                resolved_sdir,
+                bpath,
+                details=True,
+                max_width=max_content_w,
+                plan=plan_obj,
+                include_part_count=True,
+            )
+            if breakdown:
+                if body_sections:
+                    body_sections.append("")
+                body_sections.extend(breakdown)
+            if warnings_sec:
+                if body_sections:
+                    body_sections.append("")
+                body_sections.extend(warnings_sec)
+            if not body_sections:
+                body_sections = ["(no bundle parts)"]
+            return _align_kv_lines([*hdr_lines, *meta_kv]), body_sections
+
+    orig_script = _orig_backup_path(resolved_script) if resolved_script is not None else None
+    script_edited = _is_file_edited(resolved_script, orig_script)
+    orig_out = _orig_file_backup_path(out_path) if out_path is not None else None
+    out_edited = _is_file_edited(out_path, orig_out)
+
+    if kind != "START STEP" and rc is not None and rc != 0 and not any(ln.startswith("Exit:") for ln in meta_kv):
+        meta_kv.append(f"Exit: {rc}")
+        if out_path is not None and out_path.is_file():
+            last_err = _extract_last_error_line(out_path, label=label, max_width=max_content_w)
+            if last_err and not any(ln.startswith("Error:") for ln in meta_kv):
+                meta_kv.append(f"Error: {last_err}")
+        if kind == "END STEP" and label and not any(ln.startswith("Fix:") for ln in meta_kv):
+            fix_st = _format_end_fix_status(label, resolved_sdir)
+            if fix_st:
+                meta_kv.append(f"Fix: {fix_st}")
+
+    if resolved_script is not None and resolved_script.exists():
+        meta_kv.append(f"Script: {resolved_script}")
+        if orig_script is not None and orig_script.is_file():
+            meta_kv.append(f"Script-Orig: {orig_script}")
+    if out_path is not None and out_path.exists():
+        meta_kv.append(f"Output: {out_path}")
+        if orig_out is not None and orig_out.is_file():
+            meta_kv.append(f"Output-Orig: {orig_out}")
+    if step_dir is not None:
+        err_file = step_dir / "err"
+        if err_file.is_file():
+            meta_kv.append(f"Stderr: {err_file}")
+        smeta_file = step_dir / "meta.json"
+        if smeta_file.is_file():
+            meta_kv.append(f"Meta: {smeta_file}")
+    if resolved_sdir is not None and kind in ("MISSING PREVIOUS STEP", "SESSION COMPLETED"):
+        b0 = resolved_sdir / "0"
+        if b0.is_file():
+            meta_kv.append(f"Bundle: {b0}")
+            orig0 = _orig_file_backup_path(b0)
+            if orig0.is_file():
+                meta_kv.append(f"Original: {orig0}")
+
+    primary_path = out_path if (out_path is not None and out_path.is_file()) else resolved_script
+    if primary_path is None and resolved_sdir is not None and (resolved_sdir / "0").is_file():
+        primary_path = resolved_sdir / "0"
+    primary_stats = stats_line(primary_path) if primary_path is not None else None
+    dur_str = format_duration(duration_s) if duration_s is not None else None
+    stat_parts: list[str] = []
+    if primary_stats:
+        stat_parts.append(primary_stats)
+    elif kind == "START STEP" and summary and summary.get("meta"):
+        stat_parts.append(str(summary["meta"]))
+    if dur_str:
+        stat_parts.append(dur_str)
+    any_edited = bool(edited if edited is not None else (out_edited or script_edited))
+    if stat_parts:
+        joined = " · ".join(stat_parts)
+        meta_kv.append(f"Stats: {joined} (edited)" if any_edited else f"Stats: {joined}")
+    elif any_edited:
+        meta_kv.append("Stats: (edited)")
+
+    if resolved_script is not None and out_path is not None and resolved_script.is_file() and out_path.is_file():
+        sc_st = stats_line(resolved_script)
+        if sc_st:
+            meta_kv.append(f"Script-Stats: {sc_st}{' (edited)' if script_edited else ''}")
+
+    body_sections = []
+    if op_timings:
+        total_ms = int(step_meta["duration_ms"]) if isinstance(step_meta.get("duration_ms"), (int, float)) else None
+        thdr = f"Operations ({len(op_timings)} timed):"
+        body_sections.append(f"{_KEY_COLOR}{thdr}{_ANSI_RESET}" if _use_color() else thdr)
+        body_sections.extend(
+            _format_info_operation_timings(
+                op_timings, total_duration_ms=total_ms, failed_step=failed_step, rc=rc
+            )
+        )
+
+    if kind == "START STEP":
+        if summary:
+            if body_sections:
+                body_sections.append("")
+            cur_plan = {
+                "meta": summary.get("meta", ""),
+                "work_dir": summary.get("work_dir", str(get_work_dir(resolved_sdir))),
+                "operations": summary.get("operations") or [],
+                "operation_groups": summary.get("operation_groups") or [],
+                "operation_steps": summary.get("operation_steps") or [],
+                "findings": findings or [],
+            }
+            body_sections.extend(_format_info_plan_section("Operations:", cur_plan, max_content_w))
+        if note.strip():
+            if body_sections:
+                body_sections.append("")
+            body_sections.append("Analyzer:")
+            for nline in note.strip().splitlines():
+                body_sections.append(f"  {nline}")
+        if orig_script is not None and orig_script.is_file():
+            try:
+                orig_text = orig_script.read_text(encoding="utf-8", errors="replace")
+                w_eff = Path(wdir) if wdir else get_work_dir(resolved_sdir)
+                orig_plan = analyze_script(orig_text, work_dir=w_eff, label=label, check_syntax=False)
+                if body_sections:
+                    body_sections.append("")
+                body_sections.extend(
+                    _format_info_plan_section(f"Original Plan ({orig_script.name}):", orig_plan, max_content_w)
+                )
+            except OSError:
+                pass
+    elif resolved_script is not None and (
+        (orig_script is not None and orig_script.is_file()) or resolved_script.is_file()
+    ):
+        plan_src = orig_script if (orig_script is not None and orig_script.is_file()) else resolved_script
+        try:
+            plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
+            w_eff = Path(wdir) if wdir else get_work_dir(resolved_sdir)
+            pre_plan = analyze_script(plan_text, work_dir=w_eff, label=label, check_syntax=False)
+            if body_sections:
+                body_sections.append("")
+            body_sections.extend(
+                _format_info_plan_section(f"Pre-execution Plan ({plan_src.name}):", pre_plan, max_content_w)
+            )
+        except OSError:
+            pass
+
+    if not body_sections and resolved_sdir is not None and (resolved_sdir / "0").is_file():
+        fn_load = globals().get("load_session_bundle_plan")
+        if callable(fn_load):
+            s_plan = fn_load(resolved_sdir, resolved_sdir / "0")
+            if isinstance(s_plan, dict):
+                fn_sum = globals().get("format_bundle_summary_lines")
+                sum_lines = fn_sum(s_plan, max_width=max_content_w) if callable(fn_sum) else []
+                if sum_lines:
+                    p_cnt = int(s_plan.get("part_count") or 0)
+                    shdr = f"Session Bundle Summary ({p_cnt} part{'s' if p_cnt != 1 else ''}):"
+                    body_sections.append(f"{_KEY_COLOR}{shdr}{_ANSI_RESET}" if _use_color() else shdr)
+                    body_sections.extend(_colorize_bundle_lines(sum_lines))
+
+    if not body_sections:
+        body_sections = ["(no additional details)"]
+    return _align_kv_lines([*hdr_lines, *meta_kv]), body_sections
+
+
+def _build_plain_info_report(**kwargs) -> str:
+    max_w = int(kwargs.pop("max_content_w", 100))
+    hdr_lines, body_lines = _collect_info_report(max_content_w=max_w, **kwargs)
+    plain_lines = [ANSI_RE.sub("", ln) for ln in [*hdr_lines, "", *body_lines]]
+    return "\n".join(plain_lines) + "\n"
+
+
+def _build_info_screen(
+    title_kind: str,
+    label: str,
     cols: int,
     rows: int,
     scroll_top: int,
     *,
     sdir: Path | None = None,
-    edited: bool = False,
+    out_path: Path | None = None,
+    script_path: Path | None = None,
+    edit_target: Path | None = None,
+    rc: int | None = None,
+    duration_s: float | None = None,
+    op_timings: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
+    summary: dict[str, object] | None = None,
+    findings: list[dict[str, object]] | None = None,
+    note: str = "",
+    sandbox_mode: str | None = None,
+    extra_lines: list[str] | None = None,
+    edited: bool | None = None,
+    allow_copy: bool = False,
+    allow_overwrite: bool = False,
 ) -> tuple[str, int, int]:
-    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, bundle_path)
-    title_col, border_col = _block_colors("START SESSION")
-    panel_title = f"DETAILS · {label}"
+    kind = title_kind.strip()
+    title_col, border_col = _block_colors(kind, has_exit=(rc is not None and rc != 0))
+    panel_title = f"INFO · {label}" if label else f"INFO · {kind}"
     width = max(min(cols, 48), display_width(panel_title) + 8)
     max_content_w = max(1, cols - 2)
     top_rule = _format_top_rule(panel_title, width, title_color=title_col, border_color=border_col)
     bottom_rule = _format_bottom_rule(width, border_color=border_col)
 
-    hdr_raw = format_session_header_lines(label=label, sdir=resolved_sdir, clamp_width=max_content_w)
-    meta_kv = [f"Bundle: {bundle_path}"]
-    st = stats_line(bundle_path)
-    if st:
-        meta_kv.append(f"Stats: {st} (edited)" if edited else f"Stats: {st}")
-    elif edited:
-        meta_kv.append("Stats: (edited)")
-    aligned_hdr = _align_kv_lines([*hdr_raw, *meta_kv])
+    hdr_kv, raw_body = _collect_info_report(
+        title_kind=kind,
+        label=label,
+        max_content_w=max_content_w,
+        sdir=sdir,
+        out_path=out_path,
+        script_path=script_path,
+        rc=rc,
+        duration_s=duration_s,
+        op_timings=op_timings,
+        failed_step=failed_step,
+        summary=summary,
+        findings=findings,
+        note=note,
+        sandbox_mode=sandbox_mode,
+        extra_lines=extra_lines,
+        edited=edited,
+    )
     header_rows: list[str] = [top_rule]
-    for hline in aligned_hdr:
-        colored = _colorize_kv_line(_expand_tabs(hline))
+    for hline in hdr_kv:
+        colored = _colorize_kv_line(_expand_tabs(hline), bright_stats=True)
         for wline in _wrap_box_line(colored, max_content_w):
             header_rows.append(_prefix_block_line(wline, border_color=border_col))
     div_char = "─" if _supports_utf8() else "-"
     header_rows.append(_prefix_block_line(div_char * max(8, width - 3), border_color=border_col))
 
-    breakdown, warnings_sec = _build_start_bundle_parts(
-        resolved_sdir,
-        bundle_path,
-        details=True,
-        max_width=max_content_w,
-        include_part_count=True,
-    )
-    raw_body = [*breakdown, "", *warnings_sec] if (breakdown and warnings_sec) else [*breakdown, *warnings_sec]
-    if not raw_body:
-        raw_body = ["(no bundle parts)"]
     all_items: list[str] = []
     for bline in raw_body:
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
@@ -2547,7 +2946,27 @@ def _build_bundle_details_screen(
     start_idx = clamped_scroll + 1 if total_items > 0 else 0
     end_idx = min(total_items, clamped_scroll + viewport_rows)
     pos_txt = f"Lines {start_idx}-{end_idx}/{total_items}" if total_items > 0 else "0 lines"
-    footer_raw = f" {pos_txt} · Up/Down j/k: scroll · PgUp/PgDn: page · Enter: copy · Esc/q/d/i: back"
+
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path)
+    resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+    has_script = resolved_script is not None and resolved_script.is_file()
+    has_output = kind != "START SESSION" and out_path is not None and out_path.is_file()
+    has_edit = edit_target is not None and edit_target.is_file()
+
+    footer_parts: list[str] = [pos_txt, "Up/Down j/k PgUp/PgDn: scroll"]
+    if has_edit:
+        footer_parts.append("e(dit)")
+    if has_script and kind != "START STEP":
+        footer_parts.append("s(cript)")
+    if has_output:
+        footer_parts.append("o(utput)")
+    if allow_overwrite:
+        footer_parts.append("O(verwrite)" if has_output else "o(verwrite)")
+    footer_parts.append("v(iew)")
+    if allow_copy:
+        footer_parts.append("Enter: copy")
+    footer_parts.append("Esc/q/i: back")
+    footer_raw = " " + " · ".join(footer_parts)
     footer_txt = _truncate_display_width(footer_raw, cols) if display_width(footer_raw) > cols else footer_raw
     if _use_color():
         footer_bar = f"\x1b[7m{footer_txt.ljust(cols)}\x1b[0m"
@@ -2559,30 +2978,151 @@ def _build_bundle_details_screen(
     return frame, clamped_scroll, viewport_rows
 
 
-def _show_bundle_details_fullscreen(
+def _build_bundle_details_screen(
     label: str,
     bundle_path: Path,
-    tty_r,
-    tty_w,
+    cols: int,
+    rows: int,
+    scroll_top: int,
     *,
     sdir: Path | None = None,
     edited: bool = False,
-) -> str:
+) -> tuple[str, int, int]:
+    return _build_info_screen(
+        "START SESSION",
+        label,
+        cols,
+        rows,
+        scroll_top,
+        sdir=sdir,
+        out_path=bundle_path,
+        edit_target=bundle_path,
+        edited=edited,
+        allow_copy=True,
+    )
+
+
+def _open_plain_report_in_editor(report_text: str, tty_r, tty_w) -> None:
+    tmp_path: Path | None = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix="run_block_info_", suffix=".txt")
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as f_tmp:
+            f_tmp.write(report_text)
+        open_script_in_editor(tmp_path, tty_r, tty_w)
+    except Exception as exc:
+        tty_w.write(f"\n[viewer error: {exc}]\n")
+        tty_w.flush()
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+
+def _show_info_fullscreen(
+    *,
+    title_kind: str,
+    label: str,
+    tty_r,
+    tty_w,
+    sdir: Path | None = None,
+    out_path: Path | None = None,
+    script_path: Path | None = None,
+    edit_target: Path | None = None,
+    rc: int | None = None,
+    duration_s: float | None = None,
+    op_timings: list[dict[str, object]] | None = None,
+    failed_step: int | None = None,
+    summary: dict[str, object] | None = None,
+    findings: list[dict[str, object]] | None = None,
+    note: str = "",
+    sandbox_mode: str | None = None,
+    extra_lines: list[str] | None = None,
+    edited: bool | None = None,
+    allow_copy: bool = False,
+    allow_overwrite: bool = False,
+    on_edit_callback=None,
+) -> dict[str, object]:
+    kind = title_kind.strip()
     scroll_top = 0
+    any_edited = False
+    cur_summary = summary
+    cur_findings = findings
+    cur_note = note
+    cur_edited = edited
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path)
+
+    def _edit_artifact(target: Path) -> dict[str, object] | None:
+        nonlocal any_edited, cur_summary, cur_findings, cur_note, cur_edited
+        if not target.is_file():
+            return None
+        try:
+            before_bytes: bytes | None = target.read_bytes()
+        except OSError:
+            before_bytes = None
+        if target.name.startswith("block.") and not target.name.startswith("block.orig."):
+            orig_p = _orig_backup_path(target)
+        else:
+            orig_p = _orig_file_backup_path(target)
+        tty_w.write("\033[?25h\033[?1049l")
+        tty_w.flush()
+        try:
+            open_script_in_editor(target, tty_r, tty_w)
+        finally:
+            tty_w.write("\033[?1049h\033[?25l")
+            tty_w.flush()
+        try:
+            after_bytes: bytes | None = target.read_bytes() if target.is_file() else None
+        except OSError:
+            after_bytes = None
+        if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
+            _write_orig_backup_once(orig_p, before_bytes)
+            any_edited = True
+            if callable(on_edit_callback):
+                cb_res = on_edit_callback(target)
+                if isinstance(cb_res, dict):
+                    if "summary" in cb_res:
+                        cur_summary = cb_res["summary"]
+                    if "findings" in cb_res:
+                        cur_findings = cb_res["findings"]
+                    if "note" in cb_res:
+                        cur_note = str(cb_res["note"] or "")
+                    if "edited" in cb_res:
+                        cur_edited = bool(cb_res["edited"])
+                    if cb_res.get("reject_msg"):
+                        return cb_res
+        return None
+
     tty_w.write("\033[?1049h\033[?25l")
     tty_w.flush()
     try:
         first_read = True
         while True:
             cols, rows = _term_size()
-            frame, scroll_top, viewport_rows = _build_bundle_details_screen(
+            resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+            has_script = resolved_script is not None and resolved_script.is_file()
+            has_output = kind != "START SESSION" and out_path is not None and out_path.is_file()
+            frame, scroll_top, viewport_rows = _build_info_screen(
+                kind,
                 label,
-                bundle_path,
                 cols,
                 rows,
                 scroll_top,
-                sdir=sdir,
-                edited=edited,
+                sdir=resolved_sdir,
+                out_path=out_path,
+                script_path=resolved_script,
+                edit_target=edit_target,
+                rc=rc,
+                duration_s=duration_s,
+                op_timings=op_timings,
+                failed_step=failed_step,
+                summary=cur_summary,
+                findings=cur_findings,
+                note=cur_note,
+                sandbox_mode=sandbox_mode,
+                extra_lines=extra_lines,
+                edited=cur_edited,
+                allow_copy=allow_copy,
+                allow_overwrite=allow_overwrite,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -2606,11 +3146,77 @@ def _show_bundle_details_fullscreen(
                 scroll_top = 0
             elif key == "bottom":
                 scroll_top = 10**9
-            elif key in ("copy", "edit", "back"):
-                return key
+            elif key == "edit" and edit_target is not None and edit_target.is_file():
+                cb = _edit_artifact(edit_target)
+                if cb and cb.get("reject_msg"):
+                    return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
+            elif key == "script" and has_script and resolved_script is not None:
+                cb = _edit_artifact(resolved_script)
+                if cb and cb.get("reject_msg"):
+                    return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
+            elif key == "output":
+                if has_output and out_path is not None:
+                    _edit_artifact(out_path)
+                elif allow_overwrite and not has_output:
+                    return {"action": "overwrite", "edited": any_edited}
+            elif key == "overwrite" and allow_overwrite:
+                return {"action": "overwrite", "edited": any_edited}
+            elif key == "view":
+                report_txt = _build_plain_info_report(
+                    title_kind=kind,
+                    label=label,
+                    max_content_w=max(80, cols - 2),
+                    sdir=resolved_sdir,
+                    out_path=out_path,
+                    script_path=resolved_script,
+                    rc=rc,
+                    duration_s=duration_s,
+                    op_timings=op_timings,
+                    failed_step=failed_step,
+                    summary=cur_summary,
+                    findings=cur_findings,
+                    note=cur_note,
+                    sandbox_mode=sandbox_mode,
+                    extra_lines=extra_lines,
+                    edited=cur_edited,
+                )
+                tty_w.write("\033[?25h\033[?1049l")
+                tty_w.flush()
+                try:
+                    _open_plain_report_in_editor(report_txt, tty_r, tty_w)
+                finally:
+                    tty_w.write("\033[?1049h\033[?25l")
+                    tty_w.flush()
+            elif key == "copy" and allow_copy:
+                return {"action": "copy", "edited": any_edited}
+            elif key == "back":
+                return {"action": "back", "edited": any_edited}
     finally:
         tty_w.write("\033[?25h\033[?1049l")
         tty_w.flush()
+
+
+def _show_bundle_details_fullscreen(
+    label: str,
+    bundle_path: Path,
+    tty_r,
+    tty_w,
+    *,
+    sdir: Path | None = None,
+    edited: bool = False,
+) -> str:
+    res = _show_info_fullscreen(
+        title_kind="START SESSION",
+        label=label,
+        tty_r=tty_r,
+        tty_w=tty_w,
+        sdir=sdir,
+        out_path=bundle_path,
+        edit_target=bundle_path,
+        edited=edited,
+        allow_copy=True,
+    )
+    return str(res.get("action") or "back")
 
 
 def offer_clipboard_copy(
@@ -2658,6 +3264,8 @@ def offer_clipboard_copy(
         return
     orig_path = _orig_file_backup_path(edit_target)
     is_edited = _is_file_edited(edit_target, orig_path)
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, edit_target)
+    step_script = None if is_start_bundle else _resolve_info_step_script(label, resolved_sdir, None, edit_target)
     prev_cols, prev_rows = _term_size()
     box, rule_width, cursor_offset = format_clipboard_box(
         label,
@@ -2728,22 +3336,52 @@ def offer_clipboard_copy(
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
-                if is_start_bundle and action == "details":
-                    pager_action = _show_bundle_details_fullscreen(
-                        label,
-                        copy_target,
-                        tty_r,
-                        tty_w,
-                        sdir=sdir,
+                if action == "info":
+                    def _on_clip_edit(edited_path: Path) -> dict[str, object]:
+                        nonlocal copy_target, cmd, cmd_str, is_edited
+                        if is_start_bundle:
+                            fn_refresh = globals().get("refresh_bundle_meta")
+                            if callable(fn_refresh):
+                                fn_refresh(edited_path)
+                        elif edited_path == edit_target:
+                            try:
+                                after_text = edited_path.read_text(encoding="utf-8", errors="replace")
+                            except OSError:
+                                after_text = ""
+                            if is_end_box:
+                                copy_target = resolve_clipboard_target(edit_target, after_text)
+                            else:
+                                copy_target = edit_target
+                            new_clip = clipboard_command(copy_target)
+                            if new_clip is not None:
+                                cmd, cmd_str = new_clip
+                        is_edited = _is_file_edited(edit_target, orig_path)
+                        return {"edited": is_edited}
+
+                    info_state = _show_info_fullscreen(
+                        title_kind=title_kind,
+                        label=label,
+                        tty_r=tty_r,
+                        tty_w=tty_w,
+                        sdir=resolved_sdir,
+                        out_path=copy_target if is_start_bundle else edit_target,
+                        script_path=step_script,
+                        edit_target=edit_target,
+                        rc=rc,
+                        duration_s=duration_s,
+                        op_timings=op_timings,
+                        failed_step=failed_step,
+                        extra_lines=extra_lines,
                         edited=is_edited,
+                        allow_copy=True,
+                        on_edit_callback=_on_clip_edit,
                     )
-                    if pager_action == "copy":
+                    if info_state.get("action") == "copy":
                         action = "copy"
-                    elif pager_action == "edit":
-                        action = "edit"
                     else:
                         new_cols, new_rows = _term_size()
-                        if (new_cols, new_rows) != (prev_cols, prev_rows):
+                        if info_state.get("edited") or (new_cols, new_rows) != (prev_cols, prev_rows):
+                            is_edited = _is_file_edited(edit_target, orig_path)
                             up_rows = _box_rows_above_prompt(box, new_cols)
                             prev_cols, prev_rows = new_cols, new_rows
                             box, rule_width, cursor_offset = format_clipboard_box(
@@ -2776,109 +3414,7 @@ def offer_clipboard_copy(
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                         continue
-                if (is_start_bundle and action == "edit") or (is_end_box and action in ("edit", "view")):
-                    if edit_target.is_file():
-                        try:
-                            before_bytes: bytes | None = edit_target.read_bytes()
-                        except OSError:
-                            before_bytes = None
-                        open_script_in_editor(edit_target, tty_r, tty_w)
-                        try:
-                            after_bytes: bytes | None = edit_target.read_bytes() if edit_target.is_file() else None
-                        except OSError:
-                            after_bytes = None
-                        changed = before_bytes is not None and after_bytes is not None and after_bytes != before_bytes
-                        if changed:
-                            assert before_bytes is not None and after_bytes is not None
-                            _write_orig_backup_once(orig_path, before_bytes)
-                            if is_start_bundle:
-                                fn_refresh = globals().get("refresh_bundle_meta")
-                                if callable(fn_refresh):
-                                    fn_refresh(edit_target)
-                            elif is_end_box:
-                                after_text = after_bytes.decode("utf-8", errors="replace")
-                                copy_target = resolve_clipboard_target(edit_target, after_text)
-                                new_clip = clipboard_command(copy_target)
-                                if new_clip is not None:
-                                    cmd, cmd_str = new_clip
-                        if is_start_bundle or changed:
-                            is_edited = _is_file_edited(edit_target, orig_path)
-                            new_cols, new_rows = _term_size()
-                            up_rows = _box_rows_above_prompt(box, new_cols)
-                            prev_cols, prev_rows = new_cols, new_rows
-                            box, rule_width, cursor_offset = format_clipboard_box(
-                                label,
-                                copy_target,
-                                ok=ok,
-                                rc=rc,
-                                stats=stats_line(copy_target),
-                                title_kind=title_kind,
-                                extra_lines=extra_lines,
-                                cmd_str=cmd_str,
-                                edited=is_edited,
-                                error_source=edit_target,
-                                duration_s=duration_s,
-                                op_timings=op_timings,
-                                failed_step=failed_step,
-                                bundle_details=False,
-                                sdir=sdir,
-                                term_cols=new_cols,
-                                term_rows=max(6, new_rows - 1),
-                            )
-                            bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            occ_lines = box.splitlines()
-                            prefixed_line2 = (
-                                occ_lines[-2]
-                                if len(occ_lines) >= 2
-                                else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                            )
-                            move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                            tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                            tty_w.flush()
-                        else:
-                            new_cols, new_rows = _term_size()
-                            if (new_cols, new_rows) != (prev_cols, prev_rows):
-                                up_rows = _box_rows_above_prompt(box, new_cols)
-                                prev_cols, prev_rows = new_cols, new_rows
-                                box, rule_width, cursor_offset = format_clipboard_box(
-                                    label,
-                                    copy_target,
-                                    ok=ok,
-                                    rc=rc,
-                                    stats=stats_line(copy_target),
-                                    title_kind=title_kind,
-                                    extra_lines=extra_lines,
-                                    cmd_str=cmd_str,
-                                    edited=is_edited,
-                                    error_source=edit_target,
-                                    duration_s=duration_s,
-                                    op_timings=op_timings,
-                                    failed_step=failed_step,
-                                    bundle_details=False,
-                                    sdir=sdir,
-                                    term_cols=new_cols,
-                                    term_rows=max(6, new_rows - 1),
-                                )
-                                bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                                occ_lines = box.splitlines()
-                                prefixed_line2 = (
-                                    occ_lines[-2]
-                                    if len(occ_lines) >= 2
-                                    else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                                )
-                                move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
-                                tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
-                            else:
-                                tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                            tty_w.flush()
-                    continue
-                if not is_start_bundle and not is_end_box and action == "view":
-                    if edit_target.is_file():
-                        open_script_in_editor(edit_target, tty_r, tty_w)
-                        tty_w.write(f"\r\033[K{prefixed_line2}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
-                        tty_w.flush()
-                    continue
-                if action in ("view", "edit", "details"):
+                if action in ("view", "edit"):
                     continue
                 if action == "copy":
                     if copy_file_to_clipboard(cmd, copy_target):

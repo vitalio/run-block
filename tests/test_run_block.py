@@ -171,18 +171,18 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
         self.assertEqual(box_lines[0], "╭─ START STEP " + "─" * 34)
-        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/N/e(dit)]:")
+        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/N/i(nfo)]:")
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
         self.assertIn("│ Step:    s1/2", box)
         self.assertNotIn("Sandbox:", box)
-        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/N/e(dit)]:"))
+        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/N/i(nfo)]:"))
         self.assertNotIn("START STEP (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
         self.assertIn("Safety warnings (6):", box)
         self.assertNotIn("Line ", box)
-        self.assertIn("[y/N/e(dit)]:", box)
+        self.assertIn("[y/N/i(nfo)]:", box)
 
     def test_embedded_rules_files_exist(self):
         self.assertFalse((ROOT / "src/bundles").exists())
@@ -287,7 +287,7 @@ class TestRunBlock(unittest.TestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
-        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/e(dit)]:"))
+        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/i(nfo)]:"))
         self.assertIn("╭─ END STEP ────", box)
         self.assertIn("│ Step:    s2/1", box)
         self.assertIn("│ Workdir: ", box)
@@ -295,12 +295,12 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("END STEP (", box)
         self.assertIn(f"│ Output: {f}", box)
         self.assertIn("│ Stats:  1 line · 6 chars · ~2 tokens", box)
-        self.assertIn("│ -> Copy to clipboard? [Y/n/e(dit)]:", box)
+        self.assertIn("│ -> Copy to clipboard? [Y/n/i(nfo)]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 9)
         self.assertEqual(len(lines[0]), 48)
         self.assertTrue(lines[0].startswith("╭─ END STEP ────"))
-        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/e(dit)]:")
+        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/i(nfo)]:")
         self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
@@ -626,7 +626,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(buf_abort.getvalue(), "")
             self.assertTrue((self.tmp / "s9/2/aborted").is_file())
 
-        # Verify STEP ALREADY EXISTS interactive actions when out exists: s(cript), o(utput), and Enter copies out
+        # Verify STEP ALREADY EXISTS interactive actions when out exists: i(nfo) -> s(cript)/o(utput), and Enter copies out
         s_script = self.tmp / "s9/1/block.sh"
         s_out = self.tmp / "s9/1/out"
         viewed_paths: list[Path] = []
@@ -638,7 +638,7 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["true"], "xclip < out")), \
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy:
             tty_w_c = io.StringIO()
-            tty_r_c = io.StringIO("s\no\n\n")
+            tty_r_c = io.StringIO("i\ns\no\nq\n\n")
             res_c = self.mod.prompt_yes_no_box(
                 "STEP ALREADY EXISTS",
                 ["Step: s9/1", "", "Next: s9/2", f"Script: {s_script}", f"Output: {s_out}"],
@@ -655,7 +655,8 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(viewed_paths, [s_script, s_out])
             mock_copy.assert_called_once_with(["true"], s_out)
             out_c_text = tty_w_c.getvalue()
-            self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:", out_c_text)
+            self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/i(nfo)]:", out_c_text)
+            self.assertIn("╭─ INFO · STEP ALREADY EXISTS ", out_c_text)
             self.assertIn(f"✓ Copied {s_out} to clipboard.", out_c_text)
 
             # Pressing Esc on STEP ALREADY EXISTS exits without copying or overwriting
@@ -682,19 +683,23 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(self.mod._build_prompt_yes_no_suffix(False), "[y/N]:")
             self.assertEqual(
                 self.mod._build_prompt_yes_no_suffix(
-                    True, has_script=True, has_output=True, can_copy=True, has_renumber=True, copy_on_yes=True
+                    True, has_script=True, has_output=True, can_copy=True, has_renumber=True, copy_on_yes=True, has_info=True
                 ),
-                "[Y/n/r(enumber)/s(cript)/o(utput)]:",
+                "[Y/n/r(enumber)/i(nfo)]:",
             )
             self.assertEqual(
                 self.mod._build_prompt_yes_no_suffix(
-                    False, has_script=True, has_output=False, has_renumber=True, renumber_only=True
+                    False, has_script=True, has_output=False, has_renumber=True, renumber_only=True, has_info=True
                 ),
-                "[r(enumber)/n/s(cript)]:",
+                "[r(enumber)/n/i(nfo)]:",
             )
             self.assertEqual(
                 self.mod._build_prompt_yes_no_suffix(False, has_renumber=True, renumber_only=True),
                 "[r(enumber)/n]:",
+            )
+            self.assertEqual(
+                self.mod._build_prompt_yes_no_suffix(False, has_info=True),
+                "[y/N/i(nfo)]:",
             )
 
         # start_session() on existing session without --force fails immediately even on a TTY
@@ -739,7 +744,7 @@ class TestRunBlock(unittest.TestCase):
                 )
                 self.assertEqual(res_renum, "renumber")
                 out_r_text = tty_w_r.getvalue()
-                self.assertIn("-> Renumber to s154/9? [r(enumber)/n]:", out_r_text)
+                self.assertIn("-> Renumber to s154/9? [r(enumber)/n/i(nfo)]:", out_r_text)
                 self.assertIn("✓ Renumbering s154/8 -> s154/9.", out_r_text)
 
         # renumber_only ignores Enter and 'y' (requires explicit r or n/Esc)
@@ -798,7 +803,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("[s154/9] END", out_9)
         meta_9 = self.mod.read_step_meta(s154 / "9")
         self.assertEqual(meta_9.get("renumbered_from"), "s154/8")
-        self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:", tty_w_coll.getvalue())
+        self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/i(nfo)]:", tty_w_coll.getvalue())
         self.assertIn("✓ Renumbering s154/8 -> s154/9.", tty_w_coll.getvalue())
 
         # 4. Choosing Enter on STEP ALREADY EXISTS (with out) copies existing out to clipboard and exits 0
@@ -815,7 +820,7 @@ class TestRunBlock(unittest.TestCase):
         mock_cp.assert_called_once_with(["pbcopy"], s154 / "8" / "out")
         self.assertEqual((s154 / "8" / "out").read_text(encoding="utf-8"), orig_8_out)
 
-        # 5. STEP ALREADY EXISTS when out is missing prompts [r(enumber)/n/s(cript)]: with no Enter default
+        # 5. STEP ALREADY EXISTS when out is missing prompts [r(enumber)/n/i(nfo)]: with no Enter default
         (s154 / "10").mkdir()
         (s154 / "10" / "block.sh").write_text("echo partial\n", encoding="utf-8")
         tty_w_noout = _NoCloseStringIO()
@@ -828,7 +833,7 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
             rc_noout = self.mod.cmd_normal("s154/10", "echo moved_to_11\n", auto_yes=False)
         self.assertEqual(rc_noout, 0)
-        self.assertIn("-> Renumber to s154/11? [r(enumber)/n/s(cript)]:", tty_w_noout.getvalue())
+        self.assertIn("-> Renumber to s154/11? [r(enumber)/n/i(nfo)]:", tty_w_noout.getvalue())
         self.assertIn("[s154/11] Note: renumbered from s154/10 to s154/11; continue from s154/11.", (s154 / "11" / "out").read_text(encoding="utf-8"))
 
         # 6. MISSING PREVIOUS STEP renumbers to first_missing_step (s154/14 -> s154/12) and writes Note in out
@@ -845,7 +850,7 @@ class TestRunBlock(unittest.TestCase):
         mp_tty = tty_w_mp.getvalue()
         self.assertIn("Missing: s154/13", mp_tty)
         self.assertIn("Next:    s154/12", mp_tty)
-        self.assertIn("-> Renumber to s154/12? [r(enumber)/n]:", mp_tty)
+        self.assertIn("-> Renumber to s154/12? [r(enumber)/n/i(nfo)]:", mp_tty)
         out_12 = (s154 / "12" / "out").read_text(encoding="utf-8")
         self.assertIn("[s154/12] Note: renumbered from s154/14 to s154/12; continue from s154/12.", out_12)
         self.assertEqual(self.mod.read_step_meta(s154 / "12").get("renumbered_from"), "s154/14")
@@ -1682,7 +1687,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;93m-> Execute this block? [y/N/e(dit)]:\x1b[0m", box_warn)
+                self.assertIn("\x1b[1;93m-> Execute this block? [y/N/i(nfo)]:\x1b[0m", box_warn)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_warn)
 
                 # 3. PLAN with differing Workdir (highlighted) and no safety warnings (prompt uncolored)
@@ -1693,7 +1698,7 @@ class TestRunBlock(unittest.TestCase):
                     "s1/3", [], default_yes=True, summary=sum_clean
                 )
                 self.assertIn(f"\x1b[2mWorkdir:\x1b[0m \x1b[1;33m{other_dir}\x1b[0m", box_clean)
-                self.assertIn("-> Execute this block? [Y/n/e(dit)]:", box_clean)
+                self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", box_clean)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_clean)
                 self.assertNotIn("\x1b[1;93m-> Execute this block?", box_clean)
         finally:
@@ -1769,21 +1774,21 @@ class TestRunBlock(unittest.TestCase):
                 title_kind="START SESSION",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
-            self.assertIn("-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:", sb_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", sb_box)
             self.assertNotIn("[Y/n/v(iew)]:", sb_box)
-            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/e(dit)/d(etails)]:"))
+            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/i(nfo)]:"))
 
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END STEP")
-            self.assertIn("-> Copy to clipboard? [Y/n/e(dit)]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", end_box)
             for kind in ("NOT RUN", "SYNTAX ERROR"):
                 with self.subTest(title_kind=kind):
                     other_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind=kind)
-                    self.assertIn("-> Copy to clipboard? [Y/n/v(iew)]:", other_box)
-                    self.assertNotIn("[Y/n/e(dit)]:", other_box)
+                    self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", other_box)
+                    self.assertNotIn("[Y/n/v(iew)]:", other_box)
 
-        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("e\n")), "edit")
-        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("E\n")), "edit")
-        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("v\n")), "view")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("i\n")), "info")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("I\n")), "info")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "info")
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("\n")), "copy")
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("esc\n")), "skip")
 
@@ -1800,7 +1805,7 @@ class TestRunBlock(unittest.TestCase):
         fake_stdout = io.StringIO()
         fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
         tty_w = _KeepOpenStringIO()
-        tty_r = io.StringIO("e\n\n")
+        tty_r = io.StringIO("i\ne\nq\n\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {bundle_file}")),              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)),              unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_edit),              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy,              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
             self.mod.offer_clipboard_copy(
                 "s1",
@@ -1811,11 +1816,11 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(edited_calls, [bundle_file])
         mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
         self.assertIn("Edited prompt", bundle_file.read_text(encoding="utf-8"))
-        self.assertIn("-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:", tty_w.getvalue())
+        self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", tty_w.getvalue())
         self.assertIn(f"✓ Copied {bundle_file} to clipboard.", tty_w.getvalue())
 
         tty_w_esc = _KeepOpenStringIO()
-        tty_r_esc = io.StringIO("e\nesc\n")
+        tty_r_esc = io.StringIO("i\ne\nq\nesc\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {bundle_file}")),              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_esc, tty_r_esc)),              unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_edit),              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy_esc,              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
             self.mod.offer_clipboard_copy(
                 "s1",
@@ -2427,7 +2432,7 @@ class TestRunBlock(unittest.TestCase):
         fake_stdout = io.StringIO()
         fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
         tty_w = _KeepOpenStringIO()
-        tty_r = io.StringIO("e\n\n")
+        tty_r = io.StringIO("i\ne\nq\n\n")
         refresh_calls: list[Path] = []
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
@@ -2469,11 +2474,13 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("╭─ START SESSION " + "─" * 31, tty_out)
         self.assertIn("╰" + "─" * 47, tty_out)
 
-        # Terminal resize during e(dit) recalculates border width and final bottom rule
+        # Terminal resize during i(nfo) -> e(dit) recalculates border width and final bottom rule
         tty_w_resize = _KeepOpenStringIO()
-        tty_r_resize = io.StringIO("e\nesc\n")
+        tty_r_resize = io.StringIO("i\ne\nq\nesc\n")
         sizes = [
             os.terminal_size((44, 24)),
+            os.terminal_size((44, 24)),
+            os.terminal_size((76, 24)),
             os.terminal_size((76, 24)),
         ]
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
@@ -2573,11 +2580,17 @@ class TestRunBlock(unittest.TestCase):
 
 
     def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
-        # 1. PLAN prompt shows e(dit), keeps v(iew) as compatibility alias
-        self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/e(dit)]:")
-        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/N/e(dit)]:")
-        self.assertEqual(self.mod.read_confirm_key(io.StringIO("e\n"), default_yes=True), "edit")
-        self.assertEqual(self.mod.read_confirm_key(io.StringIO("v\n"), default_yes=True), "view")
+        # 1. START STEP prompt shows i(nfo), keeps d(etails) as alias
+        self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/i(nfo)]:")
+        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/N/i(nfo)]:")
+        self.assertEqual(
+            self.mod.read_confirm_key(io.StringIO("i\n"), default_yes=True, extra_keys={"i": "info", "d": "info"}),
+            "info",
+        )
+        self.assertEqual(
+            self.mod.read_confirm_key(io.StringIO("d\n"), default_yes=True, extra_keys={"i": "info", "d": "info"}),
+            "info",
+        )
 
         # 2. First edit creates block.orig.sh, subsequent edit preserves block.orig.sh,
         #    recomputes operations/stats/warnings/default_yes, and redraws PLAN with (edited)
@@ -2607,10 +2620,9 @@ class TestRunBlock(unittest.TestCase):
         fake_stdout = io.StringIO()
         fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
         tty_w = _KeepOpenStringIO()
-        # Press 'e' (edit 1 -> adds rm -rf warning, so default_yes flips to False),
-        # press 'v' (compat alias, edit 2 -> preserves block.orig.sh),
-        # press 'y' to approve.
-        tty_r = io.StringIO("e\nv\ny\n")
+        # Press 'i' to open i(nfo), 'e' twice to edit (creating block.orig.sh once),
+        # 'q' to return to START STEP (now [y/N/i(nfo)]:), then 'y' to approve.
+        tty_r = io.StringIO("i\ne\ne\nq\ny\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
              unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_editor), \
@@ -2626,9 +2638,11 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(script_path.read_text(encoding="utf-8"), edit_2_script)
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ START STEP "), 3)
-        self.assertIn("-> Execute this block? [Y/n/e(dit)]:", tty_out)
-        self.assertIn("-> Execute this block? [y/N/e(dit)]:", tty_out)
+        self.assertEqual(tty_out.count("╭─ START STEP "), 2)
+        self.assertEqual(tty_out.count("╭─ INFO · s1/1 "), 3)
+        self.assertIn("Original Plan (block.orig.sh):", tty_out)
+        self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tty_out)
+        self.assertIn("-> Execute this block? [y/N/i(nfo)]:", tty_out)
         self.assertIn("Safety warnings (1):", tty_out)
         self.assertIn("[fs-destructive]", tty_out)
         self.assertIn("rm -rf /tmp/f51_danger_2", tty_out)
@@ -2671,7 +2685,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(self.mod._orig_backup_path(ps_path), step2 / "block.orig.ps1")
 
     def test_f52_end_output_edit_backup_recalc_and_show_markers(self):
-        # 1. END prompt shows e(dit), keeping NOT RUN and SYNTAX ERROR on v(iew)
+        # 1. END STEP prompt unifies behind i(nfo)
         f = self.tmp / "s1" / "1" / "out"
         f.parent.mkdir(parents=True, exist_ok=True)
         initial_out = "[s1/1] START\nnoisy stderr line\n\n[s1/1] END (exit 2)\n"
@@ -2681,12 +2695,12 @@ class TestRunBlock(unittest.TestCase):
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
-            self.assertIn("-> Copy to clipboard? [Y/n/e(dit)]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", end_box)
             self.assertIn("Error:  noisy stderr line", end_box)
 
-        # 2. First edit in END creates out.orig; second edit via 'v' alias preserves out.orig;
+        # 2. Inside END STEP i(nfo), e(dit) creates out.orig and o(utput) preserves out.orig;
         #    recomputes stats_line(), re-extracts Error: from edited out (not stale err),
-        #    refreshes resolve_clipboard_target(), and redraws END with (edited)
+        #    refreshes resolve_clipboard_target(), and redraws END STEP with (edited)
         attach_file = self.tmp / "attached_report.txt"
         attach_file.write_text("attached report body\nline 2\n", encoding="utf-8")
         edit_1_out = "[s1/1] START\ntrimmed detail\ncleaned failure reason\n\n[s1/1] END (exit 2)\n"
@@ -2706,7 +2720,7 @@ class TestRunBlock(unittest.TestCase):
         fake_stdout = io.StringIO()
         fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
         tty_w = _KeepOpenStringIO()
-        tty_r = io.StringIO("e\nv\n\n")
+        tty_r = io.StringIO("i\ne\no\nq\n\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
              unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")), \
@@ -2724,9 +2738,10 @@ class TestRunBlock(unittest.TestCase):
         mock_copy.assert_called_once_with(["pbcopy"], attach_file)
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ END STEP "), 3)
+        self.assertEqual(tty_out.count("╭─ END STEP "), 2)
+        self.assertEqual(tty_out.count("╭─ INFO · s1/1 "), 3)
         self.assertIn("Error:  noisy stderr line", tty_out)
-        self.assertIn("Error:  cleaned failure reason", tty_out)
+        self.assertIn("Error:       cleaned failure reason", tty_out)
         self.assertIn("Error:  updated final error", tty_out)
         self.assertIn(f"Output: {attach_file}", tty_out)
         attach_stats = self.mod.stats_line(attach_file)
@@ -2734,13 +2749,13 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn(f"Stats:  {attach_stats} (edited)", tty_out)
         self.assertIn(f"✓ Copied {attach_file} to clipboard.", tty_out)
 
-        # 3. BUNDLE preserves 0.orig on first e(dit) without overwriting on subsequent edits
+        # 3. START SESSION preserves 0.orig on first e(dit) inside i(nfo) without overwriting on subsequent edits
         b0 = self.tmp / "s1" / "0"
         initial_0 = "Session: s1\nNext-Block: s1/1\n\nInitial bundle\n"
         b0.write_text(initial_0, encoding="utf-8")
         b0_edits = iter([initial_0 + "Edit 1\n", initial_0 + "Edit 2\n"])
         tty_w0 = _KeepOpenStringIO()
-        tty_r0 = io.StringIO("e\ne\nesc\n")
+        tty_r0 = io.StringIO("i\ne\ne\nq\nesc\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0}")), \
@@ -2875,9 +2890,7 @@ class TestRunBlock(unittest.TestCase):
         live2 = buf2.getvalue()
         self.assertIn("✓ [1/2] (", live2)
         self.assertIn("✗ [2/2] (", live2)
-        self.assertIn("Steps:  1. [read] ", live2)
-        self.assertIn("2. [read] ", live2)
-        self.assertIn("(failed)", live2)
+        self.assertNotIn("Steps:", live2)
         out2_txt = out2.read_text(encoding="utf-8")
         self.assertRegex(out2_txt, rf"\[s49/2\] END \(exit {rc2}, [^)\n]+\)\n")
         meta2 = self.mod.read_step_meta(step2_dir)
@@ -3359,9 +3372,10 @@ class TestRunBlock(unittest.TestCase):
         # Rule fragments (parts 1 and 2) must not trigger secret_detected
         self.assertTrue(all(w.get("part_index") not in (1, 2) for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
 
-        # 2. Interactive BUNDLE d(etails) toggle in offer_clipboard_copy
-        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "details")
-        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("D\n")), "details")
+        # 2. Interactive START SESSION i(nfo) toggle (with d(etails) alias) in offer_clipboard_copy
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "info")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("D\n")), "info")
+        self.assertEqual(self.mod.read_clipboard_key(io.StringIO("i\n")), "info")
         b0_path = sessions / "s1" / "0"
 
         class _KeepOpenStringIO(io.StringIO):
@@ -3383,7 +3397,7 @@ class TestRunBlock(unittest.TestCase):
                  unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
                  unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0_path}")), \
                  unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
-                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 36))), \
                  unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
                 self.mod.offer_clipboard_copy(
                     "s1/0",
@@ -3407,7 +3421,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("│ Summary:", tty_out)
         self.assertIn("\033[?1049h", tty_out)
         self.assertIn("\033[?1049l", tty_out)
-        self.assertIn("╭─ DETAILS · s1/0 ", tty_out)
+        self.assertIn("╭─ INFO · s1/0 ", tty_out)
+        self.assertEqual(tty_out.count("│ Summary (6 parts):"), 1)
         self.assertEqual(tty_out.count("│ Parts (6 parts):"), 1)
         self.assertIn("[rule]    ├─ 2. r:bash", tty_out)
         self.assertIn("[cmd]     └─ 5. failing_cmd", tty_out)
@@ -4068,8 +4083,8 @@ class TestRunBlock(unittest.TestCase):
         finally:
             signal.signal(signal.SIGWINCH, orig_handler)
 
-        # 2. offer_clipboard_copy redraws BUNDLE in place on shrink (96 -> 52) & widen (52 -> 96),
-        #    and subsequent e(dit) redraws stay aligned
+        # 2. offer_clipboard_copy redraws START SESSION in place on shrink (96 -> 52) & widen (52 -> 96),
+        #    and subsequent i(nfo) -> e(dit) redraws stay aligned
         sdir = self.tmp / "s59"
         sdir.mkdir(parents=True, exist_ok=True)
         b0 = sdir / "0"
@@ -4103,7 +4118,11 @@ class TestRunBlock(unittest.TestCase):
                     cur_cols[0] = 96
                     os.kill(os.getpid(), signal.SIGWINCH)
                     time.sleep(0.08)
+                    os.write(m_fd2, b"i")
+                    time.sleep(0.05)
                     os.write(m_fd2, b"e")
+                    time.sleep(0.05)
+                    os.write(m_fd2, b"q")
                     time.sleep(0.05)
                     os.write(m_fd2, b"\x1b")
 
@@ -4130,7 +4149,7 @@ class TestRunBlock(unittest.TestCase):
             os.close(m_fd2)
             os.close(s_fd2)
 
-        # 3. confirm_execution redraws PLAN in place on shrink (96 -> 50) and keeps subsequent e(dit) aligned
+        # 3. confirm_execution redraws START STEP in place on shrink (96 -> 50) and keeps subsequent i(nfo) -> e(dit) aligned
         step1 = sdir / "1"
         step1.mkdir(parents=True, exist_ok=True)
         sc1 = step1 / "block.sh"
@@ -4148,7 +4167,11 @@ class TestRunBlock(unittest.TestCase):
                     cur_cols[0] = 50
                     os.kill(os.getpid(), signal.SIGWINCH)
                     time.sleep(0.08)
+                    os.write(m_fd3, b"i")
+                    time.sleep(0.05)
                     os.write(m_fd3, b"e")
+                    time.sleep(0.05)
+                    os.write(m_fd3, b"q")
                     time.sleep(0.05)
                     os.write(m_fd3, b"n")
 
@@ -4258,7 +4281,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertLessEqual(self.mod.display_width(cont), 38)
 
         pr_wrapped = self.mod._wrap_box_line(
-            "-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:",
+            "-> Copy out to clipboard? [Y/n/r(enumber)/i(nfo)]:",
             44,
         )
         self.assertGreater(len(pr_wrapped), 1)
@@ -4364,7 +4387,7 @@ class TestRunBlock(unittest.TestCase):
                         sdir=sdir,
                     )
                     _assert_box_fits(end_box, cols, f"END_STEP@{cols}")
-                    self.assertIn("│ Steps:  ", end_box)
+                    self.assertNotIn("│ Steps:", end_box)
                     self.assertIn("│         ", end_box)
 
                     # NOT RUN & SYNTAX ERROR
@@ -4459,7 +4482,7 @@ class TestRunBlock(unittest.TestCase):
                     col_wrap_box, _, col_wrap_off = self.mod._render_block(
                         "START STEP",
                         ["Step: s58/1", "Workdir: /tmp/f58_proj"],
-                        prompt_line="\x1b[1;93m-> Execute this block? [y/N/e(dit)]:\x1b[0m",
+                        prompt_line="\x1b[1;93m-> Execute this block? [y/N/i(nfo)]:\x1b[0m",
                         term_cols=36,
                     )
                     _assert_box_fits(col_wrap_box, 36, "COLOR_PROMPT@36")
@@ -4985,6 +5008,158 @@ class TestRunBlock(unittest.TestCase):
             finally:
                 os.close(m_fd3)
                 os.close(s_fd3)
+
+    def test_f54_end_drops_steps_and_info_viewer(self):
+        old_base = self.mod.BASE_DIR
+        self.mod.BASE_DIR = self.tmp
+        try:
+            sdir = self.tmp / "s54"
+            sdir.mkdir(parents=True)
+            bundle_in = (
+                "Bundle-Command: agents_bundle role=work task=F54\n"
+                "Bundle-Boundary: bnd54\n"
+                "Role: work\n"
+                "Task: F54\n"
+                "Title: Long title for F54 info viewer verification\n\n"
+                "===== Prompt =====\nHello F54\n"
+            )
+            b0 = sdir / "0"
+            res = self.mod.format_start_bundle("s54", stdin_body=bundle_in, work_dir=self.tmp, sandbox_mode="off")
+            b0.write_text(str(res["full"]), encoding="utf-8")
+            self.mod.write_session_meta(sdir, res["stdin_headers"], bundle_plan=res["bundle_plan"])
+            orig0 = sdir / "0.orig"
+            orig0.write_text(str(res["full"]), encoding="utf-8")
+
+            # 1. START SESSION i(nfo) exposes unfiltered headers (Sandbox: off, Bundle-*), bright white Stats:, and v(iew)
+            tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+            tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+            saved_nc = os.environ.pop("NO_COLOR", None)
+            try:
+                with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream):
+                    frame0, _, _ = self.mod._build_info_screen(
+                        "START SESSION", "s54/0", 100, 30, 0, sdir=sdir, out_path=b0, edit_target=b0, allow_copy=True
+                    )
+                    compact_box, _, _ = self.mod.format_clipboard_box(
+                        "s54/0", b0, stats=self.mod.stats_line(b0), title_kind="START SESSION", sdir=sdir, term_cols=100, term_rows=30
+                    )
+            finally:
+                if saved_nc is not None:
+                    os.environ["NO_COLOR"] = saved_nc
+            self.assertIn("Sandbox:", frame0)
+            self.assertIn("off", frame0)
+            self.assertIn("Bundle-Command:", frame0)
+            self.assertIn("agents_bundle role=work task=F54", frame0)
+            self.assertIn("Original:", frame0)
+            self.assertIn("0.orig", frame0)
+            self.assertIn("\x1b[97m", frame0)
+            self.assertIn("\x1b[2mStats:", compact_box)
+            self.assertNotIn("\x1b[97m", compact_box)
+
+            # 2. v(iew) in i(nfo) opens plain-text report (no ANSI) in editor
+            viewed_reports: list[str] = []
+
+            def capture_view(p: Path, _r, _w) -> None:
+                viewed_reports.append(p.read_text(encoding="utf-8"))
+
+            class _KeepOpenStringIO(io.StringIO):
+                def close(self) -> None:
+                    pass
+
+            fake_stdout = io.StringIO()
+            fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+            tw_v = _KeepOpenStringIO()
+            tr_v = io.StringIO("i\nv\nq\nesc\n")
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                 unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+                 unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0}")), \
+                 unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw_v, tr_v)), \
+                 unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=capture_view), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+                 unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                self.mod.offer_clipboard_copy("s54/0", b0, title_kind="START SESSION", sdir=sdir)
+            self.assertEqual(len(viewed_reports), 1)
+            self.assertNotIn("\x1b[", viewed_reports[0])
+            self.assertIn("Sandbox:         off", viewed_reports[0])
+            self.assertIn("Bundle-Command:  agents_bundle role=work task=F54", viewed_reports[0])
+
+            # 3. END STEP omits Steps:, while i(nfo) shows timed operations with % shares, (failed), and Pre-execution Plan
+            step1 = sdir / "1"
+            step1.mkdir()
+            scr1 = step1 / "block.sh"
+            orig_scr1 = step1 / "block.orig.sh"
+            out1 = step1 / "out"
+            orig_scr1.write_text("cat README.md\n", encoding="utf-8")
+            scr1.write_text("cat README.md\nls missing\n", encoding="utf-8")
+            out1.write_text("[s54/1] START\nls: missing: No such file\n\n[s54/1] END (exit 1, 1.0s)\n", encoding="utf-8")
+            op_timings = [
+                {"step": 1, "tag": "read", "desc": "cat README.md", "duration_ms": 200},
+                {"step": 2, "tag": "read", "desc": "ls missing", "duration_ms": 800},
+            ]
+            self.mod.write_step_meta(step1, duration_ms=1000, exit_code=1, operations=op_timings, failed_step=2)
+            end_body = self.mod.build_box_body_lines(out1, rc=1, stats=self.mod.stats_line(out1), label="s54/1", sdir=sdir)
+            self.assertFalse(any(ln.startswith("Steps:") for ln in end_body))
+            info_end, _, _ = self.mod._build_info_screen(
+                "END STEP", "s54/1", 100, 32, 0, sdir=sdir, out_path=out1, script_path=scr1, rc=1
+            )
+            self.assertIn("Operations (2 timed):", info_end)
+            self.assertIn("1. [read]  200ms (20.0%)  cat README.md", info_end)
+            self.assertIn("2. [read]  800ms (80.0%) (failed)  ls missing", info_end)
+            self.assertIn("Pre-execution Plan (block.orig.sh):", info_end)
+            self.assertIn("Script-Orig:", info_end)
+
+            # 4. STEP ALREADY EXISTS i(nfo) -> O(verwrite) (with out) and o(verwrite) (without out)
+            tw_ov = _KeepOpenStringIO()
+            tr_ov = io.StringIO("i\nO\n")
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                 unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="never"), \
+                 unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw_ov, tr_ov)), \
+                 unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+                 unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                rc_ov = self.mod.cmd_normal("s54/1", "echo overwritten_step\n", auto_yes=False)
+            self.assertEqual(rc_ov, 0)
+            self.assertIn("O(verwrite)", tw_ov.getvalue())
+            self.assertIn("✓ Overwriting s54/1.", tw_ov.getvalue())
+            self.assertIn("overwritten_step", out1.read_text(encoding="utf-8"))
+            self.assertFalse(orig_scr1.exists())
+
+            step2 = sdir / "2"
+            step2.mkdir()
+            (step2 / "block.sh").write_text("echo partial_2\n", encoding="utf-8")
+            tw_ov2 = _KeepOpenStringIO()
+            tr_ov2 = io.StringIO("i\no\n")
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                 unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="never"), \
+                 unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw_ov2, tr_ov2)), \
+                 unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)), \
+                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+                 unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                rc_ov2 = self.mod.cmd_normal("s54/2", "echo overwritten_no_out\n", auto_yes=False)
+            self.assertEqual(rc_ov2, 0)
+            self.assertIn("o(verwrite)", tw_ov2.getvalue())
+            self.assertIn("overwritten_no_out", (step2 / "out").read_text(encoding="utf-8"))
+
+            # 5. SESSION COMPLETED prompt shows [y/N/i(nfo)]: and i(nfo) displays Completed metadata
+            self.mod.update_session_meta(sdir, completed=True, completed_at="2026-11-19T20:00:00Z", completed_note="done")
+            tw_comp = _KeepOpenStringIO()
+            tr_comp = io.StringIO("i\nq\nn\n")
+            res_comp = self.mod.prompt_yes_no_box(
+                "SESSION COMPLETED",
+                ["Session: s54", "Completed: 2026-11-19T20:00:00Z"],
+                "Reopen completed session s54?",
+                default_yes=False,
+                tty_streams=(tw_comp, tr_comp),
+                label="s54",
+                sdir=sdir,
+            )
+            self.assertFalse(res_comp)
+            comp_out = tw_comp.getvalue()
+            self.assertIn("-> Reopen completed session s54? [y/N/i(nfo)]:", comp_out)
+            self.assertIn("╭─ INFO · s54 ", comp_out)
+            self.assertIn("Completed:       2026-11-19T20:00:00Z", comp_out)
+            self.assertIn("Completed-Note:  done", comp_out)
+        finally:
+            self.mod.BASE_DIR = old_base
 
 
 if __name__ == "__main__":

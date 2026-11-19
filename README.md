@@ -49,12 +49,14 @@ present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
 markers are parsed into per-part `bundle_plan` metrics (lines, chars, GPT/Claude
 tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
 `<session>/0` (falling back to `===== ... =====` sections when no boundary is
-provided). The inline `START SESSION` box stays compact (retaining core headers, `Bundle:`, dim
-`Stats:`, and `Bundle warnings` when present, while full per-part tables stay
-in `run_block --bundle-plan`); press `d` (or `i`) at the `START SESSION` prompt to
-open an alternate-screen fullscreen `d(etails)` panel (`Up`/`Down`, `j`/`k`,
-`PgUp`/`PgDn` to scroll, `Enter` to copy, `Esc`/`q`/`d`/`i` to return) without
-leaving duplicate headers or stale lines in scrollback. All inline TUI boxes
+provided). The inline `START SESSION` box stays compact (retaining core headers, `Bundle:`,
+dim `Stats:`, and `Bundle warnings` when present, while full per-part tables
+stay in `run_block --bundle-plan`); press `i` at any interactive prompt to open
+the alternate-screen fullscreen `i(nfo)` metadata viewer (`Up`/`Down`, `j`/`k`,
+`PgUp`/`PgDn` to scroll, `e(dit)`/`s(cript)`/`o(utput)` to edit artifacts,
+`v(iew)` to open the plain-text report in your editor, `Enter` to copy,
+`Esc`/`q`/`i` to return) without leaving duplicate headers or stale lines in
+scrollback. All inline TUI boxes
 (`START SESSION`, `START STEP`, `END STEP`, and confirmation dialogs) clamp overflowing sections
 to the visible terminal height (`... +N more`) and reflow cleanly across both
 width and height `SIGWINCH` resizes.
@@ -88,29 +90,34 @@ RUN_BLOCK
 
 Before running, `run_block` displays the `START STEP` (working directory, numbered
 operations with nested AST-expanded sub-items for multi-file or read+write
-Python blocks, and any safety warnings). Press
-`Enter`/`y` to run, `n`/`Esc` to abort, or `e` (or `v`) to edit the script in your
-terminal editor. The first edit preserves the original script as
-`<session>/<step>/block.orig.sh` (or `.ps1`), recalculates operations, statistics, and
-safety warnings in place, and re-validates syntax before execution. During execution,
-`run_block` records wall-clock block duration (excluding confirmation prompts) and
-per-operation elapsed timings in `<session>/<step>/meta.json`, `[<session>/<step>] END
+Python blocks, and any safety warnings). Press `Enter`/`y` to run, `n`/`Esc` to
+abort, or `i` to open the fullscreen `i(nfo)` inspector (which shows unfiltered
+headers including `Sandbox: off`, artifact paths, backups, and pre-execution
+plans, and lets you press `e` to edit the script or `v` to open the report in
+your terminal editor). The first edit preserves `<session>/<step>/block.orig.sh`
+(or `.ps1`), recalculates operations, statistics, and safety warnings in place,
+and re-validates syntax before execution. During execution, `run_block` records
+wall-clock block duration (excluding confirmation prompts) and per-operation
+elapsed timings in `<session>/<step>/meta.json`, `[<session>/<step>] END
 (<duration>)`, `Stats:`, and live progress output (silent steps collapse in
 place on a TTY into a single aligned `✓ [N/M] [tag] desc (dur)` line, while
 steps with output keep the `▸` header above and align `✓`/`✗` at column 0
-below). When a block targets a step number that already exists on disk,
-`STEP ALREADY EXISTS` prompts to copy existing `out` (`[Y/n/r(enumber)/...]`) or
-`r(enumber)` to the next free step (preserving existing outputs and recording a
-renumber notice in `out`), while `MISSING PREVIOUS STEP` prompts to `r(enumber)` to
-the first missing step (`[r(enumber)/n]`); use `--retry` to re-run an existing step.
-Across all interactive TUI confirmation prompts (`START STEP`, `END STEP`,
-`STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`, and `CLEAN SESSIONS`), `[Y/n]` /
-`[y/N]` brackets highlight the `Enter` default in uppercase and `Esc` consistently
-cancels or exits without proceeding. In the `END STEP` clipboard prompt (and
-`START SESSION`), press `e` (or `v`) to edit `<session>/<step>/out` (preserving
-`<session>/<step>/out.orig`) or `<session>/0` (preserving `<session>/0.orig`),
-recalculating line/char/token statistics, `Error:` lines, and clipboard targets
-in place. While any interactive TUI box (`START SESSION`, `START STEP`, `END STEP`, or
+below), while per-operation timing breakdowns with percentage shares stay inside
+`END STEP`'s `i(nfo)` panel so the inline `END STEP` box remains compact. When a
+block targets a step number that already exists on disk, `STEP ALREADY EXISTS`
+prompts `[Y/n/r(enumber)/i(nfo)]:` (with `out`) or `[r(enumber)/n/i(nfo)]:`
+(without `out`) to copy existing `out`, `r(enumber)` to the next free step
+(preserving existing outputs and recording a renumber notice in `out`), or open
+`i(nfo)` to inspect/edit `s(cript)`/`o(utput)` or trigger `O(verwrite)` /
+`o(verwrite)`, while `MISSING PREVIOUS STEP` prompts `[r(enumber)/n/i(nfo)]:`
+to `r(enumber)` to the first missing step; use `--retry` to re-run an existing
+step. Across all interactive TUI confirmation prompts (`START SESSION`,
+`START STEP`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`,
+`MISSING PREVIOUS STEP`, and `CLEAN SESSIONS`), `[Y/n]` / `[y/N]` brackets
+highlight the `Enter` default in uppercase, `Esc` consistently cancels or exits
+without proceeding, and `i(nfo)` unifies inspection and `e(dit)` (preserving
+`0.orig`, `block.orig.*`, and `out.orig`, and recalculating line/char/token
+statistics, `Error:` lines, and clipboard targets in place). While any interactive TUI box (`START SESSION`, `START STEP`, `END STEP`, or
 confirmation prompt) is waiting for input on a POSIX TTY, resizing the
 terminal window (`SIGWINCH`) automatically erases and redraws the active box
 in place to match the new width. Long lines inside TUI boxes (paths, outputs,
@@ -150,7 +157,7 @@ RUN_FIX
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
 | `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash`, `sh`, or `pwsh`/`powershell` on Windows) |
-| `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e` in `START STEP`, `END STEP`, and `START SESSION` |
+| `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e(dit)`/`s(cript)`/`o(utput)`/`v(iew)` inside `i(nfo)` |
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |
 
