@@ -3173,7 +3173,7 @@ class TestRunBlock(unittest.TestCase):
             ],
         )
 
-        # 4. Plain bundle without boundary and without headers still creates meta.json for bundle_plan
+        # 4. Plain bundle without boundary and without headers injects Rules + Prompt into meta.json
         r_plain = subprocess.run(
             [str(SCRIPT), "--start", "--session", "s2"],
             input="Plain prompt without headers or sections\n",
@@ -3186,8 +3186,12 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(r_plain.returncode, 0, r_plain.stderr)
         meta2 = self.mod.read_session_meta(sessions / "s2")
         self.assertNotIn("headers", meta2)
-        self.assertEqual(meta2["bundle_plan"]["protocol"], "body")
-        self.assertEqual(meta2["bundle_plan"]["part_count"], 1)
+        self.assertEqual(meta2["bundle_plan"]["protocol"], "sections")
+        self.assertEqual(meta2["bundle_plan"]["part_count"], 2)
+        self.assertEqual(
+            [(part["kind"], part["name"]) for part in meta2["bundle_plan"]["parts"]],
+            [("rules", "Rules"), ("prompt", "Prompt")],
+        )
 
         # 5. Editing <session>/0 refreshes bundle_plan in meta.json via refresh_bundle_meta
         b0_path = sessions / "s1" / "0"
@@ -3255,15 +3259,16 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        # BUNDLE shows compact grouped summary and warnings, without leaking secret value
-        self.assertIn("(5 parts)\n│ Summary:", r_start.stdout)
+        # BUNDLE shows compact grouped summary and warnings (including injected run_block rule), without leaking secret value
+        self.assertIn("(6 parts)\n│ Summary:", r_start.stdout)
         self.assertIn("[header]", r_start.stdout)
         self.assertIn("[rule]", r_start.stdout)
+        self.assertIn("run_block:blocks/bash", r_start.stdout)
         self.assertIn("vitalio/run_block (2)", r_start.stdout)
         self.assertIn("[cmd]", r_start.stdout)
         self.assertIn(".agents_bundle (2)", r_start.stdout)
         self.assertIn("1 rc!=0", r_start.stdout)
-        self.assertIn("Bundle warnings (5):", r_start.stdout)
+        self.assertIn("Bundle warnings (6):", r_start.stdout)
         self.assertIn("[cmd_empty]", r_start.stdout)
         self.assertIn("[cmd_rc]", r_start.stdout)
         self.assertIn("[fragment_oversized]", r_start.stdout)
@@ -3277,11 +3282,11 @@ class TestRunBlock(unittest.TestCase):
         warn_codes = [w["code"] for w in plan_meta.get("warnings", [])]
         self.assertEqual(
             warn_codes,
-            ["cmd_empty", "cmd_rc", "fragment_oversized", "secret_detected", "token_budget"],
+            ["fragment_oversized", "cmd_empty", "cmd_rc", "fragment_oversized", "secret_detected", "token_budget"],
         )
         self.assertNotIn(env_secret, (sessions / "s1" / "meta.json").read_text(encoding="utf-8"))
-        # Rule fragment (part 1) must not trigger secret_detected
-        self.assertTrue(all(w.get("part_index") != 1 for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
+        # Rule fragments (parts 1 and 2) must not trigger secret_detected
+        self.assertTrue(all(w.get("part_index") not in (1, 2) for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
 
         # 2. Interactive BUNDLE d(etails) toggle in offer_clipboard_copy
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "details")
@@ -3330,8 +3335,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(tty_out.count("╭─ BUNDLE "), 3)
         self.assertEqual(tty_out.count("│ Summary:"), 2)
         self.assertEqual(tty_out.count("│ Parts:"), 1)
-        self.assertIn("[rule]    ├─ 1. r:bash", tty_out)
-        self.assertIn("[cmd]     └─ 4. failing_cmd", tty_out)
+        self.assertIn("[rule]    ├─ 2. r:bash", tty_out)
+        self.assertIn("[cmd]     └─ 5. failing_cmd", tty_out)
         self.assertIn("rc=2", tty_out)
         self.assertIn("Skipped clipboard copy.", tty_out)
 
@@ -3347,9 +3352,9 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_bp_sess.returncode, 0, r_bp_sess.stderr)
         self.assertIn("Bundle Plan (s1, protocol: boundary):", r_bp_sess.stdout)
-        self.assertIn("Summary (5 parts):", r_bp_sess.stdout)
-        self.assertIn("Warnings (5):", r_bp_sess.stdout)
-        self.assertNotIn("Parts (5):", r_bp_sess.stdout)
+        self.assertIn("Summary (6 parts):", r_bp_sess.stdout)
+        self.assertIn("Warnings (6):", r_bp_sess.stdout)
+        self.assertNotIn("Parts (6):", r_bp_sess.stdout)
 
         r_bp_full = subprocess.run(
             [str(SCRIPT), "--bundle-plan", "--full", "s1"],
@@ -3360,7 +3365,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_bp_full.returncode, 0, r_bp_full.stderr)
-        self.assertIn("Parts (5):", r_bp_full.stdout)
+        self.assertIn("Parts (6):", r_bp_full.stdout)
         self.assertIn("failing_cmd", r_bp_full.stdout)
         self.assertIn("rc=2", r_bp_full.stdout)
 
@@ -3375,8 +3380,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(r_bp_json.returncode, 0, r_bp_json.stderr)
         j_sess = json.loads(r_bp_json.stdout)
         self.assertEqual(j_sess["session"], "s1")
-        self.assertEqual(j_sess["part_count"], 5)
-        self.assertEqual(len(j_sess["warnings"]), 5)
+        self.assertEqual(j_sess["part_count"], 6)
+        self.assertEqual(len(j_sess["warnings"]), 6)
 
         r_bp_stdin = subprocess.run(
             [str(SCRIPT), "--bundle-plan", "--json", "--full"],
@@ -4501,6 +4506,173 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("▸ [2/3] [read] cat a.txt\nhello_f56\n✓ [2/3] (", live_e2e)
         self.assertIn("▸ [3/3] [exec] echo err_f56 >&2\nerr_f56\n✓ [3/3] (", live_e2e)
         self.assertNotIn("  ✓ [", live_e2e)
+
+
+    def test_f66_embedded_block_rules_injection_dedup_and_tty_bare_start(self):
+        # 1. Built ./run_block embeds bash.md and pwsh.md without '# Description:' lines
+        built_text = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn('EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"', built_text)
+        self.assertNotIn('EMBEDDED_RULE_PWSH = "__EMBEDDED_RULE_PWSH__"', built_text)
+        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", self.mod.EMBEDDED_RULE_BASH)
+        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", self.mod.EMBEDDED_RULE_PWSH)
+        self.assertFalse(self.mod.EMBEDDED_RULE_BASH.startswith("# Description:"))
+        self.assertFalse(self.mod.EMBEDDED_RULE_PWSH.startswith("# Description:"))
+
+        # 2. Shell selection (bash vs pwsh) and prog_name() substitution
+        saved_shell = os.environ.get("RUN_BLOCK_SHELL")
+        saved_argv0 = self.mod.sys.argv[0]
+        try:
+            self.mod.sys.argv[0] = "/usr/local/bin/rxb"
+            os.environ["RUN_BLOCK_SHELL"] = "bash"
+            rid_bash, rtxt_bash = self.mod.get_embedded_block_rule()
+            self.assertEqual(rid_bash, "run_block:blocks/bash")
+            self.assertIn("## Terminal blocks (`rxb`)", rtxt_bash)
+            self.assertIn("rxb s1/1 <<'RUN_BLOCK'", rtxt_bash)
+            self.assertNotIn("{cmd:run_block}", rtxt_bash)
+
+            os.environ["RUN_BLOCK_SHELL"] = "pwsh"
+            rid_pwsh, rtxt_pwsh = self.mod.get_embedded_block_rule()
+            self.assertEqual(rid_pwsh, "run_block:blocks/pwsh")
+            self.assertIn("## Terminal blocks (`rxb`)", rtxt_pwsh)
+            self.assertIn("'@ | rxb s1/1", rtxt_pwsh)
+            self.assertNotIn("{cmd:run_block}", rtxt_pwsh)
+        finally:
+            self.mod.sys.argv[0] = saved_argv0
+            if saved_shell is None:
+                os.environ.pop("RUN_BLOCK_SHELL", None)
+            else:
+                os.environ["RUN_BLOCK_SHELL"] = saved_shell
+
+        proj = self.tmp / "f66_proj"
+        proj.mkdir()
+        nonce = "f66nonce"
+
+        # 3. Bundle-Boundary: ignores decoy '===== Rules =====' inside a part, prepends top-level Rules before first part
+        decoy_body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"file\", \"name\": \"README.md\", \"chain\": [\"files\"]}} -->\n"
+            "===== Rules =====\nDecoy section inside file\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"chain\": []}} -->\n"
+            "===== Prompt =====\nImplement F66\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_prepend = self.mod.format_start_bundle(
+            "s1",
+            stdin_body=f"Bundle-Boundary: {nonce}\n\n{decoy_body}",
+            work_dir=proj,
+        )
+        full_prepend = str(res_prepend["full"])
+        self.assertIn("\n\n===== Rules =====\n## Terminal blocks (`", full_prepend)
+        self.assertLess(full_prepend.index("## Terminal blocks (`"), full_prepend.index("Decoy section inside file"))
+        plan_prepend = res_prepend["bundle_plan"]
+        assert isinstance(plan_prepend, dict)
+        p0 = plan_prepend["parts"][0]
+        self.assertEqual(p0["kind"], "rule")
+        self.assertEqual(p0["id"], "run_block:blocks/bash")
+        self.assertEqual(p0["chain"], ["run_block"])
+
+        # 4. Bundle-Boundary: inserts into top-level '===== Rules =====' outside parts
+        top_rules_body = (
+            "===== Rules =====\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"other:r1\", \"chain\": [\"other\"]}} -->\n"
+            "Other project rule\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_top_rules = self.mod.format_start_bundle(
+            "s2",
+            stdin_body=f"Bundle-Boundary: {nonce}\n\n{top_rules_body}",
+            work_dir=proj,
+        )
+        full_top_rules = str(res_top_rules["full"])
+        self.assertEqual(full_top_rules.count("===== Rules ====="), 1)
+        self.assertLess(full_top_rules.index("## Terminal blocks (`"), full_top_rules.index("Other project rule"))
+
+        # 5. Fallback mode without Bundle-Boundary: leading Rules vs plain prompt wrapping
+        res_fb_rules = self.mod.format_start_bundle(
+            "s3",
+            stdin_body="===== Rules =====\nCustom rule\n\n===== Prompt =====\nDo task\n",
+            work_dir=proj,
+        )
+        full_fb_rules = str(res_fb_rules["full"])
+        self.assertEqual(full_fb_rules.count("===== Rules ====="), 1)
+        self.assertLess(full_fb_rules.index("## Terminal blocks (`"), full_fb_rules.index("Custom rule"))
+        self.assertIn("===== Prompt =====\nDo task", full_fb_rules)
+
+        res_fb_plain = self.mod.format_start_bundle(
+            "s4",
+            stdin_body="Unlabeled user request\n",
+            work_dir=proj,
+        )
+        full_fb_plain = str(res_fb_plain["full"])
+        self.assertIn("===== Rules =====\n## Terminal blocks (`", full_fb_plain)
+        self.assertIn("\n\n===== Prompt =====\nUnlabeled user request\n", full_fb_plain)
+
+        # 6. Deduplication against legacy vitalio/run_block parts and existing '## Terminal blocks (' headings
+        legacy_part_body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"vitalio/run_block:blocks/bash\", \"chain\": [\"vitalio/run_block\"]}} -->\n"
+            "Legacy rule without standard heading\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_dedup_part = self.mod.format_start_bundle(
+            "s5",
+            stdin_body=f"Bundle-Boundary: {nonce}\n\n{legacy_part_body}",
+            work_dir=proj,
+        )
+        self.assertEqual(res_dedup_part["bundle_plan"]["part_count"], 1)
+        self.assertEqual(
+            [part["id"] for part in res_dedup_part["bundle_plan"]["parts"]],
+            ["vitalio/run_block:blocks/bash"],
+        )
+
+        res_dedup_heading = self.mod.format_start_bundle(
+            "s6",
+            stdin_body="===== Rules =====\n## Terminal blocks (`run_block`)\nAlready present\n",
+            work_dir=proj,
+        )
+        self.assertEqual(str(res_dedup_heading["full"]).count("## Terminal blocks ("), 1)
+
+        # 7. Bare main() and --start in TTY stdin start a rule-only session; --sandbox stays on cmd_sandbox()
+        sessions = self.tmp / "f66_tty_sessions"
+        old_base = self.mod.BASE_DIR
+        old_cwd_env = os.environ.get("RUN_BLOCK_CWD")
+        self.mod.BASE_DIR = sessions
+        os.environ["RUN_BLOCK_CWD"] = str(proj)
+        try:
+            class _FakeTtyIn(io.StringIO):
+                def isatty(self) -> bool:
+                    return True
+
+            with unittest.mock.patch.object(self.mod.sys, "stdin", _FakeTtyIn()),                  unittest.mock.patch.object(self.mod, "no_clipboard", return_value=True):
+                buf_bare = io.StringIO()
+                with contextlib.redirect_stdout(buf_bare):
+                    rc_bare = self.mod.main([])
+                self.assertEqual(rc_bare, 0)
+                self.assertIn("╭─ BUNDLE ", buf_bare.getvalue())
+                self.assertIn("[rules]   Rules", buf_bare.getvalue())
+                b0_bare = (sessions / "s1" / "0").read_text(encoding="utf-8")
+                self.assertIn("===== Rules =====\n## Terminal blocks (`", b0_bare)
+                self.assertNotIn("===== Prompt =====", b0_bare)
+
+                buf_start = io.StringIO()
+                with contextlib.redirect_stdout(buf_start):
+                    rc_start = self.mod.main(["--start", "--session", "s2", "--sandbox", "strict"])
+                self.assertEqual(rc_start, 0)
+                self.assertIn("╭─ BUNDLE ", buf_start.getvalue())
+                b0_start = (sessions / "s2" / "0").read_text(encoding="utf-8")
+                self.assertIn("Sandbox: strict", b0_start)
+                self.assertIn("===== Rules =====\n## Terminal blocks (`", b0_start)
+
+                buf_sb = io.StringIO()
+                with contextlib.redirect_stdout(buf_sb):
+                    rc_sb = self.mod.main(["--sandbox", "nonet"])
+                self.assertEqual(rc_sb, 0)
+                self.assertIn("Updated s2/0 -> Sandbox: nonet", buf_sb.getvalue())
+        finally:
+            self.mod.BASE_DIR = old_base
+            if old_cwd_env is None:
+                os.environ.pop("RUN_BLOCK_CWD", None)
+            else:
+                os.environ["RUN_BLOCK_CWD"] = old_cwd_env
 
 
 if __name__ == "__main__":

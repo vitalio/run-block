@@ -5,6 +5,160 @@ DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 
 SECTION_HEADER_RE = re.compile(r"^={5,}\s*(.+?)\s*={5,}$")
+TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
+EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/(?:bash|pwsh)$")
+
+
+def _strip_rule_description(raw_text: str) -> str:
+    lines = raw_text.replace("\r\n", "\n").splitlines()
+    while lines and lines[0].startswith("# Description:"):
+        lines.pop(0)
+    return "\n".join(lines).strip("\n")
+
+
+def get_embedded_block_rule(shell_bin: str | None = None) -> tuple[str, str]:
+    is_ps = _is_powershell(shell_bin)
+    rule_id = "run_block:blocks/pwsh" if is_ps else "run_block:blocks/bash"
+    raw = EMBEDDED_RULE_PWSH if is_ps else EMBEDDED_RULE_BASH
+    placeholder = "__EMBEDDED_RULE_PWSH__" if is_ps else "__EMBEDDED_RULE_BASH__"
+    if raw == placeholder:
+        rel = Path("rules/blocks/pwsh.md" if is_ps else "rules/blocks/bash.md")
+        src_path = Path(__file__).resolve().parent / rel
+        if src_path.is_file():
+            raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
+        else:
+            raw = ""
+    else:
+        raw = _strip_rule_description(raw)
+    rendered = raw.replace("{cmd:run_block}", prog_name())
+    return rule_id, rendered
+
+
+def _has_embedded_block_rule(body_text: str, boundary: str | None = None) -> bool:
+    if not body_text:
+        return False
+    boundary_val = (boundary or "").strip()
+    if boundary_val:
+        esc = re.escape(boundary_val)
+        part_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:part(?:\s+(\{{.*\}}))?\s*-->\s*$")
+        end_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:end\s*-->\s*$")
+        in_part = False
+        is_rule_part = False
+        for line in body_text.replace("\r\n", "\n").splitlines():
+            m = part_re.match(line)
+            if m:
+                in_part = True
+                is_rule_part = False
+                if m.group(1):
+                    try:
+                        meta = json.loads(m.group(1))
+                    except ValueError:
+                        meta = None
+                    if isinstance(meta, dict):
+                        kind = str(meta.get("kind") or "")
+                        is_rule_part = kind in ("", "rule", "rules")
+                        ident = str(meta.get("id") or meta.get("name") or "")
+                        if is_rule_part and EMBEDDED_RULE_ID_RE.search(ident):
+                            return True
+                continue
+            if end_re.match(line):
+                in_part = False
+                is_rule_part = False
+                continue
+            if (not in_part or is_rule_part) and TERMINAL_BLOCK_HEADING_RE.match(line):
+                return True
+        return False
+    return bool(TERMINAL_BLOCK_HEADING_RE.search(body_text))
+
+
+def inject_embedded_block_rule(
+    raw_body: str,
+    boundary: str | None = None,
+    shell_bin: str | None = None,
+) -> str:
+    norm_body = (raw_body or "").replace("\r\n", "\n")
+    boundary_val = (boundary or "").strip() or None
+    if _has_embedded_block_rule(norm_body, boundary=boundary_val):
+        return norm_body
+    rule_id, rule_text = get_embedded_block_rule(shell_bin=shell_bin)
+    if not rule_text.strip():
+        return norm_body
+
+    if boundary_val:
+        part_meta = json.dumps(
+            {"kind": "rule", "id": rule_id, "chain": ["run_block"]},
+            ensure_ascii=False,
+        )
+        part_block = [
+            f"<!-- bundle:{boundary_val}:part {part_meta} -->",
+            *rule_text.splitlines(),
+            f"<!-- bundle:{boundary_val}:end -->",
+        ]
+        esc = re.escape(boundary_val)
+        part_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:part(?:\s+(\{{.*\}}))?\s*-->\s*$")
+        end_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:end\s*-->\s*$")
+        lines = norm_body.splitlines()
+        in_part = False
+        rules_idx: int | None = None
+        first_part_idx: int | None = None
+        for idx, line in enumerate(lines):
+            if part_re.match(line):
+                if first_part_idx is None:
+                    first_part_idx = idx
+                in_part = True
+                continue
+            if end_re.match(line):
+                in_part = False
+                continue
+            if not in_part and rules_idx is None:
+                m_sec = SECTION_HEADER_RE.match(line.strip())
+                if m_sec and m_sec.group(1).strip().lower() == "rules":
+                    rules_idx = idx
+        if rules_idx is not None:
+            after = lines[rules_idx + 1 :]
+            while after and not after[0].strip():
+                after.pop(0)
+            merged = [*lines[: rules_idx + 1], *part_block]
+            if after:
+                merged.extend(["", *after])
+            return "\n".join(merged)
+        if first_part_idx is not None:
+            before = lines[:first_part_idx]
+            while before and not before[-1].strip():
+                before.pop()
+            after = lines[first_part_idx:]
+            if before and SECTION_HEADER_RE.match(before[0].strip()):
+                return "\n".join(["===== Rules =====", *part_block, "", *before, *after])
+            merged: list[str] = []
+            if before:
+                merged.extend([*before, ""])
+            merged.extend(["===== Rules =====", *part_block, "", *after])
+            return "\n".join(merged)
+        stripped = norm_body.strip("\n")
+        if not stripped.strip():
+            return "\n".join(["===== Rules =====", *part_block])
+        first_nonempty = next((ln.strip() for ln in stripped.splitlines() if ln.strip()), "")
+        if SECTION_HEADER_RE.match(first_nonempty):
+            return "\n".join(["===== Rules =====", *part_block, "", stripped])
+        return "\n".join(["===== Rules =====", *part_block, "", "===== Prompt =====", stripped])
+
+    stripped = norm_body.strip("\n")
+    if not stripped.strip():
+        return f"===== Rules =====\n{rule_text}"
+    lines = stripped.splitlines()
+    first_idx = next((i for i, ln in enumerate(lines) if ln.strip()), 0)
+    m_first = SECTION_HEADER_RE.match(lines[first_idx].strip())
+    if m_first and m_first.group(1).strip().lower() == "rules":
+        after = lines[first_idx + 1 :]
+        while after and not after[0].strip():
+            after.pop(0)
+        merged = [lines[first_idx], rule_text]
+        if after:
+            merged.extend(["", *after])
+        return "\n".join(merged)
+    if m_first:
+        return f"===== Rules =====\n{rule_text}\n\n{stripped}"
+    return f"===== Rules =====\n{rule_text}\n\n===== Prompt =====\n{stripped}"
 
 
 def _parse_header_filter_tokens(raw: str) -> set[str]:

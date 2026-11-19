@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # run_block-repo: vitalio/run_block
 """Usage:
+  {prog}                           Start a rule-only session on TTY stdin (or read bundle from piped stdin)
   <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0
   {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes for non-interactive headless mode)
   {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
@@ -11,7 +12,7 @@
   {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
-  {prog} --start [opts]              Start session with explicit options (--session NAME, --sandbox MODE, --force)
+  {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force)
   {prog} --update [--force]          Self-update {prog} from GitHub (vitalio/run_block)
   {prog} --check-update              Check if a newer version is available
   {prog} -V | --version              Print version and exit 0
@@ -65,3 +66,5 @@ except ImportError:
 VERSION = "__VERSION__"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
+EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"
+EMBEDDED_RULE_PWSH = "__EMBEDDED_RULE_PWSH__"

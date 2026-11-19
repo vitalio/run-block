@@ -28,16 +28,6 @@
 - Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `README.md`, `tests/test_run_block.py`.
 - Acceptance criteria: toggling details, resizing terminal width or height, or returning from `e(dit)` never produces duplicate `╭─ ...` headers; inline boxes fit within `term_rows`; fullscreen details scroll cleanly on alternate screen; `README.md` and offline tests in `tests/test_run_block.py` cover height clamping, alternate-screen redraw, and `display_width()` edge cases.
 
-# 🎯 [NEXT] F66: Embed terminal block rules in run_block and start rule-only session on bare invocation
-
-- Embed `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` into the built `./run_block` script via `build.py` (with `--check` verifying embedded rules match `src/rules/blocks/*.md`), stripping leading `# Description:` lines, selecting `bash` vs `pwsh` via `get_setting("shell")` / `_is_powershell()`, and substituting `{cmd:run_block}` with `prog_name()`.
-- Inject the embedded rule in `format_start_bundle()` (`src/bundle.py`) and register it in `src/bundle_plan.py`:
-  - When `Bundle-Boundary` is present, insert into the top-level `===== Rules =====` section only outside `<!-- bundle:<nonce>:part ... --> ... <!-- bundle:<nonce>:end -->` blocks (or prepend `===== Rules =====` before the first part if absent), tracking the fragment in `bundle_plan` as `kind: "rule"`, `id: "run_block:blocks/bash"` (or `"blocks/pwsh"`), `chain: ["run_block"]` so `d(etails)`/`i(nfo)`, `--bundle-plan`, `line_start`/`line_end`, and `secret_detected` exemption work uniformly.
-  - In fallback mode without `Bundle-Boundary`, inspect only the start of the body: insert after leading `===== Rules =====` if present, otherwise prepend `===== Rules =====` and wrap unlabeled plain stdin text under `===== Prompt =====` so user input is not merged into `Rules`.
-  - Deduplicate against legacy `vitalio/run_block` input by checking `bundle_plan` parts (`blocks/bash` / `blocks/pwsh`) or an existing `## Terminal blocks (` heading.
-- Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `START SESSION` (`BUNDLE`) instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
-- Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py` (coordinating with `F71` if `START SESSION` / renumber rules have already landed), rebuild `./run_block`, and bump `VERSION` for a MINOR release.
-
 # 🎯 [NEXT] F57: Add a(ppend) prompt editor action across clipboard TUI cards (START SESSION, END STEP, SYNTAX ERROR, NOT RUN)
 
 - Add a shared `a(ppend)` action across all clipboard-copy prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py` (`[Y/n/a(ppend)/...]:` or compatible prompt suffix), recognizing `a`/`A` (and `append` in line-input mode).

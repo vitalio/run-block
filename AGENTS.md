@@ -5,8 +5,9 @@ rules are loaded via `.agents_bundle`.
 
 ## Architecture & Module Boundaries
 
-- `src/header.py` — CLI usage docstring, standard library imports, and version
-  constants.
+- `src/header.py` — CLI usage docstring, standard library imports, version
+  constants, and embedded block rule placeholders (`EMBEDDED_RULE_BASH`,
+  `EMBEDDED_RULE_PWSH`) populated by `build.py`.
 - `src/config.py` — zero-config environment variable settings (`RUN_BLOCK_*`,
   `VISUAL`/`EDITOR`) and working directory resolution.
 - `src/rules/blocks/*.md` & `src/bundles/run_block.bundle` — agent block
@@ -25,9 +26,12 @@ rules are loaded via `.agents_bundle`.
   descriptors and merged into `out`; `stderr` is also saved to `err`, which
   the `END` box prefers for its `Error:` line.
 - `src/bundle_plan.py` — Bundle Input Protocol header filtering, boundary/section
-  fragment parser, and per-part token/size accounting persisted to `meta.json`.
-- `src/bundle.py` — session initialization from `stdin`
-  (`<command> | run_block` -> `<session>/0` and `<session>/meta.json`). Parses
+  fragment parser, embedded terminal block rule injection/deduplication, and
+  per-part token/size accounting persisted to `meta.json`.
+- `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
+  piped `stdin` (`run_block` / `<command> | run_block` -> `<session>/0` and
+  `<session>/meta.json`), injecting embedded `bash`/`pwsh` terminal block
+  rules via `format_start_bundle()`. Parses
   optional leading `Key: Value` header lines (separated from the body by a
   blank line) into `<session>/meta.json`, keeping `<session>/0` limited to
   `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,

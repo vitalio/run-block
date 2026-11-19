@@ -130,12 +130,9 @@ def main(argv: list[str] | None = None) -> int:
     args = filtered
 
     if not args:
-        if not sys.stdin.isatty():
-            return cmd_start([], sandbox_override=sandbox_override)
-        if sandbox_override is not None:
+        if sandbox_override is not None and sys.stdin.isatty():
             return cmd_sandbox([sandbox_override])
-        sys.stderr.write(usage_text())
-        return 2
+        return cmd_start([], sandbox_override=sandbox_override)
 
     if sandbox_override is not None and len(args) == 1 and "/" not in args[0] and not args[0].startswith("-"):
         return cmd_sandbox([sandbox_override, args[0]])

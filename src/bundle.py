@@ -18,6 +18,7 @@ def format_start_bundle(
 ) -> dict[str, object]:
     stdin_headers, raw_body = parse_stdin_preamble(stdin_body)
     boundary = get_bundle_boundary(stdin_headers)
+    raw_body = inject_embedded_block_rule(raw_body, boundary=boundary)
     clean_body, bundle_plan = parse_bundle_fragments(raw_body, boundary=boundary)
     exposed_headers = filter_exposed_headers(stdin_headers)
     if work_dir is not None:
@@ -144,12 +145,7 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
                 )
 
     if stdin_text is None:
-        if sys.stdin.isatty():
-            sys.stderr.write(
-                f"{prog}: --start expects a context bundle on stdin (e.g. '{prog} --start < context.txt')\n"
-            )
-            return 2
-        stdin_text = sys.stdin.read()
+        stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
 
     sdir = start_session(session_arg, force=force, sandbox_mode=sb_arg)
     session_name = sdir.name

@@ -3,7 +3,8 @@
 **Safe, sequential terminal block execution protocol for AI coding agents.**
 
 `run_block` is a zero-dependency Python 3 CLI that connects any chat LLM to your local
-terminal without API keys or background daemons. It receives a session context bundle on `stdin`
+terminal without API keys or background daemons. It starts a rule-only session on bare TTY
+invocation (`run_block`) or receives a session context bundle on `stdin`
 (`<command> | run_block` -> `~/.local/state/run_block/<session>/0`) and executes numbered
 Bash or PowerShell blocks (`<session>/1`, `<session>/2`, ...) with syntax validation, a
 pre-execution `PLAN` safety scanner, PTY streaming, and one-keystroke clipboard copy
@@ -25,8 +26,14 @@ irm https://raw.githubusercontent.com/vitalio/run_block/main/install.ps1 | iex
 
 ## Starting a Session
 
-Pipe any context bundle on `stdin` into `run_block` to initialize
-`~/.local/state/run_block/<session>/0` and copy it to your clipboard.
+Run bare `run_block` (or `run_block --start`) in an interactive TTY to initialize
+a rule-only `~/.local/state/run_block/<session>/0` session with embedded
+terminal block rules (`bash` or `pwsh`, selected from `RUN_BLOCK_SHELL` / OS)
+and open `BUNDLE`, or pipe any context bundle on `stdin` into `run_block` to
+inject the terminal block rules into `===== Rules =====` (deduplicating against
+existing `vitalio/run_block` rules or `## Terminal blocks (` headings, and
+wrapping unlabeled plain `stdin` text under `===== Prompt =====`) and copy
+`<session>/0` to your clipboard.
 Optional leading `Key: Value` header lines on `stdin` (separated from the
 body by a blank line) are parsed into `<session>/meta.json`. Exposed
 non-transport headers (such as `Role:`, `Task:`, `Title:`) are displayed in
@@ -52,6 +59,7 @@ When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 Git root and written to `<session>/0`:
 
 ```bash
+run_block
 cat context.txt | run_block
 run_block --start --session s1 < context.txt
 ```
@@ -143,6 +151,7 @@ RUN_FIX
 
 | Command | Description |
 | :--- | :--- |
+| `run_block` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`) |
 | `<command> \| run_block` | Start a new session from `stdin` context bundle into `<session>/0` |
 | `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
@@ -153,7 +162,7 @@ RUN_FIX
 | `run_block --show [session/step]` | Show saved script and output of a block (or `<session>/0` bundle) |
 | `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
 | `run_block --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
-| `run_block --start [--session NAME]` | Read context bundle from `stdin` into `<session>/0` |
+| `run_block --start [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
 | `run_block --update [--force]` | Self-update `run_block` from GitHub (`vitalio/run_block`) |
 | `run_block --check-update` | Check GitHub for a newer version |
 | `run_block -V`, `--version` | Print version and exit `0` |

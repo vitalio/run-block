@@ -1,3 +1,13 @@
+# ✅ [DONE] F66: Embed terminal block rules in run_block and start rule-only session on bare invocation — *2026-11-19, Embed bash/pwsh terminal block rules in built run_block, inject/deduplicate into session bundles, and start rule-only sessions on bare TTY invocation.*
+
+- Embed `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` into the built `./run_block` script via `build.py` (with `--check` verifying embedded rules match `src/rules/blocks/*.md`), stripping leading `# Description:` lines, selecting `bash` vs `pwsh` via `get_setting("shell")` / `_is_powershell()`, and substituting `{cmd:run_block}` with `prog_name()`.
+- Inject the embedded rule in `format_start_bundle()` (`src/bundle.py`) and register it in `src/bundle_plan.py`:
+  - When `Bundle-Boundary` is present, insert into the top-level `===== Rules =====` section only outside `<!-- bundle:<nonce>:part ... --> ... <!-- bundle:<nonce>:end -->` blocks (or prepend `===== Rules =====` before the first part if absent), tracking the fragment in `bundle_plan` as `kind: "rule"`, `id: "run_block:blocks/bash"` (or `"blocks/pwsh"`), `chain: ["run_block"]` so `d(etails)`/`i(nfo)`, `--bundle-plan`, `line_start`/`line_end`, and `secret_detected` exemption work uniformly.
+  - In fallback mode without `Bundle-Boundary`, inspect only the start of the body: insert after leading `===== Rules =====` if present, otherwise prepend `===== Rules =====` and wrap unlabeled plain stdin text under `===== Prompt =====` so user input is not merged into `Rules`.
+  - Deduplicate against legacy `vitalio/run_block` input by checking `bundle_plan` parts (`blocks/bash` / `blocks/pwsh`) or an existing `## Terminal blocks (` heading.
+- Update `main()` and `cmd_start()` in `src/cli.py` and `src/bundle.py` so bare `run_block` (no args with TTY `stdin`) and `run_block --start` in TTY start a rule-only `<session>/0` bundle and open `START SESSION` (`BUNDLE`) instead of exiting 2 with usage, while keeping `run_block --sandbox <mode>` mapped to `cmd_sandbox()`.
+- Update `src/header.py` (`--help`), `AGENTS.md`, `README.md`, and `tests/test_run_block.py` (coordinating with `F71` if `START SESSION` / renumber rules have already landed), rebuild `./run_block`, and bump `VERSION` for a MINOR release.
+
 # ✅ [DONE] F56: Align operation progress lines, update status colors, and collapse silent steps — *2026-11-19*
 
 - Remove the 2-space leading indentation on step completion lines in `_ProgressLineFilter._format_step_done()` (`src/runner.py`) so `✓` and `✗` (plus ASCII `+` and `x`) align at column 0 directly beneath `▸` and `>`.
