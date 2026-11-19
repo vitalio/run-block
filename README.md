@@ -31,8 +31,9 @@ a rule-only `~/.local/state/run_block/<session>/0` session with embedded
 terminal block rules (`bash` or `pwsh`, selected from `RUN_BLOCK_SHELL` / OS)
 and open `BUNDLE`, or pipe any context bundle on `stdin` into `run_block` to
 inject the terminal block rules into `===== Rules =====` (deduplicating against
-existing `vitalio/run_block` rules or `## Terminal blocks (` headings, and
-wrapping unlabeled plain `stdin` text under `===== Prompt =====`) and copy
+existing `blocks/bash` / `blocks/pwsh` rule parts or `## Terminal blocks (`
+headings, and wrapping unlabeled plain `stdin` text under `===== Prompt =====`)
+and copy
 `<session>/0` to your clipboard.
 Optional leading `Key: Value` header lines on `stdin` (separated from the
 body by a blank line) are parsed into `<session>/meta.json`. Exposed

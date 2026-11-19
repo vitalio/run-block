@@ -10,8 +10,8 @@ rules are loaded via `.agents_bundle`.
   `EMBEDDED_RULE_PWSH`) populated by `build.py`.
 - `src/config.py` — zero-config environment variable settings (`RUN_BLOCK_*`,
   `VISUAL`/`EDITOR`) and working directory resolution.
-- `src/rules/blocks/*.md` & `src/bundles/run_block.bundle` — agent block
-  execution rules for `bundle vitalio/run_block`. Keep
+- `src/rules/blocks/*.md` — internal embedded terminal block execution rule
+  sources injected by `build.py` into `src/header.py`. Keep
   `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` in sync in the same
   commit whenever CLI flags, step numbering, `--fix` constraints, or session
   rules change.

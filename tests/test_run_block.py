@@ -184,12 +184,14 @@ class TestRunBlock(unittest.TestCase):
         self.assertNotIn("Line ", box)
         self.assertIn("[y/n/e(dit)]:", box)
 
-    def test_bundle_and_rules_files_exist(self):
-        b_txt = (ROOT / "src/bundles/run_block.bundle").read_text(encoding="utf-8")
-        self.assertIn("rule vitalio/run_block:blocks/bash", b_txt)
-        self.assertIn("rule vitalio/run_block:blocks/pwsh", b_txt)
+    def test_embedded_rules_files_exist(self):
+        self.assertFalse((ROOT / "src/bundles").exists())
+        ab_txt = (ROOT / ".agents_bundle").read_text(encoding="utf-8")
+        self.assertNotIn("bundle vitalio/run_block", ab_txt)
         bash_md = (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8")
+        pwsh_md = (ROOT / "src/rules/blocks/pwsh.md").read_text(encoding="utf-8")
         self.assertIn("## Terminal blocks (`{cmd:run_block}`)", bash_md)
+        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", pwsh_md)
         self.assertIn("ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT)", bash_md)
         self.assertIn("small, targeted patch", bash_md)
         self.assertIn("comparable in size to the original block", bash_md)
@@ -1401,7 +1403,7 @@ class TestRunBlock(unittest.TestCase):
         subproj = repo / "apps" / "canary"
         subproj_nested = subproj / "src"
         subproj_nested.mkdir(parents=True)
-        (subproj / ".agents_bundle").write_text("bundle vitalio/run_block\n", encoding="utf-8")
+        (subproj / ".agents_bundle").write_text("ruleset vitalio/agents-rules:default\n", encoding="utf-8")
 
         regular_subdir = repo / "packages" / "plain"
         regular_subdir.mkdir(parents=True)

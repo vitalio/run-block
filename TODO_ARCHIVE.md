@@ -1,3 +1,9 @@
+# ✅ [DONE] F67: Remove obsolete src/bundles/run_block.bundle export and bundle references — *2026-11-19*
+
+- Depends on: F66
+- Delete `src/bundles/run_block.bundle` (and empty `src/bundles/`) and remove `bundle vitalio/run_block` from `.agents_bundle` once downstream repositories stop referencing `vitalio/run_block`.
+- Update `AGENTS.md` (documenting `src/rules/blocks/*.md` as internal embedded sources instead of an exported `vitalio/run_block` bundle), `README.md`, and `tests/test_run_block.py`.
+
 # ✅ [DONE] F66: Embed terminal block rules in run_block and start rule-only session on bare invocation — *2026-11-19, Embed bash/pwsh terminal block rules in built run_block, inject/deduplicate into session bundles, and start rule-only sessions on bare TTY invocation.*
 
 - Embed `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` into the built `./run_block` script via `build.py` (with `--check` verifying embedded rules match `src/rules/blocks/*.md`), stripping leading `# Description:` lines, selecting `bash` vs `pwsh` via `get_setting("shell")` / `_is_powershell()`, and substituting `{cmd:run_block}` with `prog_name()`.
