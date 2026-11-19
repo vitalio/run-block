@@ -5316,6 +5316,206 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual((clean_ok, clean_reason), (True, ""))
         self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tw_clean.getvalue())
 
+    def test_bundle_part_line_ranges_and_part_option(self):
+        import json
+
+        nonce = "abc"
+        stdin_text = (
+            f"Bundle-Boundary: {nonce}\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","name":"r1"}} -->\n'
+            "## Rule one\nline a\n\n\nline b\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"prompt","name":"p1"}} -->\n'
+            "Do the task\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        rule_txt = "## Rule one\nline a\n\nline b\n"
+        task_txt = "Do the task\n"
+
+        # 1. Body-relative ranges (stdin mode) with collapsed blank lines
+        _, body = self.mod.parse_stdin_preamble(stdin_text)
+        clean, plan = self.mod.parse_bundle_fragments(body, boundary=nonce)
+        self.assertEqual(plan["line_offset"], 0)
+        self.assertEqual(
+            [(p["line_start"], p["line_end"]) for p in plan["parts"]],
+            [(1, 4), (5, 5)],
+        )
+        got = {
+            p["name"]: self.mod.extract_bundle_part(plan, clean, p["index"])[1]
+            for p in plan["parts"]
+        }
+        self.assertEqual(got, {"r1": rule_txt, "p1": task_txt})
+        for p in plan["parts"]:
+            self.assertNotIn("text", p)
+            self.assertNotIn("body", p)
+
+        # 2. Absolute ranges inside the final <session>/0 (headers + injected rule)
+        with tempfile.TemporaryDirectory() as td:
+            res = self.mod.format_start_bundle(
+                "s1", stdin_body=stdin_text, work_dir=Path(td), sandbox_mode="off"
+            )
+        full = str(res["full"])
+        plan_full = res["bundle_plan"]
+        self.assertGreater(plan_full["line_offset"], 0)
+        by_name = {p.get("name"): p for p in plan_full["parts"]}
+        self.assertEqual(
+            self.mod.extract_bundle_part(plan_full, full, by_name["r1"]["index"])[1], rule_txt
+        )
+        self.assertEqual(
+            self.mod.extract_bundle_part(plan_full, full, by_name["p1"]["index"])[1], task_txt
+        )
+        # Reconciling twice must not shift ranges again
+        again = self.mod.reconcile_bundle_plan(plan_full, full)
+        self.assertEqual(
+            [(p.get("line_start"), p.get("line_end")) for p in again["parts"]],
+            [(p.get("line_start"), p.get("line_end")) for p in plan_full["parts"]],
+        )
+        with self.assertRaises(ValueError):
+            self.mod.extract_bundle_part(plan_full, full, 99)
+
+        # 3. Section fallback ranges
+        _, plan_fb = self.mod.parse_bundle_fragments("===== A =====\nx\n\n===== B =====\ny\n")
+        self.assertEqual(
+            [(p["line_start"], p["line_end"]) for p in plan_fb["parts"]],
+            [(1, 2), (4, 5)],
+        )
+
+        # 4. CLI: --bundle-plan / --show with --part
+        with tempfile.TemporaryDirectory() as td:
+            env = dict(os.environ)
+            env.update({"RUN_BLOCK_DIR": td, "RUN_BLOCK_CLIPBOARD": "never", "RUN_BLOCK_HEADLESS": "1"})
+            env.pop("IN_RUN_BLOCK", None)
+
+            def run(*args, stdin=None):
+                return subprocess.run(
+                    [str(SCRIPT), *args],
+                    input=stdin,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+
+            r_stdin = run("--bundle-plan", "--part", "2", stdin=stdin_text)
+            self.assertEqual((r_stdin.returncode, r_stdin.stdout), (0, task_txt), r_stdin.stderr)
+            self.assertIn("part 2/2", r_stdin.stderr)
+            self.assertIn("(lines 5-5)", r_stdin.stderr)
+
+            r_start = run("--start", "--session", "s1", stdin=stdin_text)
+            self.assertEqual(r_start.returncode, 0, r_start.stderr)
+            plan_json = json.loads(run("--bundle-plan", "s1", "--json").stdout)
+            idx = {p.get("name"): p["index"] for p in plan_json["parts"]}
+            for argv in (("--bundle-plan", "s1"), ("--show", "s1"), ("--show", "s1/0")):
+                with self.subTest(argv=argv):
+                    r = run(*argv, "--part", str(idx["p1"]))
+                    self.assertEqual((r.returncode, r.stdout), (0, task_txt), r.stderr)
+            r_latest = run("--show", "--part", str(idx["r1"]))
+            self.assertEqual((r_latest.returncode, r_latest.stdout), (0, rule_txt), r_latest.stderr)
+
+            for argv in (
+                ("--bundle-plan", "s1", "--part", "99"),
+                ("--bundle-plan", "s1", "--part", "0"),
+                ("--show", "s1/1", "--part", "1"),
+                ("--bundle-plan", "s1", "--part", "1", "--json"),
+                ("--show", "s1", "--part", "x"),
+            ):
+                with self.subTest(argv=argv):
+                    r = run(*argv)
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertEqual(r.stdout, "")
+
+            # 5. Legacy sessions without recorded ranges fail cleanly
+            meta_path = Path(td) / "s1" / "meta.json"
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            for p in meta["bundle_plan"]["parts"]:
+                p.pop("line_start", None)
+                p.pop("line_end", None)
+            meta["bundle_plan"].pop("line_offset", None)
+            meta_path.write_text(json.dumps(meta), encoding="utf-8")
+            r_legacy = run("--show", "s1", "--part", str(idx["p1"]))
+            self.assertNotEqual(r_legacy.returncode, 0)
+            self.assertEqual(r_legacy.stdout, "")
+            self.assertIn("no recorded line range", r_legacy.stderr)
+
+            # 6. Help and docs mention --part
+            r_help = run("--help")
+            self.assertEqual(r_help.returncode, 0)
+            self.assertIn("--part N", r_help.stdout)
+        self.assertIn("--part N", (ROOT / "README.md").read_text(encoding="utf-8"))
+        self.assertIn("--part N", (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8"))
+        self.assertIn("--part N", (ROOT / "src/rules/blocks/pwsh.md").read_text(encoding="utf-8"))
+
+    def test_info_part_viewer_and_part_prompt(self):
+        nonce = "abc"
+        stdin_text = (
+            f"Bundle-Boundary: {nonce}\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","name":"r1"}} -->\n'
+            "## Rule one\nline a\n\n\nline b\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"prompt","name":"p1"}} -->\n'
+            "Do the task\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+
+        # Prompt parsing without a TTY (readline fallback)
+        self.assertEqual(self.mod._read_part_number(io.StringIO("2\n"), io.StringIO(), 3), 2)
+        for raw in ("x\n", "0\n", "4\n", "\n"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self.mod._read_part_number(io.StringIO(raw), io.StringIO(), 3))
+
+        # Shared scroll helper
+        self.assertEqual(self.mod._apply_pager_scroll("down", 3, 10), 4)
+        self.assertEqual(self.mod._apply_pager_scroll("up", 0, 10), 0)
+        self.assertEqual(self.mod._apply_pager_scroll("pgdn", 0, 10), 9)
+        self.assertEqual(self.mod._apply_pager_scroll("top", 7, 10), 0)
+        self.assertIsNone(self.mod._apply_pager_scroll("edit", 0, 10))
+
+        with tempfile.TemporaryDirectory() as td:
+            sdir = Path(td) / "s1"
+            sdir.mkdir()
+            res = self.mod.format_start_bundle(
+                "s1", stdin_body=stdin_text, work_dir=Path(td), sandbox_mode="off"
+            )
+            bundle_path = sdir / "0"
+            bundle_path.write_text(str(res["full"]), encoding="utf-8")
+            self.mod.write_session_meta(sdir, list(res["stdin_headers"]), bundle_plan=res["bundle_plan"])
+            idx = {p.get("name"): p["index"] for p in res["bundle_plan"]["parts"]}
+            total = len(res["bundle_plan"]["parts"])
+
+            frame0, _, _ = self.mod._build_info_screen(
+                "START SESSION", "s1/0", 100, 30, 0,
+                sdir=sdir, out_path=bundle_path, edit_target=bundle_path, allow_copy=True,
+            )
+            self.assertIn("p(art)", frame0)
+            frame_step, _, _ = self.mod._build_info_screen(
+                "END STEP", "s1/1", 100, 30, 0, sdir=sdir, out_path=bundle_path,
+            )
+            self.assertNotIn("p(art)", frame_step)
+
+            buf = io.StringIO()
+            keys = iter(["part", "next_part", "back", "back"])
+            with unittest.mock.patch.object(
+                self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys)
+            ), unittest.mock.patch.object(
+                self.mod, "_read_part_number", return_value=idx["r1"]
+            ), unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 30)):
+                out = self.mod._show_info_fullscreen(
+                    title_kind="START SESSION",
+                    label="s1/0",
+                    tty_r=io.StringIO(),
+                    tty_w=buf,
+                    sdir=sdir,
+                    out_path=bundle_path,
+                    edit_target=bundle_path,
+                    allow_copy=True,
+                )
+            self.assertEqual(out["action"], "back")
+            shown = buf.getvalue()
+            self.assertIn(f"PART {idx['r1']}/{total}", shown)
+            self.assertIn("line a", shown)
+            self.assertIn(f"PART {idx['p1']}/{total}", shown)
+            self.assertIn("Do the task", shown)
+
 
 if __name__ == "__main__":
     unittest.main()

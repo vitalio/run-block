@@ -398,7 +398,122 @@ def _recompute_share_pct(plan: dict[str, object]) -> None:
         hdr["share_pct"] = round(hval * 100.0 / denom, 1) if denom > 0 else 0.0
 
 
-def reconcile_bundle_plan(plan: dict[str, object], full_text: str) -> dict[str, object]:
+def _collapse_blank_runs(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    for ln in lines:
+        if ln == "" and out and out[-1] == "":
+            continue
+        out.append(ln)
+    return out
+
+
+def _assign_part_ranges(
+    plan: dict[str, object],
+    raw_parts: list[tuple[dict[str, object], list[str]]],
+    body_text: str,
+    *,
+    collapse_blanks: bool,
+) -> None:
+    # Locate each part inside the cleaned body (1-based, body-relative); parts
+    # that cannot be matched contiguously simply carry no range.
+    body_lines = body_text.splitlines()
+    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
+    cursor = 0
+    for entry, (_, part_lines) in zip(parts, raw_parts):
+        seq = _collapse_blank_runs(part_lines) if collapse_blanks else list(part_lines)
+        while seq and not seq[0].strip():
+            seq.pop(0)
+        while seq and not seq[-1].strip():
+            seq.pop()
+        if not seq:
+            continue
+        span = len(seq)
+        for pos in range(cursor, len(body_lines) - span + 1):
+            if body_lines[pos] == seq[0] and body_lines[pos:pos + span] == seq:
+                entry["line_start"] = pos + 1
+                entry["line_end"] = pos + span
+                cursor = pos + span
+                break
+    plan["line_offset"] = 0
+
+
+def _body_line_offset(full_text: str) -> int:
+    try:
+        _, body = parse_stdin_preamble(full_text)
+    except Exception:
+        return 0
+    if not body.strip():
+        return 0
+    body_pos = full_text.find(body[:200])
+    return full_text.count("\n", 0, body_pos) if body_pos > 0 else 0
+
+
+def _shift_part_ranges(plan: dict[str, object], offset: int) -> dict[str, object]:
+    delta = offset - int(plan.get("line_offset") or 0)
+    out = dict(plan)
+    out["line_offset"] = offset
+    if delta == 0:
+        return out
+    shifted: list[dict[str, object]] = []
+    for p in out.get("parts") or []:
+        q = dict(p)
+        if isinstance(q.get("line_start"), int) and isinstance(q.get("line_end"), int):
+            q["line_start"] += delta
+            q["line_end"] += delta
+        shifted.append(q)
+    out["parts"] = shifted
+    return out
+
+
+def parse_part_option(argv: list[str], usage: str) -> tuple[list[str], int | None]:
+    prog = prog_name()
+    rest: list[str] = []
+    part: int | None = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--part":
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: --part requires a number (usage: {usage})")
+            raw = argv[i + 1]
+            i += 2
+        elif a.startswith("--part="):
+            raw = a.split("=", 1)[1]
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+            continue
+        if part is not None:
+            raise SystemExit(f"{prog}: --part given more than once (usage: {usage})")
+        if not re.fullmatch(r"[0-9]+", raw) or int(raw) < 1:
+            raise SystemExit(f"{prog}: --part expects a positive integer, got {raw!r}")
+        part = int(raw)
+    return rest, part
+
+
+def extract_bundle_part(plan: dict[str, object], text: str, number: int) -> tuple[dict[str, object], str]:
+    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
+    if number < 1 or number > len(parts):
+        raise ValueError(f"part {number} out of range (bundle has {len(parts)} part{'s' if len(parts) != 1 else ''})")
+    entry = parts[number - 1]
+    start, end = entry.get("line_start"), entry.get("line_end")
+    if not isinstance(start, int) or not isinstance(end, int):
+        raise ValueError(f"part {number} has no recorded line range (bundle plan predates part ranges)")
+    lines = text.splitlines()
+    if start < 1 or end < start or end > len(lines):
+        raise ValueError(f"part {number} line range {start}-{end} is outside the bundle ({len(lines)} lines)")
+    return entry, "\n".join(lines[start - 1:end]) + "\n"
+
+
+def format_part_header(target: str, entry: dict[str, object], total: int) -> str:
+    return (
+        f"{target} part {entry.get('index')}/{total}: {_part_label(entry)} "
+        f"(lines {entry.get('line_start')}-{entry.get('line_end')})\n"
+    )
+
+
+def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_lines: bool = True) -> dict[str, object]:
     out = dict(plan)
     parts = [p for p in (out.get("parts") or []) if isinstance(p, dict)]
     out["parts"] = parts
@@ -448,6 +563,8 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str) -> dict[str, 
         out["gpt"] = sum_gpt
         out["claude"] = sum_claude
     _recompute_share_pct(out)
+    if track_lines:
+        out = _shift_part_ranges(out, _body_line_offset(full_text))
     return out
 
 
@@ -612,8 +729,9 @@ def _split_section_fallback(norm_text: str, boundary_val: str | None) -> tuple[s
         meta = _infer_section_meta(sec_title, is_sections=saw_section, is_preamble=(idx == 0))
         raw_parts.append((meta, sec_lines))
     plan = _build_bundle_plan(protocol, boundary_val, raw_parts)
+    _assign_part_ranges(plan, raw_parts, clean_body, collapse_blanks=False)
     if clean_body:
-        plan = reconcile_bundle_plan(plan, clean_body + "\n")
+        plan = reconcile_bundle_plan(plan, clean_body + "\n", track_lines=False)
     return clean_body, plan
 
 
@@ -695,8 +813,9 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
             clean_body = "\n".join(stripped_lines)
             clean_body = re.sub(r"\n{3,}", "\n\n", clean_body).strip("\n")
             plan = _build_bundle_plan("boundary", boundary_val, raw_parts)
+            _assign_part_ranges(plan, raw_parts, clean_body, collapse_blanks=True)
             if clean_body:
-                plan = reconcile_bundle_plan(plan, clean_body + "\n")
+                plan = reconcile_bundle_plan(plan, clean_body + "\n", track_lines=False)
             return clean_body, plan
 
     return _split_section_fallback(norm_text, boundary_val)
@@ -1166,6 +1285,8 @@ def format_bundle_plan_text(
 
 def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
     prog = prog_name()
+    usage = f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]"
+    argv, part_no = parse_part_option(argv, usage)
     as_json = False
     full = False
     session_arg: str | None = None
@@ -1175,13 +1296,16 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
         elif a == "--full":
             full = True
         elif a.startswith("-"):
-            raise SystemExit(f"{prog}: usage: {prog} --bundle-plan [<session>] [--json] [--full]")
+            raise SystemExit(f"{prog}: usage: {usage}")
         elif session_arg is None:
             session_arg = a
         else:
-            raise SystemExit(f"{prog}: usage: {prog} --bundle-plan [<session>] [--json] [--full]")
+            raise SystemExit(f"{prog}: usage: {usage}")
+    if part_no is not None and (as_json or full):
+        raise SystemExit(f"{prog}: --part cannot be combined with --json or --full")
 
     plan: dict[str, object] | None = None
+    plan_text: str | None = None
     if session_arg is not None:
         sess = session_arg.split("/", 1)[0] if session_arg.endswith("/0") else session_arg
         if not re.fullmatch(r"[A-Za-z0-9._-]+", sess):
@@ -1193,6 +1317,9 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
         if plan is None:
             raise SystemExit(f"{prog}: no bundle data found for session {sess!r}")
         session_arg = sess
+        bundle_file = sdir / "0"
+        if bundle_file.is_file():
+            plan_text = bundle_file.read_text(encoding="utf-8", errors="replace")
     else:
         if stdin_text is None:
             if sys.stdin.isatty():
@@ -1204,7 +1331,20 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
             stdin_text = sys.stdin.read()
         stdin_headers, raw_body = parse_stdin_preamble(stdin_text)
         boundary = get_bundle_boundary(stdin_headers)
-        _, plan = parse_bundle_fragments(raw_body, boundary=boundary)
+        plan_text, plan = parse_bundle_fragments(raw_body, boundary=boundary)
+
+    if part_no is not None:
+        target = f"{session_arg}/0" if session_arg is not None else "stdin"
+        if plan_text is None:
+            raise SystemExit(f"{prog}: bundle text for {target} not found")
+        try:
+            entry, chunk = extract_bundle_part(plan, plan_text, part_no)
+        except ValueError as exc:
+            raise SystemExit(f"{prog}: {target}: {exc}")
+        sys.stderr.write(format_part_header(target, entry, int(plan.get("part_count") or 0)))
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+        return 0
 
     if as_json:
         payload = dict(plan)

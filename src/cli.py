@@ -143,9 +143,11 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_list(args[1] if len(args) == 2 else None)
 
     if args[0] == "--show":
-        if len(args) > 2:
-            raise SystemExit(f"{prog}: usage: {prog} --show [session/step]")
-        return cmd_show(args[1] if len(args) == 2 else None)
+        show_usage = f"{prog} --show [session[/step]] [--part N]"
+        show_rest, show_part = parse_part_option(args[1:], show_usage)
+        if len(show_rest) > 1:
+            raise SystemExit(f"{prog}: usage: {show_usage}")
+        return cmd_show(show_rest[0] if show_rest else None, part=show_part)
 
     if args[0] in ("--retry", "--rerun"):
         if len(args) > 2:

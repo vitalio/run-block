@@ -60,6 +60,11 @@ rules are loaded via `.agents_bundle`.
   `<session>/0`, and persist structured `bundle_plan` metadata in
   `<session>/meta.json`. Fall back to `===== ... =====` section splitting when
   no boundary is declared.
+- Part line ranges: each part entry records 1-based `line_start` / `line_end`
+  into the cleaned `<session>/0` (body-relative for `stdin`; `line_offset`
+  tracks the header shift applied by `reconcile_bundle_plan`, which keeps the
+  shift idempotent). Never store fragment text in `meta.json`; `--part N`
+  slices `<session>/0` using these ranges (`extract_bundle_part`).
 - Analyzer & diagnostics: Keep bundle parsing, size/error/secret diagnostics,
   and `--bundle-plan` output in a dedicated module (`src/bundle_plan.py`),
   reusing `src/safety.py` secret detection without duplicating patterns.

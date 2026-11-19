@@ -48,14 +48,6 @@
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
 - Document `END SESSION` and session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md`, plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
 
-# 🎯 [NEXT] F64: Record part line ranges and support viewing individual parts by number in Details and CLI
-
-- Depends on: F63, F54, F68
-- Record 1-based `line_start` and `line_end` line ranges in the final cleaned `<session>/0` for each part in `src/bundle_plan.py` and `src/bundle.py` (`format_start_bundle()`, `refresh_bundle_plan_meta()`), covering both boundary-marked fragments and `_split_section_fallback()` while accounting for `<session>/0` header lines and collapsed blank lines (and body-relative 1-based ranges for `stdin` `--bundle-plan`) without duplicating fragment text in `meta.json`.
-- When `i(nfo)` is active in `START SESSION` (`src/ui.py`), allow selecting a part directly (e.g. cursor selection in the fullscreen list and/or `p(art)` prompt by 1..N index without cluttering the `Parts` tree with numeric prefixes) to inspect that fragment's content (with an action to open `<session>/0` in the configured editor) and return cleanly to `START SESSION`.
-- Add `--part N` option to `run_block --show` and `run_block --bundle-plan` in `src/cli.py`, `src/runner.py`, `src/bundle_plan.py`, and `src/header.py`; accept `--show <session> --part N`, `--show <session>/0 --part N`, and `--show --part N` (latest session `/0`), failing cleanly on non-zero steps or out-of-range part numbers.
-- Update `README.md` and unit tests in `tests/test_run_block.py`, and rebuild `run_block` via `build.py`.
-
 # ⚪ [NEW] F15: Forbid trailing prose after closing fence in block rules
 
 - Tighten Rule 1 in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).

@@ -54,7 +54,9 @@ dim `Stats:`, and `Bundle warnings` when present, while full per-part tables
 stay in `run_block --bundle-plan`); press `i` at any interactive prompt to open
 the alternate-screen fullscreen `i(nfo)` metadata viewer (`Up`/`Down`, `j`/`k`,
 `PgUp`/`PgDn` to scroll, `e(dit)`/`s(cript)`/`o(utput)` to edit artifacts,
-`v(iew)` to open the plain-text report in your editor, `Enter` to copy,
+`v(iew)` to open the plain-text report in your editor, `p(art)` (in
+`START SESSION`) to open a part by its 1-based number (`n`/`N` browse parts,
+`e(dit)` opens `<session>/0` in your editor), `Enter` to copy,
 `Esc`/`q`/`i` to return) without leaving duplicate headers or stale lines in
 scrollback. All inline TUI boxes
 (`START SESSION`, `START STEP`, `END STEP`, and confirmation dialogs) clamp overflowing sections
@@ -68,6 +70,14 @@ labels; `chain`-backed nodes and single-part bundle inclusions are `[bundle]`,
 while `[rule]` marks leaf and root rules. Rows with a share of at least 10%
 or ~3k tokens are accented, and rows with at least 25% or ~10k tokens are
 highlighted in the warning color.
+
+Each part in `bundle_plan` also records 1-based `line_start` / `line_end` line
+ranges inside the final cleaned `<session>/0` (body-relative for `stdin`
+`--bundle-plan`), without duplicating fragment text in `meta.json`. Print a
+single part with `run_block --show <session> --part N` or
+`run_block --bundle-plan <session> --part N` (`N` is the 1-based part `index` from
+`--bundle-plan --json`); the part text goes to `stdout` and a one-line
+description to `stderr`.
 
 When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 `Workdir` directory, that path is preferred over the current directory or
@@ -182,11 +192,12 @@ RUN_FIX
 | `<command> \| run_block` | Start a new session from `stdin` context bundle into `<session>/0` |
 | `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
-| `run_block --bundle-plan [<session>] [--json] [--full]` | Summarize bundle parts and diagnostics from `stdin` or an existing session |
+| `run_block --bundle-plan [<session>] [--json] [--full] [--part N]` | Summarize bundle parts and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
 | `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
 | `run_block --retry [-y] [session/step]` | Re-run the last (or specified) block |
 | `run_block --list`, `-l [session]` | List sessions and blocks with their status and summary |
 | `run_block --show [session/step]` | Show saved script and output of a block (or `<session>/0` bundle) |
+| `run_block --show [<session>[/0]] --part N` | Print only part `N` (1-based part `index` from `--bundle-plan --json`) of `<session>/0` (latest session when omitted); exits non-zero for non-zero steps or out-of-range parts |
 | `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
 | `run_block --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
 | `run_block --start [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |

@@ -1541,7 +1541,48 @@ def cmd_list(session: str | None = None) -> int:
     return 0
 
 
-def cmd_show(ref: str | None = None) -> int:
+def _find_latest_session() -> str:
+    base = ensure_base()
+    sdirs = sorted(
+        [p for p in base.iterdir() if p.is_dir()],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not sdirs:
+        raise SystemExit(f"{prog_name()}: no sessions found in {base}")
+    return sdirs[0].name
+
+
+def _show_bundle_part(ref: str | None, part: int) -> int:
+    prog = prog_name()
+    if ref is None:
+        session, step = _find_latest_session(), "0"
+    elif "/" in ref:
+        session, step = parse_ref(ref, allow_fix_step=True)
+    else:
+        session, step = parse_ref(f"{ref}/0", allow_fix_step=True)
+    if step != "0":
+        raise SystemExit(f"{prog}: --part applies only to the <session>/0 bundle (got {session}/{step})")
+    sdir = ensure_base() / session
+    bundle_path = sdir / "0"
+    if not bundle_path.is_file():
+        raise SystemExit(f"{prog}: bundle {session}/0 not found ({bundle_path})")
+    plan = load_session_bundle_plan(sdir, bundle_path)
+    if plan is None:
+        raise SystemExit(f"{prog}: no bundle data found for session {session!r}")
+    text = bundle_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        entry, chunk = extract_bundle_part(plan, text, part)
+    except ValueError as exc:
+        raise SystemExit(f"{prog}: {session}/0: {exc}")
+    sys.stderr.write(format_part_header(f"{session}/0", entry, int(plan.get("part_count") or 0)))
+    sys.stdout.write(chunk)
+    return 0
+
+
+def cmd_show(ref: str | None = None, part: int | None = None) -> int:
+    if part is not None:
+        return _show_bundle_part(ref, part)
     if ref:
         session, step = parse_ref(ref, allow_fix_step=True)
     else:

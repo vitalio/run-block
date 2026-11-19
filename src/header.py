@@ -5,11 +5,12 @@
   <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0
   {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes for non-interactive headless mode)
   {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
-  {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full)
+  {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full, --part N)
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
   {prog} --list | -l [session]       List sessions or blocks in a session
   {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
+  {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
   {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force)
