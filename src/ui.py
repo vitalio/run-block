@@ -121,7 +121,7 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "edit"
         if ans in ("v", "view"):
             return "view"
-        return "skip" if ans in ("n", "no", "esc", "\x1b") else "copy"
+        return "skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy"
     try:
         fd = tty_r.fileno()
         old_attrs = termios.tcgetattr(fd)
@@ -131,7 +131,7 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "details"
         if ans in ("e", "edit"):
             return "edit"
-        return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "esc", "\x1b") else "copy")
+        return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
         with _SigwinchWatcher() as win_fd:
@@ -394,7 +394,7 @@ def format_session_header_lines(
                 nxt = hdr_map.get("next-block") or f"{sess}/1"
                 lines.append(f"Next-Block: {nxt}")
             else:
-                lines.append(f"Block: {label}")
+                lines.append(f"Step: {label}")
         else:
             lines.append(f"Session: {label}")
     elif resolved_sdir is not None:
@@ -455,7 +455,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/e(dit)]:" if default_yes else "[y/n/e(dit)]:"
+    return "[Y/n/e(dit)]:" if default_yes else "[y/N/e(dit)]:"
 
 
 def format_safety_box(
@@ -470,7 +470,7 @@ def format_safety_box(
     term_rows: int | None = None,
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
-    title = " PLAN "
+    title = " START STEP "
     prompt_suffix = _safety_prompt_suffix(default_yes)
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     if term_cols is None or term_rows is None:
@@ -610,16 +610,22 @@ def _build_prompt_yes_no_suffix(
     has_output: bool = False,
     can_copy: bool = False,
     has_renumber: bool = False,
+    renumber_only: bool = False,
+    copy_on_yes: bool = False,
 ) -> str:
-    if has_renumber:
-        parts = ["r", "R", "N"]
+    if renumber_only:
+        parts = ["r(enumber)", "n"]
+    elif copy_on_yes and has_renumber:
+        parts = ["Y", "n", "r(enumber)"]
     else:
         parts = ["Y", "n"] if default_yes else ["y", "N"]
+        if has_renumber:
+            parts.append("r(enumber)")
     if has_script:
         parts.append("s(cript)")
     if has_output:
         parts.append("o(utput)")
-    if can_copy:
+    if can_copy and not copy_on_yes:
         parts.append("c(opy)")
     return f"[{'/'.join(parts)}]:"
 
@@ -637,18 +643,25 @@ def prompt_yes_no_box(
     renumber_label: str | None = None,
     renumber_status: str | None = None,
     content_builder=None,
+    renumber_only: bool = False,
+    copy_on_yes: bool = False,
 ) -> bool | str:
     has_script = script_path is not None and script_path.is_file()
     has_output = out_path is not None and out_path.is_file()
     can_copy = has_output
     has_renumber = bool(renumber_label)
+    eff_default_yes = False if renumber_only else default_yes
+    eff_default_no = False if renumber_only else (not eff_default_yes)
+    allow_yes = not renumber_only
     renum_msg = renumber_status or (f"✓ Renumbering to {renumber_label}." if has_renumber else "")
     suffix = _build_prompt_yes_no_suffix(
-        default_yes,
+        eff_default_yes,
         has_script=has_script,
         has_output=has_output,
         can_copy=can_copy,
         has_renumber=has_renumber,
+        renumber_only=renumber_only,
+        copy_on_yes=copy_on_yes,
     )
     prompt_line = f"-> {question} {suffix}"
     status_list: list[str] = [yes_status, no_status]
@@ -669,20 +682,16 @@ def prompt_yes_no_box(
         else:
             status_list.append(f"✗ No clipboard tool found for {clip_target}.")
     extra_keys: dict[str, str] = {}
-    case_sensitive_keys: dict[str, str] = {}
     if has_renumber:
-        case_sensitive_keys["r"] = "renumber"
-        case_sensitive_keys["R"] = "yes"
+        extra_keys["r"] = "renumber"
         extra_keys["renumber"] = "renumber"
-        extra_keys["restart"] = "yes"
-        extra_keys["overwrite"] = "yes"
     if has_script:
         extra_keys["s"] = "script"
         extra_keys["script"] = "script"
     if has_output:
         extra_keys["o"] = "output"
         extra_keys["output"] = "output"
-    if can_copy:
+    if can_copy and not copy_on_yes:
         extra_keys["c"] = "copy"
         extra_keys["copy"] = "copy"
     prev_cols, prev_rows = _term_size()
@@ -717,10 +726,10 @@ def prompt_yes_no_box(
             while True:
                 action = read_confirm_key(
                     tty_r,
-                    default_yes=default_yes,
-                    default_no=not default_yes,
+                    default_yes=eff_default_yes,
+                    default_no=eff_default_no,
                     extra_keys=extra_keys,
-                    case_sensitive_keys=case_sensitive_keys,
+                    allow_yes=allow_yes,
                     flush=first_read,
                 )
                 first_read = False
@@ -835,20 +844,22 @@ def prompt_yes_no_box(
                             tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
-                if action == "copy" and can_copy and clip_target is not None:
+                if (action == "copy" or (copy_on_yes and action == "yes")) and can_copy and clip_target is not None:
                     if clip is not None and copy_file_to_clipboard(clip[0], clip_target):
                         status_line = f"✓ Copied {clip_target} to clipboard."
+                        result = "copy" if copy_on_yes else False
                     elif clip is not None:
                         status_line = f"✗ Clipboard copy failed; run: {clip[1]}"
+                        result = False
                     else:
                         status_line = f"✗ No clipboard tool found for {clip_target}."
-                    result = False
+                        result = False
                     break
                 if action == "renumber" and has_renumber:
                     status_line = renum_msg
                     result = "renumber"
                     break
-                if action == "yes":
+                if action == "yes" and allow_yes:
                     result = True
                     break
                 if action == "no":
@@ -865,7 +876,7 @@ def prompt_yes_no_box(
                 tty_w.close()
                 tty_r.close()
     except OSError:
-        return default_yes
+        return eff_default_yes if (not copy_on_yes and not renumber_only) else False
 
 
 def resolve_editor_command() -> list[str]:
@@ -897,6 +908,7 @@ def _parse_confirm_line(
     default_no: bool = False,
     extra_keys: dict[str, str] | None = None,
     case_sensitive_keys: dict[str, str] | None = None,
+    allow_yes: bool = True,
 ) -> str:
     if not line:
         return "yes" if default_yes else "no"
@@ -910,9 +922,9 @@ def _parse_confirm_line(
         return "edit"
     if ans in ("v", "view"):
         return "view"
-    if default_yes and ans in ("", "y", "yes"):
+    if allow_yes and ans in ("y", "yes"):
         return "yes"
-    if not default_yes and ans in ("y", "yes"):
+    if default_yes and ans == "":
         return "yes"
     if default_no and ans == "":
         return "no"
@@ -928,6 +940,7 @@ def read_confirm_key(
     extra_keys: dict[str, str] | None = None,
     case_sensitive_keys: dict[str, str] | None = None,
     *,
+    allow_yes: bool = True,
     flush: bool = True,
 ) -> str:
     """Reads a single key: returns 'yes', 'no', 'view', 'resize', or an extra_keys action."""
@@ -940,6 +953,7 @@ def read_confirm_key(
             default_no=default_no,
             extra_keys=extra_keys,
             case_sensitive_keys=case_sensitive_keys,
+            allow_yes=allow_yes,
         )
     try:
         fd = tty_r.fileno()
@@ -951,6 +965,7 @@ def read_confirm_key(
             default_no=default_no,
             extra_keys=extra_keys,
             case_sensitive_keys=case_sensitive_keys,
+            allow_yes=allow_yes,
         )
     try:
         tty.setraw(fd, termios.TCSANOW)
@@ -979,7 +994,7 @@ def read_confirm_key(
                     return "edit"
                 if ch in (b"v", b"V"):
                     return "view"
-                if ch in (b"y", b"Y"):
+                if allow_yes and ch in (b"y", b"Y"):
                     return "yes"
                 if ch in (b"\r", b"\n"):
                     if default_yes:
@@ -1075,7 +1090,7 @@ def confirm_execution(
         term_cols=prev_cols,
         term_rows=prev_rows,
     )
-    _, border_col = _block_colors("PLAN")
+    _, border_col = _block_colors("START STEP")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
     ce_lines = box.splitlines()
     prefixed_prompt = (
@@ -1088,7 +1103,7 @@ def confirm_execution(
             tty_w.flush()
             first_read = True
             while True:
-                action = read_confirm_key(tty_r, default_yes=default_yes, flush=first_read)
+                action = read_confirm_key(tty_r, default_yes=default_yes, default_no=not default_yes, flush=first_read)
                 first_read = False
                 if action == "resize":
                     new_cols, new_rows = _term_size()
@@ -1352,9 +1367,9 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
 
 _KV_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*:)\s+(.*\S.*)$")
 _TITLE_COLORS = {
-    "BUNDLE": "\x1b[1;96m",
-    "PLAN": "\x1b[1;93m",
-    "END": "\x1b[1;92m",
+    "START SESSION": "\x1b[1;96m",
+    "START STEP": "\x1b[1;93m",
+    "END STEP": "\x1b[1;92m",
     "SYNTAX ERROR": "\x1b[1;91m",
     "NOT RUN": "\x1b[1;91m",
     "MISSING PREVIOUS STEP": "\x1b[1;93m",
@@ -1393,7 +1408,7 @@ _ANSI_RESET = "\x1b[0m"
 
 def _block_colors(title: str, has_exit: bool = False) -> tuple[str, str]:
     clean_title = title.strip()
-    if clean_title == "END" and has_exit:
+    if clean_title == "END STEP" and has_exit:
         t_col = "\x1b[1;91m"
     else:
         t_col = _TITLE_COLORS.get(clean_title, "\x1b[1;96m")
@@ -2093,6 +2108,7 @@ def _extract_last_error_line(out_path: Path, label: str | None = None, max_width
             f"[{label}] END",
             f"[{label}] STOP --fix",
             f"[{label}] <stdin> line ",
+            f"[{label}] Note:",
             f"[{label}] patched ",
             f"[{label}] SECURITY WARNING:",
         )
@@ -2215,7 +2231,7 @@ def build_box_body_lines(
     err_src = error_source if error_source is not None else out_path
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, err_src)
     is_edited = _is_file_edited(err_src) if edited is None else edited
-    is_bundle_box = bool(title_kind and title_kind.strip() == "BUNDLE")
+    is_bundle_box = bool(title_kind and title_kind.strip() == "START SESSION")
     bundle_plan_obj: dict[str, object] | None = None
     if is_bundle_box:
         fn_load = globals().get("load_session_bundle_plan")
@@ -2268,7 +2284,7 @@ def build_box_body_lines(
             detail_lines.append(f"Stats: {joined_stats} (edited)" if is_edited else f"Stats: {joined_stats}")
         elif is_edited:
             detail_lines.append("Stats: (edited)")
-    has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
+    has_header = any(line.startswith(("Step:", "Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
         base_lines = _align_kv_lines(detail_lines)
     else:
@@ -2305,11 +2321,11 @@ def build_box_body_lines(
 
 def _clipboard_prompt_line(title_kind: str) -> str:
     kind = title_kind.strip()
-    if kind == "BUNDLE":
-        return "-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:"
-    if kind == "END":
-        return "-> Copy to clipboard? [Enter/e(dit)/Esc]:"
-    return "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
+    if kind == "START SESSION":
+        return "-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:"
+    if kind == "END STEP":
+        return "-> Copy to clipboard? [Y/n/e(dit)]:"
+    return "-> Copy to clipboard? [Y/n/v(iew)]:"
 
 
 def format_clipboard_box(
@@ -2318,7 +2334,7 @@ def format_clipboard_box(
     ok: bool = True,
     rc: int | None = None,
     stats: str | None = None,
-    title_kind: str = "END",
+    title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
     cmd_str: str | None = None,
     edited: bool | None = None,
@@ -2481,7 +2497,7 @@ def _build_bundle_details_screen(
     edited: bool = False,
 ) -> tuple[str, int, int]:
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, bundle_path)
-    title_col, border_col = _block_colors("BUNDLE")
+    title_col, border_col = _block_colors("START SESSION")
     panel_title = f"DETAILS · {label}"
     width = max(min(cols, 48), display_width(panel_title) + 8)
     max_content_w = max(1, cols - 2)
@@ -2602,7 +2618,7 @@ def offer_clipboard_copy(
     out_path: Path,
     ok: bool = True,
     rc: int | None = None,
-    title_kind: str = "END",
+    title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
     duration_s: float | None = None,
     op_timings: list[dict[str, object]] | None = None,
@@ -2614,8 +2630,8 @@ def offer_clipboard_copy(
     mode = clipboard_mode()
     if mode == "never":
         return
-    is_start_bundle = title_kind.strip() == "BUNDLE"
-    is_end_box = title_kind.strip() == "END"
+    is_start_bundle = title_kind.strip() == "START SESSION"
+    is_end_box = title_kind.strip() == "END STEP"
     edit_target = out_path
     copy_target = edit_target
     if is_end_box and edit_target.is_file():

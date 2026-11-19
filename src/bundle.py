@@ -162,15 +162,15 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
     if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:
-        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="BUNDLE", extra_lines=body_lines, sdir=sdir)
+        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
-            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="BUNDLE"
+            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="START SESSION"
         )
-        sys.stdout.write(format_info_box("BUNDLE", full_body) + "\n")
+        sys.stdout.write(format_info_box("START SESSION", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="BUNDLE", extra_lines=body_lines, sdir=sdir)
+            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     return 0
 
 

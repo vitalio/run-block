@@ -18,13 +18,13 @@ rules are loaded via `.agents_bundle`.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
   `run_block --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
 - `src/ui.py` — thin open-right box-drawing (`╭─ TITLE ───`, `│ `, `╰───`, ASCII fallback) TUI blocks with aligned metadata and TTY colors
-  (`PLAN`, `BUNDLE`, `END`, `NOT RUN`, `SYNTAX ERROR`), token
+  (`START STEP`, `START SESSION`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`), token
   statistics, and clipboard integration.
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
   `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
   headless mode. Child `stdout` and `stderr` are read via separate
   descriptors and merged into `out`; `stderr` is also saved to `err`, which
-  the `END` box prefers for its `Error:` line.
+  the `END STEP` box prefers for its `Error:` line.
 - `src/bundle_plan.py` — Bundle Input Protocol header filtering, boundary/section
   fragment parser, embedded terminal block rule injection/deduplication, and
   per-part token/size accounting persisted to `meta.json`.

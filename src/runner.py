@@ -29,32 +29,7 @@ def start_session(name: str | None = None, force: bool = False, sandbox_mode: st
     sdir = base / name
     if sdir.exists():
         if not force:
-            if not sys.stdin.isatty():
-                raise SystemExit(f"{prog_name()}: session {sdir} already exists (use --force to overwrite)")
-            if sys.stdout.isatty() and not no_clipboard():
-                def _sess_exists_lines() -> list[str]:
-                    hdr = format_session_header_lines(
-                        label=name, sdir=sdir, sandbox_mode=sandbox_mode
-                    )
-                    return [*hdr, "", f"Directory: {sdir}"]
-
-                ok = prompt_yes_no_box(
-                    "SESSION ALREADY EXISTS",
-                    _sess_exists_lines(),
-                    f"Overwrite session {name}?",
-                    default_yes=False,
-                    yes_status=f"✓ Overwriting session {name}.",
-                    no_status=f"✗ Aborted overwriting session {name}.",
-                    content_builder=_sess_exists_lines,
-                )
-                if not ok:
-                    raise SystemExit(f"{prog_name()}: aborted")
-            else:
-                sys.stderr.write(f"Session {sdir} already exists. Overwrite? [y/N] ")
-                sys.stderr.flush()
-                ans = sys.stdin.readline().strip().lower()
-                if ans not in ("y", "yes"):
-                    raise SystemExit(f"{prog_name()}: aborted")
+            raise SystemExit(f"{prog_name()}: session {sdir} already exists (use --force to overwrite)")
         shutil.rmtree(sdir)
     sdir.mkdir(mode=0o700, parents=True)
     ensure_session_bundle(sdir, sandbox_mode=sandbox_mode)
@@ -82,6 +57,18 @@ def next_free_step(sdir: Path, min_step: int = 1) -> int:
     while candidate in used:
         candidate += 1
     return candidate
+
+
+def first_missing_step(sdir: Path) -> int:
+    n = 1
+    while True:
+        step_dir = _step_dir(sdir, str(n))
+        has_script = _find_step_script(sdir, str(n)).exists()
+        has_out = (step_dir / "out").exists()
+        is_aborted = (step_dir / "aborted").exists()
+        if (not has_script and not has_out) or is_aborted:
+            return n
+        n += 1
 
 
 def _rewrite_script_step_header(script_text: str, old_label: str, new_label: str) -> str:
@@ -697,6 +684,7 @@ def _validate_step_script_syntax(
     sdir: Path,
     headless: bool = False,
     footer_on_fail: str | None = None,
+    renumbered_from: str | None = None,
 ) -> int:
     if is_ps:
         ps_check = (
@@ -717,7 +705,11 @@ def _validate_step_script_syntax(
     )
     if chk.returncode == 0:
         return 0
-    start_line = f"[{label}] START\n\n"
+    renum_note = (
+        f"[{label}] Note: renumbered from {renumbered_from} to {label}; continue from {label}.\n"
+        if renumbered_from else ""
+    )
+    start_line = f"[{label}] START\n{renum_note}\n"
     msg = chk.stdout or "syntax check failed\n"
     end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
     if footer_on_fail:
@@ -790,6 +782,7 @@ def run_script(
         sdir,
         headless=headless,
         footer_on_fail=footer_on_fail,
+        renumbered_from=renumbered_from,
     )
     if rc_syn != 0:
         return rc_syn
@@ -824,6 +817,7 @@ def run_script(
                 sdir,
                 headless=headless,
                 footer_on_fail=footer_on_fail,
+                renumbered_from=renumbered_from,
             )
             if rc_syn != 0:
                 return rc_syn
@@ -832,6 +826,8 @@ def run_script(
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
+    if renumbered_from:
+        log_chunks.append(f"[{label}] Note: renumbered from {renumbered_from} to {label}; continue from {label}.\n")
     err_chunks: list[str] = []
 
     def _emit(text: str, is_err: bool) -> None:
@@ -1051,7 +1047,7 @@ def run_script(
             op_timings=op_timings,
             failed_step=failed_step,
         )
-        sys.stdout.write("\n" + format_info_box("END", end_body) + "\n")
+        sys.stdout.write("\n" + format_info_box("END STEP", end_body) + "\n")
         sys.stdout.flush()
     if not headless:
         offer_clipboard_copy(
@@ -1180,19 +1176,33 @@ def cmd_normal(
                 )
                 return [*hdr, "", *existing_lines]
 
-            choice = prompt_yes_no_box(
-                "STEP ALREADY EXISTS",
-                _step_exists_lines(),
-                f"Step {label} already exists. r(enumber) to {next_label} or R(estart)?",
-                default_yes=False,
-                yes_status=f"✓ Overwriting {label}.",
-                no_status=f"✗ Keeping existing {label}.",
-                script_path=script_path if script_path.exists() else None,
-                out_path=out_path if out_path.exists() else None,
-                renumber_label=next_label,
-                renumber_status=f"✓ Renumbering {label} -> {next_label}.",
-                content_builder=_step_exists_lines,
-            )
+            if out_path.exists():
+                choice = prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    _step_exists_lines(),
+                    "Copy out to clipboard?",
+                    default_yes=True,
+                    no_status=f"✗ Keeping existing {label}.",
+                    script_path=script_path if script_path.exists() else None,
+                    out_path=out_path,
+                    renumber_label=next_label,
+                    renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                    content_builder=_step_exists_lines,
+                    copy_on_yes=True,
+                )
+            else:
+                choice = prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    _step_exists_lines(),
+                    f"Renumber to {next_label}?",
+                    default_yes=False,
+                    no_status=f"✗ Keeping existing {label}.",
+                    script_path=script_path if script_path.exists() else None,
+                    renumber_label=next_label,
+                    renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                    content_builder=_step_exists_lines,
+                    renumber_only=True,
+                )
             if choice == "renumber":
                 renumbered_from = label
                 payload = _rewrite_script_step_header(payload, label, next_label)
@@ -1204,38 +1214,57 @@ def cmd_normal(
                 out_path = step_dir / "out"
                 aborted_marker = step_dir / "aborted"
                 overwrite = False
-            elif choice:
-                overwrite = True
-                out_path.unlink(missing_ok=True)
-                (step_dir / "meta.json").unlink(missing_ok=True)
-                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
-                    orig_p.unlink(missing_ok=True)
+            elif choice == "copy":
+                return 0
             else:
                 return 2
         if not overwrite and renumbered_from is None:
             return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: step already exists — output: {out_path}", headless=headless)
     if step_num > 1 and renumbered_from is None and not _find_step_script(sdir, str(step_num - 1)).exists():
         prev_label = f"{session}/{step_num - 1}"
-        allow_skip = False
         if sys.stdout.isatty() and not no_clipboard() and not headless:
+            first_missing_num = first_missing_step(sdir)
+            first_missing_label = f"{session}/{first_missing_num}"
             def _missing_prev_lines() -> list[str]:
                 hdr = format_session_header_lines(
                     label=label, sdir=sdir, sandbox_mode=sandbox_override
                 )
-                return [*hdr, "", f"Missing: {prev_label}"]
+                lines = [*hdr, "", f"Missing: {prev_label}"]
+                if first_missing_label != prev_label:
+                    lines.append(f"Next: {first_missing_label}")
+                return lines
 
-            allow_skip = prompt_yes_no_box(
+            choice = prompt_yes_no_box(
                 "MISSING PREVIOUS STEP",
                 _missing_prev_lines(),
-                f"Run {label} anyway?",
+                f"Renumber to {first_missing_label}?",
                 default_yes=False,
-                yes_status=f"✓ Proceeding with {label} (skipped {prev_label}).",
                 no_status=f"✗ Canceled {label} (run {prev_label} first).",
+                renumber_label=first_missing_label,
+                renumber_status=f"✓ Renumbering {label} -> {first_missing_label}.",
                 content_builder=_missing_prev_lines,
+                renumber_only=True,
             )
-            if not allow_skip:
+            if choice == "renumber":
+                renumbered_from = label
+                payload = _rewrite_script_step_header(payload, label, first_missing_label)
+                step = str(first_missing_num)
+                step_num = first_missing_num
+                label = first_missing_label
+                step_dir = _step_dir(sdir, step)
+                script_path = _find_step_script(sdir, step)
+                out_path = step_dir / "out"
+                aborted_marker = step_dir / "aborted"
+                overwrite = aborted_marker.exists()
+                if overwrite:
+                    out_path.unlink(missing_ok=True)
+                    (step_dir / "meta.json").unlink(missing_ok=True)
+                    aborted_marker.unlink(missing_ok=True)
+                    for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                        orig_p.unlink(missing_ok=True)
+            else:
                 return 2
-        if not allow_skip:
+        if renumbered_from is None:
             return not_run_exit(
                 label,
                 sdir,

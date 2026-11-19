@@ -1,3 +1,15 @@
+# ✅ [DONE] F71: Rename TUI boxes to START SESSION / START STEP / END STEP, unify [Y/n] prompts, and improve renumber UX — *2026-11-19, v0.23.2*
+
+- Rename TUI box titles in `src/ui.py`, `src/bundle.py`, and `src/runner.py`: `BUNDLE` -> `START SESSION`, `PLAN` -> `START STEP`, `END` -> `END STEP`, and display `Step: <label>` in step boxes (keeping `Next-Block:` / `# Block:` in agent protocol headers).
+- Standardize prompt suffixes in `src/ui.py` and `src/runner.py`: omit `Enter` and `Esc` labels from `[...]` brackets (replace `[Enter/.../Esc]:` with `[Y/n/...]:`), use a single uppercase letter exclusively for the `Enter` default (fixing `START STEP` warnings `[y/n/...]` -> `[y/N/...]`), remove `r`/`R` case-sensitive collisions, while preserving `Enter`, `n`/`q`/`Esc` behavior.
+- Remove the interactive `SESSION ALREADY EXISTS` overwrite dialog from `start_session()` (`src/runner.py`) so `--start`/`--session` on an existing session without `--force` fails immediately with an explicit error.
+- Redesign `STEP ALREADY EXISTS` in `src/runner.py` and `src/ui.py`:
+  - When `out` exists, prompt `-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:` (until `F54` moves `s`/`o` into `i(nfo)`): `Enter`/`y` copies existing `out` to clipboard and exits, `r` renumbers to `Next` and proceeds into `START STEP`, `n`/`q`/`Esc` exits (with `--retry` available when an explicit re-run is desired prior to `F54`).
+  - When `out` is missing, prompt `-> Renumber to <next_label>? [r(enumber)/n/s(cript)]:` with no `Enter` default.
+- Redesign `MISSING PREVIOUS STEP` in `src/runner.py` and `src/ui.py`: compute `<first_missing_label>` as the first missing/free step starting from `1` for strictly sequential steps, prompt `-> Renumber to <first_missing_label>? [r(enumber)/n]:` with no `Enter` default (until `F54` adds `i(nfo)`), and on `r` renumber and proceed into `START STEP`.
+- When a step is renumbered (`STEP ALREADY EXISTS` or `MISSING PREVIOUS STEP`), record an explicit notice in the captured step output `out` (alongside `renumbered_from` in `meta.json`) informing the agent of the executed step number, and update `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so the agent trusts and continues from the renumbered step.
+- Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `src/header.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_run_block.py`.
+
 # ✅ [DONE] B11: Fix TUI box height overflow, header duplication on redraw, and keep inline boxes minimal — *2026-11-19*
 
 - Keep inline TUI boxes compact so they stay within visible terminal height (`shutil.get_terminal_size().lines`): remove the `Summary:` table from the inline `START SESSION` (`BUNDLE`) box (retaining core headers, `Bundle:`, dim `Stats:`, and `Bundle warnings` when present), and clamp long inline sections in `START STEP` (`PLAN`), `END STEP` (`END`), and confirmation dialogs to available `term_rows` with a `... +N more` hint so the top border (`╭─ ...`) never scrolls into scrollback before a redraw.

@@ -23,7 +23,7 @@ Environment:
   RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
   RUN_BLOCK_BUNDLE_MAX_TOKENS=100000 Warn when total bundle exceeds token budget (0 disables)
   RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000 Warn when a single bundle part exceeds token limit (0 disables)
-  VISUAL / EDITOR                    Editor for e(dit) in PLAN, END, and BUNDLE (d(etails) inspects parts) (keeps *.orig backups)
+  VISUAL / EDITOR                    Editor for e(dit) in START STEP, END STEP, and START SESSION (d(etails) inspects parts) (keeps *.orig backups)
 """
 from __future__ import annotations
 
@@ -63,11 +63,11 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.23.1"
+VERSION = "0.23.2"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
-EMBEDDED_RULE_BASH = "## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<'RUN_BLOCK'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<'RUN_BLOCK'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `d(etails)` and `--bundle-plan [<session>] [--json] [--full]` for part/warning inspection); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<'RUN_FIX'\nold = 'wrong_command'\nnew = 'right_command'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead."
-EMBEDDED_RULE_PWSH = "## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@'\ngit status -sb\n'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@'`, `'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `d(etails)` and `--bundle-plan [<session>] [--json] [--full]` for part/warning inspection); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@'\nold = 'wrong_command'\nnew = 'right_command'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead."
+EMBEDDED_RULE_BASH = "## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<'RUN_BLOCK'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<'RUN_BLOCK'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `d(etails)` and `--bundle-plan [<session>] [--json] [--full]` for part/warning inspection); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<'RUN_FIX'\nold = 'wrong_command'\nnew = 'right_command'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead."
+EMBEDDED_RULE_PWSH = "## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@'\ngit status -sb\n'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@'`, `'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `d(etails)` and `--bundle-plan [<session>] [--json] [--full]` for part/warning inspection); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@'\nold = 'wrong_command'\nnew = 'right_command'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead."
 
 
 def prog_name() -> str:
@@ -2579,7 +2579,7 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "edit"
         if ans in ("v", "view"):
             return "view"
-        return "skip" if ans in ("n", "no", "esc", "\x1b") else "copy"
+        return "skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy"
     try:
         fd = tty_r.fileno()
         old_attrs = termios.tcgetattr(fd)
@@ -2589,7 +2589,7 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "details"
         if ans in ("e", "edit"):
             return "edit"
-        return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "esc", "\x1b") else "copy")
+        return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
         with _SigwinchWatcher() as win_fd:
@@ -2852,7 +2852,7 @@ def format_session_header_lines(
                 nxt = hdr_map.get("next-block") or f"{sess}/1"
                 lines.append(f"Next-Block: {nxt}")
             else:
-                lines.append(f"Block: {label}")
+                lines.append(f"Step: {label}")
         else:
             lines.append(f"Session: {label}")
     elif resolved_sdir is not None:
@@ -2913,7 +2913,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/e(dit)]:" if default_yes else "[y/n/e(dit)]:"
+    return "[Y/n/e(dit)]:" if default_yes else "[y/N/e(dit)]:"
 
 
 def format_safety_box(
@@ -2928,7 +2928,7 @@ def format_safety_box(
     term_rows: int | None = None,
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
-    title = " PLAN "
+    title = " START STEP "
     prompt_suffix = _safety_prompt_suffix(default_yes)
     prompt_line = f"-> Execute this block? {prompt_suffix}"
     if term_cols is None or term_rows is None:
@@ -3068,16 +3068,22 @@ def _build_prompt_yes_no_suffix(
     has_output: bool = False,
     can_copy: bool = False,
     has_renumber: bool = False,
+    renumber_only: bool = False,
+    copy_on_yes: bool = False,
 ) -> str:
-    if has_renumber:
-        parts = ["r", "R", "N"]
+    if renumber_only:
+        parts = ["r(enumber)", "n"]
+    elif copy_on_yes and has_renumber:
+        parts = ["Y", "n", "r(enumber)"]
     else:
         parts = ["Y", "n"] if default_yes else ["y", "N"]
+        if has_renumber:
+            parts.append("r(enumber)")
     if has_script:
         parts.append("s(cript)")
     if has_output:
         parts.append("o(utput)")
-    if can_copy:
+    if can_copy and not copy_on_yes:
         parts.append("c(opy)")
     return f"[{'/'.join(parts)}]:"
 
@@ -3095,18 +3101,25 @@ def prompt_yes_no_box(
     renumber_label: str | None = None,
     renumber_status: str | None = None,
     content_builder=None,
+    renumber_only: bool = False,
+    copy_on_yes: bool = False,
 ) -> bool | str:
     has_script = script_path is not None and script_path.is_file()
     has_output = out_path is not None and out_path.is_file()
     can_copy = has_output
     has_renumber = bool(renumber_label)
+    eff_default_yes = False if renumber_only else default_yes
+    eff_default_no = False if renumber_only else (not eff_default_yes)
+    allow_yes = not renumber_only
     renum_msg = renumber_status or (f"✓ Renumbering to {renumber_label}." if has_renumber else "")
     suffix = _build_prompt_yes_no_suffix(
-        default_yes,
+        eff_default_yes,
         has_script=has_script,
         has_output=has_output,
         can_copy=can_copy,
         has_renumber=has_renumber,
+        renumber_only=renumber_only,
+        copy_on_yes=copy_on_yes,
     )
     prompt_line = f"-> {question} {suffix}"
     status_list: list[str] = [yes_status, no_status]
@@ -3127,20 +3140,16 @@ def prompt_yes_no_box(
         else:
             status_list.append(f"✗ No clipboard tool found for {clip_target}.")
     extra_keys: dict[str, str] = {}
-    case_sensitive_keys: dict[str, str] = {}
     if has_renumber:
-        case_sensitive_keys["r"] = "renumber"
-        case_sensitive_keys["R"] = "yes"
+        extra_keys["r"] = "renumber"
         extra_keys["renumber"] = "renumber"
-        extra_keys["restart"] = "yes"
-        extra_keys["overwrite"] = "yes"
     if has_script:
         extra_keys["s"] = "script"
         extra_keys["script"] = "script"
     if has_output:
         extra_keys["o"] = "output"
         extra_keys["output"] = "output"
-    if can_copy:
+    if can_copy and not copy_on_yes:
         extra_keys["c"] = "copy"
         extra_keys["copy"] = "copy"
     prev_cols, prev_rows = _term_size()
@@ -3175,10 +3184,10 @@ def prompt_yes_no_box(
             while True:
                 action = read_confirm_key(
                     tty_r,
-                    default_yes=default_yes,
-                    default_no=not default_yes,
+                    default_yes=eff_default_yes,
+                    default_no=eff_default_no,
                     extra_keys=extra_keys,
-                    case_sensitive_keys=case_sensitive_keys,
+                    allow_yes=allow_yes,
                     flush=first_read,
                 )
                 first_read = False
@@ -3293,20 +3302,22 @@ def prompt_yes_no_box(
                             tty_w.write(f"\r\033[K{prefixed_prompt}\n\r\033[K{bottom}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
                     continue
-                if action == "copy" and can_copy and clip_target is not None:
+                if (action == "copy" or (copy_on_yes and action == "yes")) and can_copy and clip_target is not None:
                     if clip is not None and copy_file_to_clipboard(clip[0], clip_target):
                         status_line = f"✓ Copied {clip_target} to clipboard."
+                        result = "copy" if copy_on_yes else False
                     elif clip is not None:
                         status_line = f"✗ Clipboard copy failed; run: {clip[1]}"
+                        result = False
                     else:
                         status_line = f"✗ No clipboard tool found for {clip_target}."
-                    result = False
+                        result = False
                     break
                 if action == "renumber" and has_renumber:
                     status_line = renum_msg
                     result = "renumber"
                     break
-                if action == "yes":
+                if action == "yes" and allow_yes:
                     result = True
                     break
                 if action == "no":
@@ -3323,7 +3334,7 @@ def prompt_yes_no_box(
                 tty_w.close()
                 tty_r.close()
     except OSError:
-        return default_yes
+        return eff_default_yes if (not copy_on_yes and not renumber_only) else False
 
 
 def resolve_editor_command() -> list[str]:
@@ -3355,6 +3366,7 @@ def _parse_confirm_line(
     default_no: bool = False,
     extra_keys: dict[str, str] | None = None,
     case_sensitive_keys: dict[str, str] | None = None,
+    allow_yes: bool = True,
 ) -> str:
     if not line:
         return "yes" if default_yes else "no"
@@ -3368,9 +3380,9 @@ def _parse_confirm_line(
         return "edit"
     if ans in ("v", "view"):
         return "view"
-    if default_yes and ans in ("", "y", "yes"):
+    if allow_yes and ans in ("y", "yes"):
         return "yes"
-    if not default_yes and ans in ("y", "yes"):
+    if default_yes and ans == "":
         return "yes"
     if default_no and ans == "":
         return "no"
@@ -3386,6 +3398,7 @@ def read_confirm_key(
     extra_keys: dict[str, str] | None = None,
     case_sensitive_keys: dict[str, str] | None = None,
     *,
+    allow_yes: bool = True,
     flush: bool = True,
 ) -> str:
     """Reads a single key: returns 'yes', 'no', 'view', 'resize', or an extra_keys action."""
@@ -3398,6 +3411,7 @@ def read_confirm_key(
             default_no=default_no,
             extra_keys=extra_keys,
             case_sensitive_keys=case_sensitive_keys,
+            allow_yes=allow_yes,
         )
     try:
         fd = tty_r.fileno()
@@ -3409,6 +3423,7 @@ def read_confirm_key(
             default_no=default_no,
             extra_keys=extra_keys,
             case_sensitive_keys=case_sensitive_keys,
+            allow_yes=allow_yes,
         )
     try:
         tty.setraw(fd, termios.TCSANOW)
@@ -3437,7 +3452,7 @@ def read_confirm_key(
                     return "edit"
                 if ch in (b"v", b"V"):
                     return "view"
-                if ch in (b"y", b"Y"):
+                if allow_yes and ch in (b"y", b"Y"):
                     return "yes"
                 if ch in (b"\r", b"\n"):
                     if default_yes:
@@ -3533,7 +3548,7 @@ def confirm_execution(
         term_cols=prev_cols,
         term_rows=prev_rows,
     )
-    _, border_col = _block_colors("PLAN")
+    _, border_col = _block_colors("START STEP")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
     ce_lines = box.splitlines()
     prefixed_prompt = (
@@ -3546,7 +3561,7 @@ def confirm_execution(
             tty_w.flush()
             first_read = True
             while True:
-                action = read_confirm_key(tty_r, default_yes=default_yes, flush=first_read)
+                action = read_confirm_key(tty_r, default_yes=default_yes, default_no=not default_yes, flush=first_read)
                 first_read = False
                 if action == "resize":
                     new_cols, new_rows = _term_size()
@@ -3810,9 +3825,9 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
 
 _KV_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*:)\s+(.*\S.*)$")
 _TITLE_COLORS = {
-    "BUNDLE": "\x1b[1;96m",
-    "PLAN": "\x1b[1;93m",
-    "END": "\x1b[1;92m",
+    "START SESSION": "\x1b[1;96m",
+    "START STEP": "\x1b[1;93m",
+    "END STEP": "\x1b[1;92m",
     "SYNTAX ERROR": "\x1b[1;91m",
     "NOT RUN": "\x1b[1;91m",
     "MISSING PREVIOUS STEP": "\x1b[1;93m",
@@ -3851,7 +3866,7 @@ _ANSI_RESET = "\x1b[0m"
 
 def _block_colors(title: str, has_exit: bool = False) -> tuple[str, str]:
     clean_title = title.strip()
-    if clean_title == "END" and has_exit:
+    if clean_title == "END STEP" and has_exit:
         t_col = "\x1b[1;91m"
     else:
         t_col = _TITLE_COLORS.get(clean_title, "\x1b[1;96m")
@@ -4551,6 +4566,7 @@ def _extract_last_error_line(out_path: Path, label: str | None = None, max_width
             f"[{label}] END",
             f"[{label}] STOP --fix",
             f"[{label}] <stdin> line ",
+            f"[{label}] Note:",
             f"[{label}] patched ",
             f"[{label}] SECURITY WARNING:",
         )
@@ -4673,7 +4689,7 @@ def build_box_body_lines(
     err_src = error_source if error_source is not None else out_path
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, err_src)
     is_edited = _is_file_edited(err_src) if edited is None else edited
-    is_bundle_box = bool(title_kind and title_kind.strip() == "BUNDLE")
+    is_bundle_box = bool(title_kind and title_kind.strip() == "START SESSION")
     bundle_plan_obj: dict[str, object] | None = None
     if is_bundle_box:
         fn_load = globals().get("load_session_bundle_plan")
@@ -4726,7 +4742,7 @@ def build_box_body_lines(
             detail_lines.append(f"Stats: {joined_stats} (edited)" if is_edited else f"Stats: {joined_stats}")
         elif is_edited:
             detail_lines.append("Stats: (edited)")
-    has_header = any(line.startswith(("Block:", "Session:")) for line in detail_lines)
+    has_header = any(line.startswith(("Step:", "Block:", "Session:")) for line in detail_lines)
     if has_header or (label is None and sdir is None):
         base_lines = _align_kv_lines(detail_lines)
     else:
@@ -4763,11 +4779,11 @@ def build_box_body_lines(
 
 def _clipboard_prompt_line(title_kind: str) -> str:
     kind = title_kind.strip()
-    if kind == "BUNDLE":
-        return "-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:"
-    if kind == "END":
-        return "-> Copy to clipboard? [Enter/e(dit)/Esc]:"
-    return "-> Copy to clipboard? [Enter/v(iew)/Esc]:"
+    if kind == "START SESSION":
+        return "-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:"
+    if kind == "END STEP":
+        return "-> Copy to clipboard? [Y/n/e(dit)]:"
+    return "-> Copy to clipboard? [Y/n/v(iew)]:"
 
 
 def format_clipboard_box(
@@ -4776,7 +4792,7 @@ def format_clipboard_box(
     ok: bool = True,
     rc: int | None = None,
     stats: str | None = None,
-    title_kind: str = "END",
+    title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
     cmd_str: str | None = None,
     edited: bool | None = None,
@@ -4939,7 +4955,7 @@ def _build_bundle_details_screen(
     edited: bool = False,
 ) -> tuple[str, int, int]:
     resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, bundle_path)
-    title_col, border_col = _block_colors("BUNDLE")
+    title_col, border_col = _block_colors("START SESSION")
     panel_title = f"DETAILS · {label}"
     width = max(min(cols, 48), display_width(panel_title) + 8)
     max_content_w = max(1, cols - 2)
@@ -5060,7 +5076,7 @@ def offer_clipboard_copy(
     out_path: Path,
     ok: bool = True,
     rc: int | None = None,
-    title_kind: str = "END",
+    title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
     duration_s: float | None = None,
     op_timings: list[dict[str, object]] | None = None,
@@ -5072,8 +5088,8 @@ def offer_clipboard_copy(
     mode = clipboard_mode()
     if mode == "never":
         return
-    is_start_bundle = title_kind.strip() == "BUNDLE"
-    is_end_box = title_kind.strip() == "END"
+    is_start_bundle = title_kind.strip() == "START SESSION"
+    is_end_box = title_kind.strip() == "END STEP"
     edit_target = out_path
     copy_target = edit_target
     if is_end_box and edit_target.is_file():
@@ -6518,32 +6534,7 @@ def start_session(name: str | None = None, force: bool = False, sandbox_mode: st
     sdir = base / name
     if sdir.exists():
         if not force:
-            if not sys.stdin.isatty():
-                raise SystemExit(f"{prog_name()}: session {sdir} already exists (use --force to overwrite)")
-            if sys.stdout.isatty() and not no_clipboard():
-                def _sess_exists_lines() -> list[str]:
-                    hdr = format_session_header_lines(
-                        label=name, sdir=sdir, sandbox_mode=sandbox_mode
-                    )
-                    return [*hdr, "", f"Directory: {sdir}"]
-
-                ok = prompt_yes_no_box(
-                    "SESSION ALREADY EXISTS",
-                    _sess_exists_lines(),
-                    f"Overwrite session {name}?",
-                    default_yes=False,
-                    yes_status=f"✓ Overwriting session {name}.",
-                    no_status=f"✗ Aborted overwriting session {name}.",
-                    content_builder=_sess_exists_lines,
-                )
-                if not ok:
-                    raise SystemExit(f"{prog_name()}: aborted")
-            else:
-                sys.stderr.write(f"Session {sdir} already exists. Overwrite? [y/N] ")
-                sys.stderr.flush()
-                ans = sys.stdin.readline().strip().lower()
-                if ans not in ("y", "yes"):
-                    raise SystemExit(f"{prog_name()}: aborted")
+            raise SystemExit(f"{prog_name()}: session {sdir} already exists (use --force to overwrite)")
         shutil.rmtree(sdir)
     sdir.mkdir(mode=0o700, parents=True)
     ensure_session_bundle(sdir, sandbox_mode=sandbox_mode)
@@ -6571,6 +6562,18 @@ def next_free_step(sdir: Path, min_step: int = 1) -> int:
     while candidate in used:
         candidate += 1
     return candidate
+
+
+def first_missing_step(sdir: Path) -> int:
+    n = 1
+    while True:
+        step_dir = _step_dir(sdir, str(n))
+        has_script = _find_step_script(sdir, str(n)).exists()
+        has_out = (step_dir / "out").exists()
+        is_aborted = (step_dir / "aborted").exists()
+        if (not has_script and not has_out) or is_aborted:
+            return n
+        n += 1
 
 
 def _rewrite_script_step_header(script_text: str, old_label: str, new_label: str) -> str:
@@ -7186,6 +7189,7 @@ def _validate_step_script_syntax(
     sdir: Path,
     headless: bool = False,
     footer_on_fail: str | None = None,
+    renumbered_from: str | None = None,
 ) -> int:
     if is_ps:
         ps_check = (
@@ -7206,7 +7210,11 @@ def _validate_step_script_syntax(
     )
     if chk.returncode == 0:
         return 0
-    start_line = f"[{label}] START\n\n"
+    renum_note = (
+        f"[{label}] Note: renumbered from {renumbered_from} to {label}; continue from {label}.\n"
+        if renumbered_from else ""
+    )
+    start_line = f"[{label}] START\n{renum_note}\n"
     msg = chk.stdout or "syntax check failed\n"
     end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
     if footer_on_fail:
@@ -7279,6 +7287,7 @@ def run_script(
         sdir,
         headless=headless,
         footer_on_fail=footer_on_fail,
+        renumbered_from=renumbered_from,
     )
     if rc_syn != 0:
         return rc_syn
@@ -7313,6 +7322,7 @@ def run_script(
                 sdir,
                 headless=headless,
                 footer_on_fail=footer_on_fail,
+                renumbered_from=renumbered_from,
             )
             if rc_syn != 0:
                 return rc_syn
@@ -7321,6 +7331,8 @@ def run_script(
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
+    if renumbered_from:
+        log_chunks.append(f"[{label}] Note: renumbered from {renumbered_from} to {label}; continue from {label}.\n")
     err_chunks: list[str] = []
 
     def _emit(text: str, is_err: bool) -> None:
@@ -7540,7 +7552,7 @@ def run_script(
             op_timings=op_timings,
             failed_step=failed_step,
         )
-        sys.stdout.write("\n" + format_info_box("END", end_body) + "\n")
+        sys.stdout.write("\n" + format_info_box("END STEP", end_body) + "\n")
         sys.stdout.flush()
     if not headless:
         offer_clipboard_copy(
@@ -7669,19 +7681,33 @@ def cmd_normal(
                 )
                 return [*hdr, "", *existing_lines]
 
-            choice = prompt_yes_no_box(
-                "STEP ALREADY EXISTS",
-                _step_exists_lines(),
-                f"Step {label} already exists. r(enumber) to {next_label} or R(estart)?",
-                default_yes=False,
-                yes_status=f"✓ Overwriting {label}.",
-                no_status=f"✗ Keeping existing {label}.",
-                script_path=script_path if script_path.exists() else None,
-                out_path=out_path if out_path.exists() else None,
-                renumber_label=next_label,
-                renumber_status=f"✓ Renumbering {label} -> {next_label}.",
-                content_builder=_step_exists_lines,
-            )
+            if out_path.exists():
+                choice = prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    _step_exists_lines(),
+                    "Copy out to clipboard?",
+                    default_yes=True,
+                    no_status=f"✗ Keeping existing {label}.",
+                    script_path=script_path if script_path.exists() else None,
+                    out_path=out_path,
+                    renumber_label=next_label,
+                    renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                    content_builder=_step_exists_lines,
+                    copy_on_yes=True,
+                )
+            else:
+                choice = prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    _step_exists_lines(),
+                    f"Renumber to {next_label}?",
+                    default_yes=False,
+                    no_status=f"✗ Keeping existing {label}.",
+                    script_path=script_path if script_path.exists() else None,
+                    renumber_label=next_label,
+                    renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                    content_builder=_step_exists_lines,
+                    renumber_only=True,
+                )
             if choice == "renumber":
                 renumbered_from = label
                 payload = _rewrite_script_step_header(payload, label, next_label)
@@ -7693,38 +7719,57 @@ def cmd_normal(
                 out_path = step_dir / "out"
                 aborted_marker = step_dir / "aborted"
                 overwrite = False
-            elif choice:
-                overwrite = True
-                out_path.unlink(missing_ok=True)
-                (step_dir / "meta.json").unlink(missing_ok=True)
-                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
-                    orig_p.unlink(missing_ok=True)
+            elif choice == "copy":
+                return 0
             else:
                 return 2
         if not overwrite and renumbered_from is None:
             return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: step already exists — output: {out_path}", headless=headless)
     if step_num > 1 and renumbered_from is None and not _find_step_script(sdir, str(step_num - 1)).exists():
         prev_label = f"{session}/{step_num - 1}"
-        allow_skip = False
         if sys.stdout.isatty() and not no_clipboard() and not headless:
+            first_missing_num = first_missing_step(sdir)
+            first_missing_label = f"{session}/{first_missing_num}"
             def _missing_prev_lines() -> list[str]:
                 hdr = format_session_header_lines(
                     label=label, sdir=sdir, sandbox_mode=sandbox_override
                 )
-                return [*hdr, "", f"Missing: {prev_label}"]
+                lines = [*hdr, "", f"Missing: {prev_label}"]
+                if first_missing_label != prev_label:
+                    lines.append(f"Next: {first_missing_label}")
+                return lines
 
-            allow_skip = prompt_yes_no_box(
+            choice = prompt_yes_no_box(
                 "MISSING PREVIOUS STEP",
                 _missing_prev_lines(),
-                f"Run {label} anyway?",
+                f"Renumber to {first_missing_label}?",
                 default_yes=False,
-                yes_status=f"✓ Proceeding with {label} (skipped {prev_label}).",
                 no_status=f"✗ Canceled {label} (run {prev_label} first).",
+                renumber_label=first_missing_label,
+                renumber_status=f"✓ Renumbering {label} -> {first_missing_label}.",
                 content_builder=_missing_prev_lines,
+                renumber_only=True,
             )
-            if not allow_skip:
+            if choice == "renumber":
+                renumbered_from = label
+                payload = _rewrite_script_step_header(payload, label, first_missing_label)
+                step = str(first_missing_num)
+                step_num = first_missing_num
+                label = first_missing_label
+                step_dir = _step_dir(sdir, step)
+                script_path = _find_step_script(sdir, step)
+                out_path = step_dir / "out"
+                aborted_marker = step_dir / "aborted"
+                overwrite = aborted_marker.exists()
+                if overwrite:
+                    out_path.unlink(missing_ok=True)
+                    (step_dir / "meta.json").unlink(missing_ok=True)
+                    aborted_marker.unlink(missing_ok=True)
+                    for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                        orig_p.unlink(missing_ok=True)
+            else:
                 return 2
-        if not allow_skip:
+        if renumbered_from is None:
             return not_run_exit(
                 label,
                 sdir,
@@ -8473,15 +8518,15 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
     if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:
-        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="BUNDLE", extra_lines=body_lines, sdir=sdir)
+        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
-            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="BUNDLE"
+            bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="START SESSION"
         )
-        sys.stdout.write(format_info_box("BUNDLE", full_body) + "\n")
+        sys.stdout.write(format_info_box("START SESSION", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="BUNDLE", extra_lines=body_lines, sdir=sdir)
+            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     return 0
 
 

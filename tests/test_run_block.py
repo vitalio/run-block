@@ -170,19 +170,19 @@ class TestRunBlock(unittest.TestCase):
             box, rule_w, cursor_off = self.mod.format_safety_box("s1/2", findings, summary=summary)
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
-        self.assertEqual(box_lines[0], "╭─ PLAN " + "─" * 40)
-        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/e(dit)]:")
+        self.assertEqual(box_lines[0], "╭─ START STEP " + "─" * 34)
+        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/N/e(dit)]:")
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
-        self.assertIn("│ Block:   s1/2", box)
+        self.assertIn("│ Step:    s1/2", box)
         self.assertNotIn("Sandbox:", box)
-        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/e(dit)]:"))
-        self.assertNotIn("PLAN (", box)
+        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/N/e(dit)]:"))
+        self.assertNotIn("START STEP (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
         self.assertIn("Safety warnings (6):", box)
         self.assertNotIn("Line ", box)
-        self.assertIn("[y/n/e(dit)]:", box)
+        self.assertIn("[y/N/e(dit)]:", box)
 
     def test_embedded_rules_files_exist(self):
         self.assertFalse((ROOT / "src/bundles").exists())
@@ -217,10 +217,10 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("hello_world in_rb=1", out1)
         self.assertIn("[s1/1] START\n", out1)
         self.assertRegex(out1, r"\[s1/1\] END \([^)\n]+\)\n")
-        self.assertIn("╭─ END ", buf.getvalue())
-        self.assertIn("Block:   s1/1", buf.getvalue())
+        self.assertIn("╭─ END STEP ", buf.getvalue())
+        self.assertIn("Step:    s1/1", buf.getvalue())
         self.assertIn("╭─ NOT RUN ", buf.getvalue())
-        self.assertIn("Block:   s1/3", buf.getvalue())
+        self.assertIn("Step:    s1/3", buf.getvalue())
 
     def test_failed_execution_and_chained_fixes(self):
         buf = io.StringIO()
@@ -267,7 +267,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("END (syntax error", out)
         rendered = buf.getvalue()
         self.assertIn("╭─ SYNTAX ERROR ", rendered)
-        self.assertIn("Block:   s1/1", rendered)
+        self.assertIn("Step:    s1/1", rendered)
         self.assertNotIn("SYNTAX ERROR (", rendered)
         self.assertIn("Exit: ", rendered)
         self.assertIn("Script: ", rendered)
@@ -287,27 +287,27 @@ class TestRunBlock(unittest.TestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
-        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:"))
-        self.assertIn("╭─ END ────", box)
-        self.assertIn("│ Block:   s2/1", box)
+        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/e(dit)]:"))
+        self.assertIn("╭─ END STEP ────", box)
+        self.assertIn("│ Step:    s2/1", box)
         self.assertIn("│ Workdir: ", box)
         self.assertNotIn("Sandbox:", box)
-        self.assertNotIn("END (", box)
+        self.assertNotIn("END STEP (", box)
         self.assertIn(f"│ Output: {f}", box)
         self.assertIn("│ Stats:  1 line · 6 chars · ~2 tokens", box)
-        self.assertIn("│ -> Copy to clipboard? [Enter/e(dit)/Esc]:", box)
+        self.assertIn("│ -> Copy to clipboard? [Y/n/e(dit)]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 9)
         self.assertEqual(len(lines[0]), 48)
-        self.assertTrue(lines[0].startswith("╭─ END ────"))
-        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Enter/e(dit)/Esc]:")
+        self.assertTrue(lines[0].startswith("╭─ END STEP ────"))
+        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/e(dit)]:")
         self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
             box_err, _, _ = self.mod.format_clipboard_box("s2/2", f, ok=False, rc=2, stats=s)
-        self.assertIn("╭─ END ", box_err)
-        self.assertIn("Block:   s2/2", box_err)
+        self.assertIn("╭─ END STEP ", box_err)
+        self.assertIn("Step:    s2/2", box_err)
         self.assertIn("Exit:   2", box_err)
         self.assertIn(f"Output: {f}", box_err)
         self.assertIn("Stats:  1 line · 6 chars · ~2 tokens", box_err)
@@ -398,7 +398,7 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_pipe.returncode, 0, r_pipe.stderr)
-        self.assertIn("╭─ BUNDLE ", r_pipe.stdout)
+        self.assertIn("╭─ START SESSION ", r_pipe.stdout)
         self.assertIn("Session:    s1", r_pipe.stdout)
         self.assertIn("Next-Block: s1/1", r_pipe.stdout)
         self.assertNotIn("Sandbox:", r_pipe.stdout)
@@ -446,8 +446,8 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_step1.returncode, 0, r_step1.stderr)
-        self.assertIn("╭─ END ", r_step1.stdout)
-        self.assertIn("Block:     s1/1", r_step1.stdout)
+        self.assertIn("╭─ END STEP ", r_step1.stdout)
+        self.assertIn("Step:      s1/1", r_step1.stdout)
         self.assertNotIn("Bundle-Command:", r_step1.stdout)
         self.assertIn("Chat-Lang: Russian", r_step1.stdout)
         self.assertIn("Role:      execute", r_step1.stdout)
@@ -464,8 +464,21 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        self.assertIn("╭─ BUNDLE ", r_start.stdout)
+        self.assertIn("╭─ START SESSION ", r_start.stdout)
         self.assertIn("Session:    s2", r_start.stdout)
+
+        # Re-running --start on an existing session without --force fails immediately
+        r_start_dup = subprocess.run(
+            [str(SCRIPT), "--start", "--session", "s2"],
+            input=bundle_input,
+            capture_output=True,
+            text=True,
+            cwd=str(proj),
+            env=env,
+            check=False,
+        )
+        self.assertNotEqual(r_start_dup.returncode, 0)
+        self.assertIn("already exists (use --force to overwrite)", r_start_dup.stderr)
 
         r_show0 = subprocess.run(
             [str(SCRIPT), "--show", "s2/0"],
@@ -530,46 +543,51 @@ class TestRunBlock(unittest.TestCase):
 
     def test_info_and_prompt_boxes_and_skipped_step_confirmation(self):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
-            info_box = self.mod.format_info_box("BUNDLE", ["Session: s1", "Next-Block: s1/1"])
+            info_box = self.mod.format_info_box("START SESSION", ["Session: s1", "Next-Block: s1/1"])
         info_lines = info_box.splitlines()
-        self.assertTrue(info_lines[0].startswith("╭─ BUNDLE ────"))
+        self.assertTrue(info_lines[0].startswith("╭─ START SESSION ────"))
         self.assertEqual(len(info_lines[0]), 48)
         self.assertEqual(info_lines[1], "│ Session:    s1")
         self.assertEqual(info_lines[2], "│ Next-Block: s1/1")
         self.assertEqual(info_lines[-1], "╰" + "─" * 47)
 
-        yes_st = "✓ Proceeding with s1/2 (skipped previous step s1/1)."
+        renum_st = "✓ Renumbering s1/2 -> s1/1."
         no_st = "✗ Canceled s1/2 (run s1/1 first)."
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
             p_box, p_width, p_off = self.mod.format_prompt_box(
                 "MISSING PREVIOUS STEP",
-                ["Block: s1/2", "", "Missing: s1/1"],
-                "-> Run s1/2 anyway? [y/N]:",
-                status_lines=(yes_st, no_st),
+                ["Step: s1/2", "", "Missing: s1/1"],
+                "-> Renumber to s1/1? [r(enumber)/n]:",
+                status_lines=(renum_st, no_st),
             )
         self.assertEqual(p_width, 48)
-        self.assertEqual(p_off, len("│ -> Run s1/2 anyway? [y/N]:"))
+        self.assertEqual(p_off, len("│ -> Renumber to s1/1? [r(enumber)/n]:"))
         p_lines = p_box.splitlines()
         self.assertTrue(p_lines[0].startswith("╭─ MISSING PREVIOUS STEP ────"))
-        self.assertEqual(p_lines[1], "│ Block: s1/2")
+        self.assertEqual(p_lines[1], "│ Step: s1/2")
         self.assertEqual(p_lines[2], "│")
         self.assertEqual(p_lines[3], "│ Missing: s1/1")
         self.assertEqual(p_lines[4], "│")
-        self.assertEqual(p_lines[-2], "│ -> Run s1/2 anyway? [y/N]:")
+        self.assertEqual(p_lines[-2], "│ -> Renumber to s1/1? [r(enumber)/n]:")
         self.assertEqual(p_lines[-1], "╰" + "─" * 47)
 
+        # MISSING PREVIOUS STEP has no Enter default; 'r' renumbers
         tty_w = io.StringIO()
-        tty_r = io.StringIO("y\n")
-        ok = self.mod.prompt_yes_no_box(
+        tty_r = io.StringIO("\nr\n")
+        res_miss = self.mod.prompt_yes_no_box(
             "MISSING PREVIOUS STEP",
-            ["Block: s1/2", "", "Missing: s1/1"],
-            "Run s1/2 anyway?",
+            ["Step: s1/2", "", "Missing: s1/1"],
+            "Renumber to s1/1?",
             default_yes=False,
+            no_status=no_st,
+            renumber_label="s1/1",
+            renumber_status=renum_st,
+            renumber_only=True,
             tty_streams=(tty_w, tty_r),
         )
-        self.assertTrue(ok)
+        self.assertEqual(res_miss, "renumber")
         self.assertIn("╭─ MISSING PREVIOUS STEP ────", tty_w.getvalue())
-        self.assertIn("\r\033[K│ ✓ Confirmed by user.\n", tty_w.getvalue())
+        self.assertIn(f"\r\033[K│ {renum_st}\n", tty_w.getvalue())
 
         # Verify interactive declines do not emit duplicate NOT RUN / END boxes
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
@@ -581,8 +599,10 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc_skip_dec, 2)
             self.assertEqual(buf_dec.getvalue(), "")
             self.assertEqual(mock_prompt.call_args[0][0], "MISSING PREVIOUS STEP")
-            self.assertIn("Block:   s9/2", mock_prompt.call_args[0][1])
+            self.assertIn("Step:    s9/2", mock_prompt.call_args[0][1])
             self.assertIn("Missing: s9/1", mock_prompt.call_args[0][1])
+            self.assertEqual(mock_prompt.call_args[1].get("renumber_label"), "s9/1")
+            self.assertTrue(mock_prompt.call_args[1].get("renumber_only"))
 
             with contextlib.redirect_stdout(io.StringIO()):
                 self.mod.cmd_normal("s9/1", "echo step1\n", auto_yes=True)
@@ -593,9 +613,10 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc_dup_dec, 2)
             self.assertEqual(buf_dup_dec.getvalue(), "")
             self.assertEqual(mock_prompt.call_args[0][0], "STEP ALREADY EXISTS")
-            self.assertIn("Block:   s9/1", mock_prompt.call_args[0][1])
+            self.assertIn("Step:    s9/1", mock_prompt.call_args[0][1])
             self.assertIn("Next: s9/2", mock_prompt.call_args[0][1])
             self.assertEqual(mock_prompt.call_args[1].get("renumber_label"), "s9/2")
+            self.assertTrue(mock_prompt.call_args[1].get("copy_on_yes"))
 
         with unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(False, "USER_ABORTED")):
             buf_abort = io.StringIO()
@@ -605,7 +626,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(buf_abort.getvalue(), "")
             self.assertTrue((self.tmp / "s9/2/aborted").is_file())
 
-        # Verify STEP ALREADY EXISTS interactive actions: view script (s), view output (o), copy output (c), and default N on Enter
+        # Verify STEP ALREADY EXISTS interactive actions when out exists: s(cript), o(utput), and Enter copies out
         s_script = self.tmp / "s9/1/block.sh"
         s_out = self.tmp / "s9/1/out"
         viewed_paths: list[Path] = []
@@ -617,114 +638,129 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["true"], "xclip < out")), \
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy:
             tty_w_c = io.StringIO()
-            tty_r_c = io.StringIO("s\no\nc\n")
-            ok_c = self.mod.prompt_yes_no_box(
+            tty_r_c = io.StringIO("s\no\n\n")
+            res_c = self.mod.prompt_yes_no_box(
                 "STEP ALREADY EXISTS",
-                ["Block: s9/1", "", f"Script: {s_script}", f"Output: {s_out}"],
-                "Overwrite and re-run s9/1?",
-                default_yes=False,
-                yes_status="✓ Overwriting s9/1.",
+                ["Step: s9/1", "", "Next: s9/2", f"Script: {s_script}", f"Output: {s_out}"],
+                "Copy out to clipboard?",
+                default_yes=True,
                 no_status="✗ Keeping existing s9/1.",
                 tty_streams=(tty_w_c, tty_r_c),
                 script_path=s_script,
                 out_path=s_out,
+                renumber_label="s9/2",
+                copy_on_yes=True,
             )
-            self.assertFalse(ok_c)
+            self.assertEqual(res_c, "copy")
             self.assertEqual(viewed_paths, [s_script, s_out])
             mock_copy.assert_called_once_with(["true"], s_out)
             out_c_text = tty_w_c.getvalue()
-            self.assertIn("-> Overwrite and re-run s9/1? [y/N/s(cript)/o(utput)/c(opy)]:", out_c_text)
+            self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:", out_c_text)
             self.assertIn(f"✓ Copied {s_out} to clipboard.", out_c_text)
 
-            # Pressing Enter on [y/N/...] selects default N without overwriting
-            tty_w_enter = io.StringIO()
-            tty_r_enter = io.StringIO("\n")
-            ok_enter = self.mod.prompt_yes_no_box(
-                "STEP ALREADY EXISTS",
-                ["Block: s9/1", "", f"Script: {s_script}", f"Output: {s_out}"],
-                "Overwrite and re-run s9/1?",
-                default_yes=False,
-                yes_status="✓ Overwriting s9/1.",
-                no_status="✗ Keeping existing s9/1.",
-                tty_streams=(tty_w_enter, tty_r_enter),
-                script_path=s_script,
-                out_path=s_out,
-            )
-            self.assertFalse(ok_enter)
-            self.assertIn("✗ Keeping existing s9/1.", tty_w_enter.getvalue())
-
-            # Unified Esc suffixes and Esc cancellation across confirmation prompts
-            self.assertEqual(self.mod._build_prompt_yes_no_suffix(True), "[Y/n]:")
-            self.assertEqual(self.mod._build_prompt_yes_no_suffix(False), "[y/N]:")
-            self.assertEqual(
-                self.mod._build_prompt_yes_no_suffix(False, has_script=True, has_output=True, can_copy=True),
-                "[y/N/s(cript)/o(utput)/c(opy)]:",
-            )
+            # Pressing Esc on STEP ALREADY EXISTS exits without copying or overwriting
             for esc_input in ("esc\n", "\x1b\n"):
                 with self.subTest(esc_input=repr(esc_input)):
                     tty_w_esc = io.StringIO()
                     tty_r_esc = io.StringIO(esc_input)
-                    ok_esc = self.mod.prompt_yes_no_box(
-                        "SESSION ALREADY EXISTS",
-                        ["Session: s9"],
-                        "Overwrite existing session s9?",
-                        default_yes=False,
+                    res_esc = self.mod.prompt_yes_no_box(
+                        "STEP ALREADY EXISTS",
+                        ["Step: s9/1", "", f"Output: {s_out}"],
+                        "Copy out to clipboard?",
+                        default_yes=True,
+                        no_status="✗ Keeping existing s9/1.",
                         tty_streams=(tty_w_esc, tty_r_esc),
+                        out_path=s_out,
+                        renumber_label="s9/2",
+                        copy_on_yes=True,
                     )
-                    self.assertFalse(ok_esc)
-                    self.assertIn("-> Overwrite existing session s9? [y/N]:", tty_w_esc.getvalue())
-                    self.assertIn("✗ Canceled by user.", tty_w_esc.getvalue())
+                    self.assertFalse(res_esc)
+                    self.assertIn("✗ Keeping existing s9/1.", tty_w_esc.getvalue())
+
+            # Unified prompt suffixes without Enter/Esc labels
+            self.assertEqual(self.mod._build_prompt_yes_no_suffix(True), "[Y/n]:")
+            self.assertEqual(self.mod._build_prompt_yes_no_suffix(False), "[y/N]:")
+            self.assertEqual(
+                self.mod._build_prompt_yes_no_suffix(
+                    True, has_script=True, has_output=True, can_copy=True, has_renumber=True, copy_on_yes=True
+                ),
+                "[Y/n/r(enumber)/s(cript)/o(utput)]:",
+            )
+            self.assertEqual(
+                self.mod._build_prompt_yes_no_suffix(
+                    False, has_script=True, has_output=False, has_renumber=True, renumber_only=True
+                ),
+                "[r(enumber)/n/s(cript)]:",
+            )
+            self.assertEqual(
+                self.mod._build_prompt_yes_no_suffix(False, has_renumber=True, renumber_only=True),
+                "[r(enumber)/n]:",
+            )
+
+        # start_session() on existing session without --force fails immediately even on a TTY
+        fake_tty_in = io.StringIO()
+        fake_tty_in.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdin", fake_tty_in):
+            with self.assertRaises(SystemExit) as cm_dup:
+                self.mod.start_session("s9", force=False)
+        self.assertIn("already exists (use --force to overwrite)", str(cm_dup.exception))
 
     def test_f61_step_collision_interactive_renumbering(self):
-        # 1. next_free_step scans existing step & fix directories cleanly
+        # 1. next_free_step and first_missing_step scan existing step & fix directories cleanly
         s_scan = self.tmp / "s_scan"
         s_scan.mkdir(parents=True, exist_ok=True)
         self.assertEqual(self.mod.next_free_step(s_scan, min_step=1), 1)
+        self.assertEqual(self.mod.first_missing_step(s_scan), 1)
         for d_name in ("1", "2", "8", "8_1"):
             (s_scan / d_name).mkdir()
+        (s_scan / "1" / "block.sh").write_text("echo 1\n", encoding="utf-8")
+        (s_scan / "2" / "out").write_text("ok\n", encoding="utf-8")
+        self.assertEqual(self.mod.first_missing_step(s_scan), 3)
+        (s_scan / "2" / "aborted").write_text("", encoding="utf-8")
+        self.assertEqual(self.mod.first_missing_step(s_scan), 2)
         self.assertEqual(self.mod.next_free_step(s_scan, min_step=9), 9)
         self.assertEqual(self.mod.next_free_step(s_scan, min_step=3), 9)
 
-        # 2. prompt_yes_no_box supports r(enumber) vs R(estart) vs N/Esc
-        tty_w_r = io.StringIO()
-        tty_r_r = io.StringIO("r\n")
-        res_renum = self.mod.prompt_yes_no_box(
-            "STEP ALREADY EXISTS",
-            ["Block: s154/8", "", "Next: s154/9"],
-            "Step s154/8 already exists. r(enumber) to s154/9 or R(estart)?",
-            default_yes=False,
-            yes_status="✓ Overwriting s154/8.",
-            no_status="✗ Keeping existing s154/8.",
-            tty_streams=(tty_w_r, tty_r_r),
-            renumber_label="s154/9",
-            renumber_status="✓ Renumbering s154/8 -> s154/9.",
-        )
-        self.assertEqual(res_renum, "renumber")
-        out_r_text = tty_w_r.getvalue()
-        self.assertIn("[r/R/N]:", out_r_text)
-        self.assertIn("✓ Renumbering s154/8 -> s154/9.", out_r_text)
+        # 2. prompt_yes_no_box handles case-insensitive r/R -> renumber, copy_on_yes, and renumber_only (no Enter default)
+        for r_key in ("r\n", "R\n"):
+            with self.subTest(r_key=r_key):
+                tty_w_r = io.StringIO()
+                tty_r_r = io.StringIO(r_key)
+                res_renum = self.mod.prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    ["Step: s154/8", "", "Next: s154/9"],
+                    "Renumber to s154/9?",
+                    default_yes=False,
+                    no_status="✗ Keeping existing s154/8.",
+                    tty_streams=(tty_w_r, tty_r_r),
+                    renumber_label="s154/9",
+                    renumber_status="✓ Renumbering s154/8 -> s154/9.",
+                    renumber_only=True,
+                )
+                self.assertEqual(res_renum, "renumber")
+                out_r_text = tty_w_r.getvalue()
+                self.assertIn("-> Renumber to s154/9? [r(enumber)/n]:", out_r_text)
+                self.assertIn("✓ Renumbering s154/8 -> s154/9.", out_r_text)
 
-        tty_w_cap_r = io.StringIO()
-        tty_r_cap_r = io.StringIO("R\n")
-        res_restart = self.mod.prompt_yes_no_box(
+        # renumber_only ignores Enter and 'y' (requires explicit r or n/Esc)
+        tty_w_no_def = io.StringIO()
+        tty_r_no_def = io.StringIO("\ny\nr\n")
+        res_no_def = self.mod.prompt_yes_no_box(
             "STEP ALREADY EXISTS",
-            ["Block: s154/8", "", "Next: s154/9"],
-            "Step s154/8 already exists. r(enumber) to s154/9 or R(estart)?",
+            ["Step: s154/8", "", "Next: s154/9"],
+            "Renumber to s154/9?",
             default_yes=False,
-            yes_status="✓ Overwriting s154/8.",
-            no_status="✗ Keeping existing s154/8.",
-            tty_streams=(tty_w_cap_r, tty_r_cap_r),
+            tty_streams=(tty_w_no_def, tty_r_no_def),
             renumber_label="s154/9",
-            renumber_status="✓ Renumbering s154/8 -> s154/9.",
+            renumber_only=True,
         )
-        self.assertIs(res_restart, True)
-        self.assertIn("✓ Overwriting s154/8.", tty_w_cap_r.getvalue())
+        self.assertEqual(res_no_def, "renumber")
 
         class _NoCloseStringIO(io.StringIO):
             def close(self) -> None:
                 pass
 
-        # 3. End-to-end cmd_normal collision: choosing 'r' preserves s154/8 and runs as s154/9
+        # 3. End-to-end cmd_normal collision: choosing 'r' preserves s154/8, runs as s154/9, and writes renumber Note in out
         s154 = self.tmp / "s154"
         s154.mkdir(parents=True, exist_ok=True)
         for idx in range(1, 9):
@@ -757,26 +793,67 @@ class TestRunBlock(unittest.TestCase):
         self.assertTrue((s154 / "9" / "block.sh").is_file())
         out_9 = (s154 / "9" / "out").read_text(encoding="utf-8")
         self.assertIn("[s154/9] START", out_9)
+        self.assertIn("[s154/9] Note: renumbered from s154/8 to s154/9; continue from s154/9.", out_9)
         self.assertIn("renumbered_to_nine", out_9)
         self.assertIn("[s154/9] END", out_9)
         meta_9 = self.mod.read_step_meta(s154 / "9")
         self.assertEqual(meta_9.get("renumbered_from"), "s154/8")
+        self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:", tty_w_coll.getvalue())
         self.assertIn("✓ Renumbering s154/8 -> s154/9.", tty_w_coll.getvalue())
 
-        # 4. Choosing 'R' (Restart) overwrites s154/8 in place
-        tty_w_ov = _NoCloseStringIO()
-        tty_r_ov = io.StringIO("R\n")
+        # 4. Choosing Enter on STEP ALREADY EXISTS (with out) copies existing out to clipboard and exits 0
+        tty_w_cp = _NoCloseStringIO()
+        tty_r_cp = io.StringIO("\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], "pbcopy < out")), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_cp, \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_cp, tty_r_cp)), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            rc_cp = self.mod.cmd_normal("s154/8", "echo should_not_overwrite\n", auto_yes=False)
+        self.assertEqual(rc_cp, 0)
+        mock_cp.assert_called_once_with(["pbcopy"], s154 / "8" / "out")
+        self.assertEqual((s154 / "8" / "out").read_text(encoding="utf-8"), orig_8_out)
+
+        # 5. STEP ALREADY EXISTS when out is missing prompts [r(enumber)/n/s(cript)]: with no Enter default
+        (s154 / "10").mkdir()
+        (s154 / "10" / "block.sh").write_text("echo partial\n", encoding="utf-8")
+        tty_w_noout = _NoCloseStringIO()
+        tty_r_noout = io.StringIO("r\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
              unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="never"), \
-             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_ov, tty_r_ov)), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_noout, tty_r_noout)), \
              unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)), \
              unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-            rc_ov = self.mod.cmd_normal("s154/8", "echo restarted_eight\n", auto_yes=False)
-        self.assertEqual(rc_ov, 0)
-        out_8_after = (s154 / "8" / "out").read_text(encoding="utf-8")
-        self.assertIn("restarted_eight", out_8_after)
-        self.assertNotIn("original_step_8", out_8_after)
+            rc_noout = self.mod.cmd_normal("s154/10", "echo moved_to_11\n", auto_yes=False)
+        self.assertEqual(rc_noout, 0)
+        self.assertIn("-> Renumber to s154/11? [r(enumber)/n/s(cript)]:", tty_w_noout.getvalue())
+        self.assertIn("[s154/11] Note: renumbered from s154/10 to s154/11; continue from s154/11.", (s154 / "11" / "out").read_text(encoding="utf-8"))
+
+        # 6. MISSING PREVIOUS STEP renumbers to first_missing_step (s154/14 -> s154/12) and writes Note in out
+        tty_w_mp = _NoCloseStringIO()
+        tty_r_mp = io.StringIO("r\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="never"), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_mp, tty_r_mp)), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            rc_mp = self.mod.cmd_normal("s154/14", "# Block: s154/14\necho gap_filled\n", auto_yes=False)
+        self.assertEqual(rc_mp, 0)
+        mp_tty = tty_w_mp.getvalue()
+        self.assertIn("Missing: s154/13", mp_tty)
+        self.assertIn("Next:    s154/12", mp_tty)
+        self.assertIn("-> Renumber to s154/12? [r(enumber)/n]:", mp_tty)
+        out_12 = (s154 / "12" / "out").read_text(encoding="utf-8")
+        self.assertIn("[s154/12] Note: renumbered from s154/14 to s154/12; continue from s154/12.", out_12)
+        self.assertEqual(self.mod.read_step_meta(s154 / "12").get("renumbered_from"), "s154/14")
+
+        # 7. Embedded rules instruct agents to continue from renumbered step
+        for rule_rel in ("src/rules/blocks/bash.md", "src/rules/blocks/pwsh.md"):
+            rule_txt = (ROOT / rule_rel).read_text(encoding="utf-8")
+            self.assertIn("Note: renumbered from <session>/<old> to <session>/<new>", rule_txt)
 
     def test_powershell_mode_and_agents(self):
         fake_pwsh = self.tmp / "pwsh"
@@ -1021,8 +1098,8 @@ class TestRunBlock(unittest.TestCase):
         multi_cd = "cd /tmp\nls -la\ncd /var\nls -la\n"
         sum_cd = rb_mod.summarize_script_actions(multi_cd, Path("/home"))
         box_cd, _, _ = rb_mod.format_safety_box("s1/4", [], default_yes=True, summary=sum_cd)
-        self.assertIn("╭─ PLAN ", box_cd)
-        self.assertIn("Block:   s1/4", box_cd)
+        self.assertIn("╭─ START STEP ", box_cd)
+        self.assertIn("Step:    s1/4", box_cd)
         self.assertIn("  /tmp:", box_cd)
         stripped_lines = [l.strip() for l in box_cd.splitlines()]
         idx_var = stripped_lines.index("│   /var:")
@@ -1350,7 +1427,7 @@ class TestRunBlock(unittest.TestCase):
 
         # END box displays Error: <last_error_line> and Fix: status line
         end_rendered = buf_end.getvalue()
-        self.assertIn("╭─ END ", end_rendered)
+        self.assertIn("╭─ END STEP ", end_rendered)
         self.assertIn("Exit:   1", end_rendered)
         self.assertIn("Error:  IndexError: list index out of range", end_rendered)
         self.assertIn(f"Fix:    {self.mod.prog_name()} --fix s1/1 (0/2 failed attempts)", end_rendered)
@@ -1509,9 +1586,9 @@ class TestRunBlock(unittest.TestCase):
         with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
             with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream), \
                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
-                ascii_box = self.mod.format_info_box("BUNDLE", ["Session: s1", "Next-Block: s1/1"])
+                ascii_box = self.mod.format_info_box("START SESSION", ["Session: s1", "Next-Block: s1/1"])
         a_lines = ascii_box.splitlines()
-        self.assertTrue(a_lines[0].startswith("+- BUNDLE ----"))
+        self.assertTrue(a_lines[0].startswith("+- START SESSION ----"))
         self.assertEqual(len(a_lines[0]), 48)
         self.assertEqual(a_lines[1], "| Session:    s1")
         self.assertEqual(a_lines[2], "| Next-Block: s1/1")
@@ -1524,13 +1601,13 @@ class TestRunBlock(unittest.TestCase):
         try:
             with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((76, 24))):
                 colored_box, _, c_off = self.mod.format_prompt_box(
-                    "PLAN",
-                    ["Block: s1/1", "Workdir: /tmp/proj"],
+                    "START STEP",
+                    ["Step: s1/1", "Workdir: /tmp/proj"],
                     "-> Execute? [Y/n]:",
                 )
             self.assertIn("\x1b[93m╭─ ", colored_box)
-            self.assertIn("\x1b[1;93mPLAN\x1b[0m", colored_box)
-            self.assertIn("\x1b[2mBlock:\x1b[0m   s1/1", colored_box)
+            self.assertIn("\x1b[1;93mSTART STEP\x1b[0m", colored_box)
+            self.assertIn("\x1b[2mStep:\x1b[0m    s1/1", colored_box)
             self.assertIn("\x1b[2mWorkdir:\x1b[0m \x1b[1;33m/tmp/proj\x1b[0m", colored_box)
             self.assertEqual(c_off, len("│ -> Execute? [Y/n]:"))
 
@@ -1552,14 +1629,14 @@ class TestRunBlock(unittest.TestCase):
         try:
             with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream), \
                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
-                # 1. Matching non-dim border colors per block title (END green vs END with Exit red)
-                end_ok = self.mod.format_info_box("END", ["Block: s1/1"])
-                self.assertIn("\x1b[92m╭─ \x1b[0m\x1b[1;92mEND\x1b[0m", end_ok)
+                # 1. Matching non-dim border colors per block title (END STEP green vs END STEP with Exit red)
+                end_ok = self.mod.format_info_box("END STEP", ["Step: s1/1"])
+                self.assertIn("\x1b[92m╭─ \x1b[0m\x1b[1;92mEND STEP\x1b[0m", end_ok)
                 self.assertIn("\x1b[92m│\x1b[0m", end_ok)
                 self.assertIn("\x1b[92m╰", end_ok)
 
-                end_err = self.mod.format_info_box("END", ["Block: s1/1", "Exit: 2"])
-                self.assertIn("\x1b[91m╭─ \x1b[0m\x1b[1;91mEND\x1b[0m", end_err)
+                end_err = self.mod.format_info_box("END STEP", ["Step: s1/1", "Exit: 2"])
+                self.assertIn("\x1b[91m╭─ \x1b[0m\x1b[1;91mEND STEP\x1b[0m", end_err)
                 self.assertIn("\x1b[91m│\x1b[0m", end_err)
 
                 # 2. PLAN with matching Workdir (dimmed), Sandbox: off omitted,
@@ -1580,7 +1657,7 @@ class TestRunBlock(unittest.TestCase):
                 box_warn, _, _ = self.mod.format_safety_box(
                     "s1/2", findings, default_yes=False, summary=summary
                 )
-                self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mPLAN\x1b[0m", box_warn)
+                self.assertIn("\x1b[93m╭─ \x1b[0m\x1b[1;93mSTART STEP\x1b[0m", box_warn)
                 self.assertIn(f"\x1b[2mWorkdir: {cwd_now}\x1b[0m", box_warn)
                 self.assertNotIn("Sandbox:", box_warn)
                 self.assertIn("  1. \x1b[1;94m[read]\x1b[0m    \x1b[94mcat README.md\x1b[0m", box_warn)
@@ -1605,7 +1682,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;93m-> Execute this block? [y/n/e(dit)]:\x1b[0m", box_warn)
+                self.assertIn("\x1b[1;93m-> Execute this block? [y/N/e(dit)]:\x1b[0m", box_warn)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_warn)
 
                 # 3. PLAN with differing Workdir (highlighted) and no safety warnings (prompt uncolored)
@@ -1689,20 +1766,20 @@ class TestRunBlock(unittest.TestCase):
             sb_box, _, sb_off = self.mod.format_clipboard_box(
                 "s1",
                 bundle_file,
-                title_kind="BUNDLE",
+                title_kind="START SESSION",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
-            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:", sb_box)
-            self.assertNotIn("[Enter/v(iew)/Esc]:", sb_box)
-            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:"))
+            self.assertIn("-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:", sb_box)
+            self.assertNotIn("[Y/n/v(iew)]:", sb_box)
+            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/e(dit)/d(etails)]:"))
 
-            end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END")
-            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", end_box)
+            end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END STEP")
+            self.assertIn("-> Copy to clipboard? [Y/n/e(dit)]:", end_box)
             for kind in ("NOT RUN", "SYNTAX ERROR"):
                 with self.subTest(title_kind=kind):
                     other_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind=kind)
-                    self.assertIn("-> Copy to clipboard? [Enter/v(iew)/Esc]:", other_box)
-                    self.assertNotIn("[Enter/e(dit)/Esc]:", other_box)
+                    self.assertIn("-> Copy to clipboard? [Y/n/v(iew)]:", other_box)
+                    self.assertNotIn("[Y/n/e(dit)]:", other_box)
 
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("e\n")), "edit")
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("E\n")), "edit")
@@ -1728,13 +1805,13 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1",
                 bundle_file,
-                title_kind="BUNDLE",
+                title_kind="START SESSION",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
         self.assertEqual(edited_calls, [bundle_file])
         mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
         self.assertIn("Edited prompt", bundle_file.read_text(encoding="utf-8"))
-        self.assertIn("-> Copy to clipboard? [Enter/e(dit)/d(etails)/Esc]:", tty_w.getvalue())
+        self.assertIn("-> Copy to clipboard? [Y/n/e(dit)/d(etails)]:", tty_w.getvalue())
         self.assertIn(f"✓ Copied {bundle_file} to clipboard.", tty_w.getvalue())
 
         tty_w_esc = _KeepOpenStringIO()
@@ -1743,7 +1820,7 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1",
                 bundle_file,
-                title_kind="BUNDLE",
+                title_kind="START SESSION",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
         mock_copy_esc.assert_not_called()
@@ -1970,9 +2047,9 @@ class TestRunBlock(unittest.TestCase):
                 )
 
                 end_box = self.mod.format_info_box(
-                    "END",
+                    "END STEP",
                     [
-                        "Block: s1/1",
+                        "Step: s1/1",
                         "Exit: 2",
                         "Error: boom",
                         "Fix: run_block --fix s1/1 (0/2 failed attempts)",
@@ -2364,7 +2441,7 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1/0",
                 bundle_file,
-                title_kind="BUNDLE",
+                title_kind="START SESSION",
                 extra_lines=[f"Bundle: {bundle_file}"],
             )
 
@@ -2377,19 +2454,19 @@ class TestRunBlock(unittest.TestCase):
         tty_out = tty_w.getvalue()
         self.assertIn(f"Stats:  {initial_stats}", tty_out)
         self.assertIn(f"Stats:  {updated_stats}", tty_out)
-        self.assertEqual(tty_out.count("╭─ BUNDLE "), 2)
+        self.assertEqual(tty_out.count("╭─ START SESSION "), 2)
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             initial_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0",
                 bundle_file,
                 stats=initial_stats,
-                title_kind="BUNDLE",
+                title_kind="START SESSION",
                 extra_lines=[f"Bundle: {bundle_file}"],
             )
         expected_up = self.mod._box_rows_above_prompt(initial_box, 84)
-        self.assertIn(f"\r\033[{expected_up}A\033[J╭─ BUNDLE ", tty_out)
-        self.assertIn("╭─ BUNDLE " + "─" * 38, tty_out)
+        self.assertIn(f"\r\033[{expected_up}A\033[J╭─ START SESSION ", tty_out)
+        self.assertIn("╭─ START SESSION " + "─" * 31, tty_out)
         self.assertIn("╰" + "─" * 47, tty_out)
 
         # Terminal resize during e(dit) recalculates border width and final bottom rule
@@ -2410,12 +2487,12 @@ class TestRunBlock(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1/0",
                 bundle_file,
-                title_kind="BUNDLE",
+                title_kind="START SESSION",
                 extra_lines=[f"Bundle: {bundle_file}"],
             )
         resize_out = tty_w_resize.getvalue()
-        self.assertIn("╭─ BUNDLE " + "─" * 34, resize_out)
-        self.assertIn("╭─ BUNDLE " + "─" * 38, resize_out)
+        self.assertIn("╭─ START SESSION " + "─" * 27, resize_out)
+        self.assertIn("╭─ START SESSION " + "─" * 31, resize_out)
         self.assertTrue(resize_out.endswith("\r\033[K│ Skipped clipboard copy.\n\r\033[K" + ("╰" + "─" * 47) + "\n"))
 
         # Unchanged <session>/0 does not trigger refresh_bundle_meta; hook in refresh_bundle_meta runs when changed
@@ -2498,7 +2575,7 @@ class TestRunBlock(unittest.TestCase):
     def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
         # 1. PLAN prompt shows e(dit), keeps v(iew) as compatibility alias
         self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/e(dit)]:")
-        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/e(dit)]:")
+        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/N/e(dit)]:")
         self.assertEqual(self.mod.read_confirm_key(io.StringIO("e\n"), default_yes=True), "edit")
         self.assertEqual(self.mod.read_confirm_key(io.StringIO("v\n"), default_yes=True), "view")
 
@@ -2549,9 +2626,9 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(script_path.read_text(encoding="utf-8"), edit_2_script)
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ PLAN "), 3)
+        self.assertEqual(tty_out.count("╭─ START STEP "), 3)
         self.assertIn("-> Execute this block? [Y/n/e(dit)]:", tty_out)
-        self.assertIn("-> Execute this block? [y/n/e(dit)]:", tty_out)
+        self.assertIn("-> Execute this block? [y/N/e(dit)]:", tty_out)
         self.assertIn("Safety warnings (1):", tty_out)
         self.assertIn("[fs-destructive]", tty_out)
         self.assertIn("rm -rf /tmp/f51_danger_2", tty_out)
@@ -2604,7 +2681,7 @@ class TestRunBlock(unittest.TestCase):
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
-            self.assertIn("-> Copy to clipboard? [Enter/e(dit)/Esc]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/e(dit)]:", end_box)
             self.assertIn("Error:  noisy stderr line", end_box)
 
         # 2. First edit in END creates out.orig; second edit via 'v' alias preserves out.orig;
@@ -2647,7 +2724,7 @@ class TestRunBlock(unittest.TestCase):
         mock_copy.assert_called_once_with(["pbcopy"], attach_file)
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ END "), 3)
+        self.assertEqual(tty_out.count("╭─ END STEP "), 3)
         self.assertIn("Error:  noisy stderr line", tty_out)
         self.assertIn("Error:  cleaned failure reason", tty_out)
         self.assertIn("Error:  updated final error", tty_out)
@@ -2672,7 +2749,7 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True), \
              unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-            self.mod.offer_clipboard_copy("s1/0", b0, title_kind="BUNDLE", extra_lines=[f"Bundle: {b0}"])
+            self.mod.offer_clipboard_copy("s1/0", b0, title_kind="START SESSION", extra_lines=[f"Bundle: {b0}"])
 
         orig_0 = self.tmp / "s1" / "0.orig"
         self.assertTrue(orig_0.is_file())
@@ -2867,9 +2944,9 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(self.mod._BORDER_COLOR, "\x1b[96m")
 
         expected_titles = {
-            "BUNDLE": ("\x1b[1;96m", "\x1b[96m"),
-            "PLAN": ("\x1b[1;93m", "\x1b[93m"),
-            "END": ("\x1b[1;92m", "\x1b[92m"),
+            "START SESSION": ("\x1b[1;96m", "\x1b[96m"),
+            "START STEP": ("\x1b[1;93m", "\x1b[93m"),
+            "END STEP": ("\x1b[1;92m", "\x1b[92m"),
             "SYNTAX ERROR": ("\x1b[1;91m", "\x1b[91m"),
             "NOT RUN": ("\x1b[1;91m", "\x1b[91m"),
             "MISSING PREVIOUS STEP": ("\x1b[1;93m", "\x1b[93m"),
@@ -2883,7 +2960,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertTrue(t_col.startswith("\x1b[1;9"))
                 self.assertFalse(b_col.startswith("\x1b[2;"))
 
-        self.assertEqual(self.mod._block_colors("END", has_exit=True), ("\x1b[1;91m", "\x1b[91m"))
+        self.assertEqual(self.mod._block_colors("END STEP", has_exit=True), ("\x1b[1;91m", "\x1b[91m"))
         self.assertNotEqual(self.mod._PROMPT_WARN_COLOR, self.mod._WARN_COLOR)
 
         tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
@@ -3311,7 +3388,7 @@ class TestRunBlock(unittest.TestCase):
                 self.mod.offer_clipboard_copy(
                     "s1/0",
                     b0_path,
-                    title_kind="BUNDLE",
+                    title_kind="START SESSION",
                     extra_lines=[f"Bundle: {b0_path}"],
                 )
         finally:
@@ -3326,7 +3403,7 @@ class TestRunBlock(unittest.TestCase):
                 os.environ["RUN_BLOCK_BUNDLE_MAX_TOKENS"] = saved_bud
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ BUNDLE "), 1)
+        self.assertEqual(tty_out.count("╭─ START SESSION "), 1)
         self.assertNotIn("│ Summary:", tty_out)
         self.assertIn("\033[?1049h", tty_out)
         self.assertIn("\033[?1049l", tty_out)
@@ -3739,7 +3816,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertEqual(rc_end, 0)
             self.assertTrue((sdir / "1" / "meta.json").is_file())
             end_rendered = tty_w_end.getvalue()
-            self.assertIn("╭─ END ", end_rendered)
+            self.assertIn("╭─ END STEP ", end_rendered)
             for hdr_ln in expected_headers:
                 with self.subTest(end_hdr=hdr_ln):
                     self.assertIn(hdr_ln, end_rendered)
@@ -3768,12 +3845,12 @@ class TestRunBlock(unittest.TestCase):
             self.assertNotIn("Bundle-Command:", syn_rendered)
 
             # NOT RUN with step meta.json present renders all exposed headers in interactive prompt
-            (sdir / "4").mkdir(parents=True, exist_ok=True)
-            (sdir / "4" / "meta.json").write_text(json.dumps({"duration_ms": 1, "exit_code": 2}), encoding="utf-8")
+            (sdir / "3").mkdir(parents=True, exist_ok=True)
+            (sdir / "3" / "meta.json").write_text(json.dumps({"duration_ms": 1, "exit_code": 2}), encoding="utf-8")
             tty_w_nr = _KeepOpenStringIO()
             tty_r_nr = io.StringIO("esc\n")
-            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),                  unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),                  unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")),                  unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_nr, tty_r_nr)),                  unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=True),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))),                  unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-                rc_nr = self.mod.cmd_normal("s1/4", "", auto_yes=False)
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False),                  unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"),                  unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")),                  unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_nr, tty_r_nr)),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))),                  unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                rc_nr = self.mod.cmd_normal("s1/3", "", auto_yes=False)
             self.assertEqual(rc_nr, 2)
             nr_rendered = tty_w_nr.getvalue()
             self.assertIn("╭─ NOT RUN ", nr_rendered)
@@ -3879,7 +3956,7 @@ class TestRunBlock(unittest.TestCase):
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
             det_box, _, _ = self.mod.format_clipboard_box(
-                "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="BUNDLE", bundle_details=True, sdir=sessions / "s1"
+                "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="START SESSION", bundle_details=True, sdir=sessions / "s1"
             )
         self.assertIn("(5 parts)\n│ Parts:", det_box)
         self.assertIn("├─ 2. bundleA:r1", det_box)
@@ -3893,11 +3970,11 @@ class TestRunBlock(unittest.TestCase):
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
             ed_box, _, _ = self.mod.format_clipboard_box(
-                "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="BUNDLE", edited=True, sdir=sessions / "s1"
+                "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="START SESSION", edited=True, sdir=sessions / "s1"
             )
             self.assertRegex(ed_box, r"│ Stats: .*\(5 parts\) \(edited\)\n│\n│ -> Copy to clipboard\?")
             no_tok_box, _, _ = self.mod.format_clipboard_box(
-                "s1/0", sessions / "s1" / "0", stats=None, title_kind="BUNDLE", edited=False, sdir=sessions / "s1"
+                "s1/0", sessions / "s1" / "0", stats=None, title_kind="START SESSION", edited=False, sdir=sessions / "s1"
             )
             self.assertNotIn("│ Stats:", no_tok_box)
             self.assertNotIn("│ Summary", no_tok_box)
@@ -4039,13 +4116,13 @@ class TestRunBlock(unittest.TestCase):
                      unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=fake_term_size), \
                      unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
                     driver.start()
-                    self.mod.offer_clipboard_copy("s59/0", b0, title_kind="BUNDLE", sdir=sdir)
+                    self.mod.offer_clipboard_copy("s59/0", b0, title_kind="START SESSION", sdir=sdir)
                     driver.join(timeout=2.0)
 
             rendered_b = tty_w2.getvalue()
-            # Initial (96) + shrink (52) + widen (96) + e(dit) (96) = 4 BUNDLE renders
-            self.assertEqual(rendered_b.count("╭─ BUNDLE "), 4)
-            self.assertIn("\033[J╭─ BUNDLE ", rendered_b)
+            # Initial (96) + shrink (52) + widen (96) + e(dit) (96) = 4 START SESSION renders
+            self.assertEqual(rendered_b.count("╭─ START SESSION "), 4)
+            self.assertIn("\033[J╭─ START SESSION ", rendered_b)
             self.assertIn("Title:      Long session title that clamps", rendered_b)
             self.assertIn("(edited)", rendered_b)
             self.assertIn("│ Skipped clipboard copy.\n", rendered_b)
@@ -4090,8 +4167,8 @@ class TestRunBlock(unittest.TestCase):
             self.assertFalse(approved)
             self.assertEqual(reason, "USER_ABORTED")
             rendered_p = tty_w3.getvalue()
-            # Initial (96) + shrink (50) + e(dit) (50) = 3 PLAN renders
-            self.assertEqual(rendered_p.count("╭─ PLAN "), 3)
+            # Initial (96) + shrink (50) + e(dit) (50) = 3 START STEP renders
+            self.assertEqual(rendered_p.count("╭─ START STEP "), 3)
             self.assertIn("1. [read]  ls -la", rendered_p)
             self.assertIn("(edited)", rendered_p)
             self.assertIn("│ ✗ Aborted (--retry s59/1)\n", rendered_p)
@@ -4181,7 +4258,7 @@ class TestRunBlock(unittest.TestCase):
             self.assertLessEqual(self.mod.display_width(cont), 38)
 
         pr_wrapped = self.mod._wrap_box_line(
-            "-> Step s154/8 already exists. r(enumber) to s154/9 or R(estart)? [r/R/N/s(cript)/o(utput)/c(opy)]:",
+            "-> Copy out to clipboard? [Y/n/r(enumber)/s(cript)/o(utput)]:",
             44,
         )
         self.assertGreater(len(pr_wrapped), 1)
@@ -4248,18 +4325,18 @@ class TestRunBlock(unittest.TestCase):
 
             for cols in (40, 50, 64, 70):
                 with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((cols, 24))):
-                    # BUNDLE
+                    # START SESSION
                     bundle_box, _, _ = self.mod.format_clipboard_box(
                         "s58/0",
                         bundle_p,
                         ok=True,
                         rc=0,
                         stats="120 lines · 4.2k chars · ~1.1k–1.2k tokens",
-                        title_kind="BUNDLE",
+                        title_kind="START SESSION",
                         extra_lines=[f"Bundle: {bundle_p}"],
                         sdir=sdir,
                     )
-                    _assert_box_fits(bundle_box, cols, f"BUNDLE@{cols}")
+                    _assert_box_fits(bundle_box, cols, f"START_SESSION@{cols}")
                     self.assertIn("│ Workdir:    ", bundle_box)
                     self.assertIn("│             ", bundle_box)
 
@@ -4274,19 +4351,19 @@ class TestRunBlock(unittest.TestCase):
                     )
                     _assert_box_fits(plan_box, cols, f"PLAN@{cols}")
 
-                    # END
+                    # END STEP
                     end_box, _, _ = self.mod.format_clipboard_box(
                         "s58/1",
                         out_p,
                         ok=False,
                         rc=1,
                         stats="45 lines · 1.8k chars · ~450–515 tokens · 1.6s",
-                        title_kind="END",
+                        title_kind="END STEP",
                         op_timings=op_timings,
                         failed_step=3,
                         sdir=sdir,
                     )
-                    _assert_box_fits(end_box, cols, f"END@{cols}")
+                    _assert_box_fits(end_box, cols, f"END_STEP@{cols}")
                     self.assertIn("│ Steps:  ", end_box)
                     self.assertIn("│         ", end_box)
 
@@ -4373,16 +4450,16 @@ class TestRunBlock(unittest.TestCase):
                     self.assertEqual(col_off, self.mod.display_width(last_prompt_row))
 
                     col_end, _, _ = self.mod.format_clipboard_box(
-                        "s58/1", out_p, ok=False, rc=1, stats="10 lines · 200 chars", title_kind="END", sdir=sdir
+                        "s58/1", out_p, ok=False, rc=1, stats="10 lines · 200 chars", title_kind="END STEP", sdir=sdir
                     )
                     _assert_box_fits(col_end, 44, "COLOR_END@44")
                     self.assertIn("\x1b[1;91mAssertionError:", col_end)
 
                 with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream):
                     col_wrap_box, _, col_wrap_off = self.mod._render_block(
-                        "PLAN",
-                        ["Block: s58/1", "Workdir: /tmp/f58_proj"],
-                        prompt_line="\x1b[1;93m-> Execute this block? [y/n/e(dit)]:\x1b[0m",
+                        "START STEP",
+                        ["Step: s58/1", "Workdir: /tmp/f58_proj"],
+                        prompt_line="\x1b[1;93m-> Execute this block? [y/N/e(dit)]:\x1b[0m",
                         term_cols=36,
                     )
                     _assert_box_fits(col_wrap_box, 36, "COLOR_PROMPT@36")
@@ -4646,7 +4723,7 @@ class TestRunBlock(unittest.TestCase):
                 with contextlib.redirect_stdout(buf_bare):
                     rc_bare = self.mod.main([])
                 self.assertEqual(rc_bare, 0)
-                self.assertIn("╭─ BUNDLE ", buf_bare.getvalue())
+                self.assertIn("╭─ START SESSION ", buf_bare.getvalue())
                 self.assertIn("(1 part)", buf_bare.getvalue())
                 self.assertNotIn("│ Summary:", buf_bare.getvalue())
                 b0_bare = (sessions / "s1" / "0").read_text(encoding="utf-8")
@@ -4657,7 +4734,7 @@ class TestRunBlock(unittest.TestCase):
                 with contextlib.redirect_stdout(buf_start):
                     rc_start = self.mod.main(["--start", "--session", "s2", "--sandbox", "strict"])
                 self.assertEqual(rc_start, 0)
-                self.assertIn("╭─ BUNDLE ", buf_start.getvalue())
+                self.assertIn("╭─ START SESSION ", buf_start.getvalue())
                 b0_start = (sessions / "s2" / "0").read_text(encoding="utf-8")
                 self.assertIn("Sandbox: strict", b0_start)
                 self.assertIn("===== Rules =====\n## Terminal blocks (`", b0_start)
@@ -4722,7 +4799,7 @@ class TestRunBlock(unittest.TestCase):
             plan_box, _, _ = self.mod.format_safety_box("s_b11/1", [], default_yes=True, summary=sum_many, script_path=scr)
             plan_rows = plan_box.splitlines()
             self.assertLessEqual(len(plan_rows), 14)
-            self.assertTrue(plan_rows[0].startswith("╭─ PLAN "))
+            self.assertTrue(plan_rows[0].startswith("╭─ START STEP "))
             self.assertTrue(any("... +" in r and " more" in r for r in plan_rows))
 
             end_box, _, _ = self.mod.format_clipboard_box(
@@ -4731,13 +4808,13 @@ class TestRunBlock(unittest.TestCase):
                 ok=True,
                 rc=0,
                 stats="2 lines · 14 chars",
-                title_kind="END",
+                title_kind="END STEP",
                 extra_lines=[f"Line {i}" for i in range(20)],
                 sdir=sdir,
             )
             end_rows = end_box.splitlines()
             self.assertLessEqual(len(end_rows), 14)
-            self.assertTrue(end_rows[0].startswith("╭─ END "))
+            self.assertTrue(end_rows[0].startswith("╭─ END STEP "))
             self.assertTrue(any("... +" in r and " more" in r for r in end_rows))
 
             prompt_box, _, _ = self.mod.format_prompt_box(
@@ -4767,10 +4844,10 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_scroll, tty_r_scroll)), \
              unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 14))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-            self.mod.offer_clipboard_copy("s_b11/0", b0, title_kind="BUNDLE", extra_lines=[f"Bundle: {b0}"], sdir=sdir)
+            self.mod.offer_clipboard_copy("s_b11/0", b0, title_kind="START SESSION", extra_lines=[f"Bundle: {b0}"], sdir=sdir)
 
         scroll_out = tty_w_scroll.getvalue()
-        self.assertEqual(scroll_out.count("╭─ BUNDLE "), 1)
+        self.assertEqual(scroll_out.count("╭─ START SESSION "), 1)
         self.assertEqual(scroll_out.count("\033[?1049h"), 1)
         self.assertEqual(scroll_out.count("\033[?1049l"), 1)
         self.assertIn("Lines 1-", scroll_out)
@@ -4787,11 +4864,11 @@ class TestRunBlock(unittest.TestCase):
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_clip_enter, \
              unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 14))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-            self.mod.offer_clipboard_copy("s_b11/0", b0, title_kind="BUNDLE", extra_lines=[f"Bundle: {b0}"], sdir=sdir)
+            self.mod.offer_clipboard_copy("s_b11/0", b0, title_kind="START SESSION", extra_lines=[f"Bundle: {b0}"], sdir=sdir)
 
         mock_clip_enter.assert_called_once_with(["pbcopy"], b0)
         copy_out = tty_w_copy.getvalue()
-        self.assertEqual(copy_out.count("╭─ BUNDLE "), 1)
+        self.assertEqual(copy_out.count("╭─ START SESSION "), 1)
         self.assertIn("\033[?1049h", copy_out)
         self.assertIn("\033[?1049l", copy_out)
         self.assertIn(f"Copied {b0} to clipboard.", copy_out)
@@ -4828,7 +4905,7 @@ class TestRunBlock(unittest.TestCase):
                         self.mod.confirm_execution("s_b11/1", scr.read_text(encoding="utf-8"), summary=sum_many, script_path=scr)
                         t1.join(timeout=2.0)
                 out1 = tw1.getvalue()
-                self.assertEqual(out1.count("╭─ PLAN "), 3)
+                self.assertEqual(out1.count("╭─ START STEP "), 3)
                 self.assertIn("... +", out1)
             finally:
                 os.close(m_fd1)
@@ -4897,13 +4974,13 @@ class TestRunBlock(unittest.TestCase):
                         self.mod.offer_clipboard_copy(
                             "s_b11/1",
                             out_p,
-                            title_kind="END",
+                            title_kind="END STEP",
                             extra_lines=[f"Output row {i}" for i in range(18)],
                             sdir=sdir,
                         )
                         t3.join(timeout=2.0)
                 out3 = tw3.getvalue()
-                self.assertEqual(out3.count("╭─ END "), 3)
+                self.assertEqual(out3.count("╭─ END STEP "), 3)
                 self.assertIn("... +", out3)
             finally:
                 os.close(m_fd3)
