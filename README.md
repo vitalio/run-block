@@ -90,11 +90,13 @@ RUN_BLOCK
 
 Before running, `run_block` displays the `START STEP` (working directory, numbered
 operations with nested AST-expanded sub-items for multi-file or read+write
-Python blocks, and any safety warnings). Press `Enter`/`y` to run, `n`/`Esc` to
-abort, or `i` to open the fullscreen `i(nfo)` inspector (which shows unfiltered
-headers including `Sandbox: off`, artifact paths, backups, and pre-execution
-plans, and lets you press `e` to edit the script or `v` to open the report in
-your terminal editor). The first edit preserves `<session>/<step>/block.orig.sh`
+Python blocks, and any safety warnings). For clean blocks (`[Y/n/i(nfo)]:`),
+press `Enter`/`y` to run, `n`/`Esc` to abort, or `i` to open the fullscreen
+`i(nfo)` inspector; when safety warnings or an explicit approval prompt are
+present, `START STEP` displays `[y/n/i(nfo)]:` and ignores `Enter`, requiring an
+explicit `y`, `n`/`Esc`, or `i` choice. Inside `i(nfo)`, you can inspect unfiltered headers including `Sandbox: off`,
+artifact paths, backups, and pre-execution plans, and press `e` to edit the
+script or `v` to open the report in your terminal editor. The first edit preserves `<session>/<step>/block.orig.sh`
 (or `.ps1`), recalculates operations, statistics, and safety warnings in place,
 and re-validates syntax before execution. During execution, `run_block` records
 wall-clock block duration (excluding confirmation prompts) and per-operation
@@ -114,8 +116,10 @@ to `r(enumber)` to the first missing step; use `--retry` to re-run an existing
 step. Across all interactive TUI confirmation prompts (`START SESSION`,
 `START STEP`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`, `STEP ALREADY EXISTS`,
 `MISSING PREVIOUS STEP`, and `CLEAN SESSIONS`), `[Y/n]` / `[y/N]` brackets
-highlight the `Enter` default in uppercase, `Esc` consistently cancels or exits
-without proceeding, and `i(nfo)` unifies inspection and `e(dit)` (preserving
+highlight the `Enter` default in uppercase (while `START STEP` safety warnings
+use lowercase `[y/n/i(nfo)]:` with no `Enter` default), `Esc` consistently
+cancels or exits without proceeding, and `i(nfo)` unifies inspection and
+`e(dit)` (preserving
 `0.orig`, `block.orig.*`, and `out.orig`, and recalculating line/char/token
 statistics, `Error:` lines, and clipboard targets in place). While any interactive TUI box (`START SESSION`, `START STEP`, `END STEP`, or
 confirmation prompt) is waiting for input on a POSIX TTY, resizing the

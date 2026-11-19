@@ -455,7 +455,7 @@ def format_session_header_lines(
 
 
 def _safety_prompt_suffix(default_yes: bool) -> str:
-    return "[Y/n/i(nfo)]:" if default_yes else "[y/N/i(nfo)]:"
+    return "[Y/n/i(nfo)]:" if default_yes else "[y/n/i(nfo)]:"
 
 
 def format_safety_box(
@@ -1079,7 +1079,7 @@ def confirm_execution(
                 action = read_confirm_key(
                     tty_r,
                     default_yes=default_yes,
-                    default_no=not default_yes,
+                    default_no=False,
                     extra_keys=info_extra_keys,
                     flush=first_read,
                 )

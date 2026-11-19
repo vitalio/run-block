@@ -171,18 +171,18 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(rule_w, 48)
         box_lines = box.splitlines()
         self.assertEqual(box_lines[0], "╭─ START STEP " + "─" * 34)
-        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/N/i(nfo)]:")
+        self.assertEqual(box_lines[-2], "│ -> Execute this block? [y/n/i(nfo)]:")
         self.assertEqual(box_lines[-1], "╰" + "─" * 47)
         self.assertNotIn("####", box)
         self.assertIn("│ Step:    s1/2", box)
         self.assertNotIn("Sandbox:", box)
-        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/N/i(nfo)]:"))
+        self.assertEqual(cursor_off, len("│ -> Execute this block? [y/n/i(nfo)]:"))
         self.assertNotIn("START STEP (", box)
         self.assertIn("Script: 7 lines, bash", box)
         self.assertIn("Operations:", box)
         self.assertIn("Safety warnings (6):", box)
         self.assertNotIn("Line ", box)
-        self.assertIn("[y/N/i(nfo)]:", box)
+        self.assertIn("[y/n/i(nfo)]:", box)
 
     def test_embedded_rules_files_exist(self):
         self.assertFalse((ROOT / "src/bundles").exists())
@@ -1687,7 +1687,7 @@ class TestRunBlock(unittest.TestCase):
                 self.assertNotIn("\x1b[2m          ", box_wrap)
                 self.assertIn("\x1b[1;31mSafety warnings (1):\x1b[0m", box_warn)
                 self.assertIn("\x1b[1;31m[fs-destructive]\x1b[0m", box_warn)
-                self.assertIn("\x1b[1;93m-> Execute this block? [y/N/i(nfo)]:\x1b[0m", box_warn)
+                self.assertIn("\x1b[1;93m-> Execute this block? [y/n/i(nfo)]:\x1b[0m", box_warn)
                 self.assertNotIn("\x1b[1;31m-> Execute this block?", box_warn)
 
                 # 3. PLAN with differing Workdir (highlighted) and no safety warnings (prompt uncolored)
@@ -2582,7 +2582,7 @@ class TestRunBlock(unittest.TestCase):
     def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
         # 1. START STEP prompt shows i(nfo), keeps d(etails) as alias
         self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/i(nfo)]:")
-        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/N/i(nfo)]:")
+        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/i(nfo)]:")
         self.assertEqual(
             self.mod.read_confirm_key(io.StringIO("i\n"), default_yes=True, extra_keys={"i": "info", "d": "info"}),
             "info",
@@ -2621,7 +2621,7 @@ class TestRunBlock(unittest.TestCase):
         fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
         tty_w = _KeepOpenStringIO()
         # Press 'i' to open i(nfo), 'e' twice to edit (creating block.orig.sh once),
-        # 'q' to return to START STEP (now [y/N/i(nfo)]:), then 'y' to approve.
+        # 'q' to return to START STEP (now [y/n/i(nfo)]:), then 'y' to approve.
         tty_r = io.StringIO("i\ne\ne\nq\ny\n")
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
              unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
@@ -2642,7 +2642,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(tty_out.count("╭─ INFO · s1/1 "), 3)
         self.assertIn("Original Plan (block.orig.sh):", tty_out)
         self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tty_out)
-        self.assertIn("-> Execute this block? [y/N/i(nfo)]:", tty_out)
+        self.assertIn("-> Execute this block? [y/n/i(nfo)]:", tty_out)
         self.assertIn("Safety warnings (1):", tty_out)
         self.assertIn("[fs-destructive]", tty_out)
         self.assertIn("rm -rf /tmp/f51_danger_2", tty_out)
@@ -2982,7 +2982,7 @@ class TestRunBlock(unittest.TestCase):
         try:
             with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream),                  unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
                 pref_warn = self.mod._safety_prompt_prefix(False, True, "\x1b[93m")
-                self.assertIn(self.mod._PROMPT_WARN_COLOR + "-> Execute this block?", pref_warn)
+                self.assertIn(self.mod._PROMPT_WARN_COLOR + "-> Execute this block? [y/n/i(nfo)]:", pref_warn)
                 self.assertNotIn(self.mod._WARN_COLOR + "-> Execute this block?", pref_warn)
 
                 pref_clean = self.mod._safety_prompt_prefix(True, False, "\x1b[93m")
@@ -4482,7 +4482,7 @@ class TestRunBlock(unittest.TestCase):
                     col_wrap_box, _, col_wrap_off = self.mod._render_block(
                         "START STEP",
                         ["Step: s58/1", "Workdir: /tmp/f58_proj"],
-                        prompt_line="\x1b[1;93m-> Execute this block? [y/N/i(nfo)]:\x1b[0m",
+                        prompt_line="\x1b[1;93m-> Execute this block? [y/n/i(nfo)]:\x1b[0m",
                         term_cols=36,
                     )
                     _assert_box_fits(col_wrap_box, 36, "COLOR_PROMPT@36")
@@ -5160,6 +5160,110 @@ class TestRunBlock(unittest.TestCase):
             self.assertIn("Completed-Note:  done", comp_out)
         finally:
             self.mod.BASE_DIR = old_base
+
+    def test_f75_safety_warning_explicit_choice_no_default_n(self):
+        # 1. Suffix/prefix/box formatting without default N when default_yes=False
+        self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/i(nfo)]:")
+        self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/i(nfo)]:")
+        self.assertIn("-> Execute this block? [y/n/i(nfo)]:", self.mod._safety_prompt_prefix(False, False, ""))
+        self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", self.mod._safety_prompt_prefix(True, False, ""))
+
+        # 2. _parse_confirm_line distinguishes newline ('invalid') from EOF ('no') when both defaults are False
+        self.assertEqual(self.mod._parse_confirm_line("\n", default_yes=False, default_no=False), "invalid")
+        self.assertEqual(self.mod._parse_confirm_line("   \n", default_yes=False, default_no=False), "invalid")
+        self.assertEqual(self.mod._parse_confirm_line("", default_yes=False, default_no=False), "no")
+        self.assertEqual(self.mod._parse_confirm_line("\n", default_yes=True, default_no=False), "yes")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        warn_script = "rm -rf /tmp/f75_test\n"
+        warn_summary = self.mod.summarize_script_actions(warn_script, work_dir=self.tmp)
+
+        # 3. Safety warnings ignore Enter and require explicit y/n/q/Esc
+        for seq, exp_ok, exp_reason in (
+            ("\n\ny\n", True, ""),
+            ("\n\nn\n", False, "USER_ABORTED"),
+            ("\nq\n", False, "USER_ABORTED"),
+            ("\n\x1b\n", False, "USER_ABORTED"),
+            ("\n", False, "USER_ABORTED"),  # Enter ignored, then EOF aborts
+        ):
+            with self.subTest(seq=seq):
+                tw = _KeepOpenStringIO()
+                tr = io.StringIO(seq)
+                with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                     unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw, tr)), \
+                     unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+                     unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                    approved, reason = self.mod.confirm_execution("s75/1", warn_script, summary=warn_summary)
+                self.assertEqual((approved, reason), (exp_ok, exp_reason))
+                self.assertIn("-> Execute this block? [y/n/i(nfo)]:", tw.getvalue())
+
+        # 4. Raw PTY mode also ignores Enter when safety warnings are active
+        if self.mod.HAS_PTY:
+            import pty as _pty
+            import threading as _threading
+            import time as _time
+            for raw_seq, exp_ok, exp_reason in (
+                ([b"\r", b"\n", b"y"], True, ""),
+                ([b"\r", b"\n", b"n"], False, "USER_ABORTED"),
+                ([b"\r", b"\x1b"], False, "USER_ABORTED"),
+            ):
+                with self.subTest(raw_seq=raw_seq):
+                    master_fd, slave_fd = _pty.openpty()
+                    try:
+                        tw_pty = _KeepOpenStringIO()
+                        with os.fdopen(os.dup(slave_fd), "r", encoding="utf-8", errors="replace") as tr_pty:
+                            def _send_keys(seq=raw_seq, mfd=master_fd):
+                                _time.sleep(0.04)
+                                for chunk in seq:
+                                    os.write(mfd, chunk)
+                                    _time.sleep(0.02)
+
+                            t_pty = _threading.Thread(target=_send_keys, daemon=True)
+                            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                                 unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw_pty, tr_pty)), \
+                                 unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+                                 unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                                t_pty.start()
+                                approved, reason = self.mod.confirm_execution(
+                                    "s75/2", warn_script, summary=warn_summary
+                                )
+                                t_pty.join(timeout=2.0)
+                        self.assertEqual((approved, reason), (exp_ok, exp_reason))
+                        self.assertIn("-> Execute this block? [y/n/i(nfo)]:", tw_pty.getvalue())
+                    finally:
+                        os.close(master_fd)
+                        os.close(slave_fd)
+
+        # 5. RUN_BLOCK_APPROVE_CMD returning 'prompt' on clean script renders [y/n/i(nfo)]: and ignores Enter
+        clean_script = "echo hello\n"
+        clean_summary = self.mod.summarize_script_actions(clean_script, work_dir=self.tmp)
+        tw_app = _KeepOpenStringIO()
+        tr_app = io.StringIO("\ny\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "get_setting", return_value=("fake-approve", "env")), \
+             unittest.mock.patch.object(self.mod, "run_approve_cmd", return_value=("prompt", "check carefully")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw_app, tr_app)), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            app_ok, app_reason = self.mod.confirm_execution("s75/3", clean_script, summary=clean_summary)
+        self.assertEqual((app_ok, app_reason), (True, ""))
+        self.assertIn("-> Execute this block? [y/n/i(nfo)]:", tw_app.getvalue())
+
+        # 6. Clean blocks keep [Y/n/i(nfo)]: and approve on Enter
+        tw_clean = _KeepOpenStringIO()
+        tr_clean = io.StringIO("\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw_clean, tr_clean)), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            clean_ok, clean_reason = self.mod.confirm_execution("s75/4", clean_script, summary=clean_summary)
+        self.assertEqual((clean_ok, clean_reason), (True, ""))
+        self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tw_clean.getvalue())
 
 
 if __name__ == "__main__":

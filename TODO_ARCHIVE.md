@@ -1,3 +1,11 @@
+# ✅ [DONE] F75: Require explicit choice on safety warnings without default N — *2026-11-20*
+
+- Role: work
+- Update `_safety_prompt_suffix()`, `_safety_prompt_prefix()`, `format_safety_box()`, and `confirm_execution()` in `src/ui.py` so when `default_yes` is `False` (safety warnings `findings` present or `RUN_BLOCK_APPROVE_CMD` returns `prompt`), the `START STEP` prompt renders `[y/n/i(nfo)]:` (no capitalized default) instead of `[y/N/i(nfo)]:`.
+- Pass `default_no=False` alongside `default_yes=False` to `read_confirm_key()` in `confirm_execution()` (`src/ui.py`) when safety warnings or explicit approval prompt are active so pressing `Enter` is ignored until the user explicitly chooses `y` (run), `n`/`q`/`Esc` (abort), or `i` (inspect).
+- Verify `_parse_confirm_line()` (`src/ui.py`) returns `"invalid"` on empty newline `"\n"` when both `default_yes` and `default_no` are `False`, while still returning `"no"` on EOF (`""`) and keeping `[Y/n/i(nfo)]:` (`default_yes=True`) unchanged when no safety warnings are present (also distinct from `F42` `SESSION COMPLETED` `[y/N/i(nfo)]:`).
+- Acceptance criteria: `START STEP` with safety warnings displays `[y/n/i(nfo)]:` and ignores `Enter`; `y` executes and `n`/`q`/`Esc` aborts; clean blocks keep `[Y/n/i(nfo)]:`; `README.md` and offline tests in `tests/test_run_block.py` are updated, and `./run_block` is rebuilt via `build.py`.
+
 # ✅ [DONE] F54: Remove Steps from END box and add hybrid i(nfo) metadata viewer across TUI blocks — *2026-11-20, Remove Steps from END STEP box and unify fullscreen i(nfo) viewer across TUI prompts*
 
 - Depends on: B11
