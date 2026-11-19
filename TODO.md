@@ -197,3 +197,10 @@
 
 - Future enhancement (blocked on model API integration): replace the current fixed `tiktoken` (`o200k_base`) / char-heuristic (`~lo–hi tokens`) estimator in `src/ui.py` and `src/bundle_plan.py` with model-specific token counting (provider tokenizer or count-tokens API) based on the active selected model.
 - Retain offline stdlib/local heuristic fallback when no model API or tokenizer is configured.
+
+# ⚪ [NEW] F72: Rename project to run-block and CLI utility to rxb
+
+- Role: plan
+- Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `rxb` (updating embedded block rules, protocol markers, and env vars/compatibility aliases per the ecosystem rename design).
+- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/test_run_block.py`, and `.github/`.
+- Acceptance criteria: `build.py` outputs `rxb`, `install.sh`/`install.ps1` install `rxb` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `rxb`, and `tests/test_run_block.py` passes.
