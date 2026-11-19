@@ -2697,14 +2697,6 @@ def _collect_info_report(
             elif b_edited:
                 meta_kv.append("Stats: (edited)")
             body_sections: list[str] = []
-            if isinstance(plan_obj, dict):
-                fn_sum = globals().get("format_bundle_summary_lines")
-                sum_lines = fn_sum(plan_obj, max_width=max_content_w) if callable(fn_sum) else []
-                if sum_lines:
-                    p_cnt = int(plan_obj.get("part_count") or 0)
-                    shdr = f"Summary ({p_cnt} part{'s' if p_cnt != 1 else ''}):"
-                    body_sections.append(f"{_KEY_COLOR}{shdr}{_ANSI_RESET}" if _use_color() else shdr)
-                    body_sections.extend(_colorize_bundle_lines(sum_lines))
             breakdown, warnings_sec = _build_start_bundle_parts(
                 resolved_sdir,
                 bpath,
@@ -2714,8 +2706,6 @@ def _collect_info_report(
                 include_part_count=True,
             )
             if breakdown:
-                if body_sections:
-                    body_sections.append("")
                 body_sections.extend(breakdown)
             if warnings_sec:
                 if body_sections:

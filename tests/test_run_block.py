@@ -3422,7 +3422,7 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("\033[?1049h", tty_out)
         self.assertIn("\033[?1049l", tty_out)
         self.assertIn("╭─ INFO · s1/0 ", tty_out)
-        self.assertEqual(tty_out.count("│ Summary (6 parts):"), 1)
+        self.assertNotIn("│ Summary (", tty_out)
         self.assertEqual(tty_out.count("│ Parts (6 parts):"), 1)
         self.assertIn("[rule]    ├─ 2. r:bash", tty_out)
         self.assertIn("[cmd]     └─ 5. failing_cmd", tty_out)

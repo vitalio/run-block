@@ -1,3 +1,11 @@
+# ✅ [DONE] F76: Show only Parts without duplicate Summary in START SESSION i(nfo) — *2026-11-19*
+
+- Role: work
+- Update `_collect_info_report()` in `src/ui.py` for `title_kind == "START SESSION"` to remove the redundant `Summary (N parts):` block (`format_bundle_summary_lines()`) and display only `Parts (N parts):` via `_build_start_bundle_parts(..., details=True)` (`format_bundle_parts_lines()`) alongside `Bundle warnings`.
+- Keep `Summary` in `run_block --bundle-plan` (`src/bundle_plan.py`, with `--full` adding `Parts`) and keep `Session Bundle Summary` in step `i(nfo)` views (`START STEP`, `END STEP`, etc.) unchanged.
+- Coordinate with `F68`, `F64`, and `F69`: `Parts` retains the full tree hierarchy with group totals and leaf parts needed by `F64` part selection and `F69` markup-preserving edits, without duplicating the collapsed tree in `START SESSION` `i(nfo)`.
+- Acceptance criteria: opening `i(nfo)` in `START SESSION` shows `Parts (...)` without a duplicate `Summary (...)` section; `README.md` (if applicable) and offline tests in `tests/test_run_block.py` are updated, and `./run_block` is rebuilt via `build.py`.
+
 # ✅ [DONE] F75: Require explicit choice on safety warnings without default N — *2026-11-20*
 
 - Role: work
