@@ -1,3 +1,12 @@
+# ✅ [DONE] B11: Fix TUI box height overflow, header duplication on redraw, and keep inline boxes minimal — *2026-11-19*
+
+- Keep inline TUI boxes compact so they stay within visible terminal height (`shutil.get_terminal_size().lines`): remove the `Summary:` table from the inline `START SESSION` (`BUNDLE`) box (retaining core headers, `Bundle:`, dim `Stats:`, and `Bundle warnings` when present), and clamp long inline sections in `START STEP` (`PLAN`), `END STEP` (`END`), and confirmation dialogs to available `term_rows` with a `... +N more` hint so the top border (`╭─ ...`) never scrolls into scrollback before a redraw.
+- Display expanded bundle details in an alternate-screen fullscreen panel (`\033[?1049h` / `\033[?1049l`, modeled after `top`/`less`) with keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), clean return (`Esc`/`q`/`d`/`i`), and clipboard copy on `Enter` so toggling details never leaves duplicate headers or stale lines in scrollback.
+- Fix `display_width()` in `src/ui.py` to count Unicode combining and zero-width format characters (`Mn`, `Me`, `Cf`) as width `0` and normalize/expand tabs (`\t`) during rendering so `_box_rows_above_prompt()` always matches actual terminal row wrapping.
+- Track both `cols` and `rows` (`term_rows`) across `offer_clipboard_copy()`, `confirm_execution()`, and `prompt_yes_no_box()` (`src/ui.py`) so `SIGWINCH` height or width changes reflow cleanly without leaving stale `╭─ ...` rows.
+- Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `README.md`, `tests/test_run_block.py`.
+- Acceptance criteria: toggling details, resizing terminal width or height, or returning from `e(dit)` never produces duplicate `╭─ ...` headers; inline boxes fit within `term_rows`; fullscreen details scroll cleanly on alternate screen; `README.md` and offline tests in `tests/test_run_block.py` cover height clamping, alternate-screen redraw, and `display_width()` edge cases.
+
 # ✅ [DONE] F67: Remove obsolete src/bundles/run_block.bundle export and bundle references — *2026-11-19*
 
 - Depends on: F66

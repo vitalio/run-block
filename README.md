@@ -49,12 +49,15 @@ present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
 markers are parsed into per-part `bundle_plan` metrics (lines, chars, GPT/Claude
 tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
 `<session>/0` (falling back to `===== ... =====` sections when no boundary is
-provided). `BUNDLE` attaches a hierarchical tabular `Summary` (derived from
-neutral `chain` or legacy `group`/`via`, with `[header]` accounting to 100%)
-directly under `Stats:`
-plus diagnostics (non-zero command `rc`, empty output, oversized fragments or
-token budget exceedance, and accidental secrets in non-rule content); press `d`
-at the `BUNDLE` prompt to toggle the full per-part `d(etails)` view.
+provided). The inline `BUNDLE` box stays compact (retaining core headers, `Bundle:`, dim
+`Stats:`, and `Bundle warnings` when present, while full per-part tables stay
+in `run_block --bundle-plan`); press `d` (or `i`) at the `BUNDLE` prompt to
+open an alternate-screen fullscreen `d(etails)` panel (`Up`/`Down`, `j`/`k`,
+`PgUp`/`PgDn` to scroll, `Enter` to copy, `Esc`/`q`/`d`/`i` to return) without
+leaving duplicate headers or stale lines in scrollback. All inline TUI boxes
+(`BUNDLE`, `PLAN`, `END`, and confirmation dialogs) clamp overflowing sections
+to the visible terminal height (`... +N more`) and reflow cleanly across both
+width and height `SIGWINCH` resizes.
 When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 `Workdir` directory, that path is preferred over the current directory or
 Git root and written to `<session>/0`:

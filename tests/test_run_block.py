@@ -2397,8 +2397,6 @@ class TestRunBlock(unittest.TestCase):
         tty_r_resize = io.StringIO("e\nesc\n")
         sizes = [
             os.terminal_size((44, 24)),
-            os.terminal_size((44, 24)),
-            os.terminal_size((76, 24)),
             os.terminal_size((76, 24)),
         ]
         with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
@@ -3261,15 +3259,9 @@ class TestRunBlock(unittest.TestCase):
             check=False,
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
-        # BUNDLE shows compact grouped summary and warnings (including injected run_block rule), without leaking secret value
-        self.assertIn("(6 parts)\n│ Summary:", r_start.stdout)
-        self.assertIn("[header]", r_start.stdout)
-        self.assertIn("[rule]", r_start.stdout)
-        self.assertIn("run_block:blocks/bash", r_start.stdout)
-        self.assertIn("vitalio/run_block (2)", r_start.stdout)
-        self.assertIn("[cmd]", r_start.stdout)
-        self.assertIn(".agents_bundle (2)", r_start.stdout)
-        self.assertIn("1 rc!=0", r_start.stdout)
+        # Inline BUNDLE stays compact (headers, Bundle:, Stats:, warnings) without Summary table or leaking secret value
+        self.assertIn("(6 parts)\n│\n│ Bundle warnings (6):", r_start.stdout)
+        self.assertNotIn("│ Summary:", r_start.stdout)
         self.assertIn("Bundle warnings (6):", r_start.stdout)
         self.assertIn("[cmd_empty]", r_start.stdout)
         self.assertIn("[cmd_rc]", r_start.stdout)
@@ -3334,9 +3326,12 @@ class TestRunBlock(unittest.TestCase):
                 os.environ["RUN_BLOCK_BUNDLE_MAX_TOKENS"] = saved_bud
 
         tty_out = tty_w.getvalue()
-        self.assertEqual(tty_out.count("╭─ BUNDLE "), 3)
-        self.assertEqual(tty_out.count("│ Summary:"), 2)
-        self.assertEqual(tty_out.count("│ Parts:"), 1)
+        self.assertEqual(tty_out.count("╭─ BUNDLE "), 1)
+        self.assertNotIn("│ Summary:", tty_out)
+        self.assertIn("\033[?1049h", tty_out)
+        self.assertIn("\033[?1049l", tty_out)
+        self.assertIn("╭─ DETAILS · s1/0 ", tty_out)
+        self.assertEqual(tty_out.count("│ Parts (6 parts):"), 1)
         self.assertIn("[rule]    ├─ 2. r:bash", tty_out)
         self.assertIn("[cmd]     └─ 5. failing_cmd", tty_out)
         self.assertIn("rc=2", tty_out)
@@ -3866,19 +3861,21 @@ class TestRunBlock(unittest.TestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         out_s = r_start.stdout
-        self.assertRegex(out_s, r"│ Stats: .*\(5 parts\)\n│ Summary:")
-        self.assertIn("[header]  Headers & spacing", out_s)
-        self.assertNotIn("vitalio/run_block: vitalio/run_block:", out_s)
-        self.assertIn("vitalio/run_block:blocks/bash", out_s)
-        self.assertIn("[rule]    bundleA (2)", out_s)
-        self.assertIn("[rule]    └─ rulesetB (2)", out_s)
-        self.assertIn("[cmd]     git status -sb", out_s)
-        self.assertIn("[prompt]  Prompt", out_s)
+        self.assertRegex(out_s, r"│ Stats: .*\(5 parts\)\n╰")
+        self.assertNotIn("│ Summary:", out_s)
 
         plan1 = self.mod.load_session_bundle_plan(sessions / "s1")
         assert plan1 is not None
         self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_group_items(plan1)))
         self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_part_items(plan1)))
+        sum1_text = "\n".join(self.mod.format_bundle_summary_lines(plan1, max_width=100))
+        self.assertIn("[header]  Headers & spacing", sum1_text)
+        self.assertNotIn("vitalio/run_block: vitalio/run_block:", sum1_text)
+        self.assertIn("vitalio/run_block:blocks/bash", sum1_text)
+        self.assertIn("[rule]    bundleA (2)", sum1_text)
+        self.assertIn("[rule]    └─ rulesetB (2)", sum1_text)
+        self.assertIn("[cmd]     git status -sb", sum1_text)
+        self.assertIn("[prompt]  Prompt", sum1_text)
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
             det_box, _, _ = self.mod.format_clipboard_box(
@@ -3898,12 +3895,12 @@ class TestRunBlock(unittest.TestCase):
             ed_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="BUNDLE", edited=True, sdir=sessions / "s1"
             )
-            self.assertRegex(ed_box, r"│ Stats: .*\(5 parts\) \(edited\)\n│ Summary:")
+            self.assertRegex(ed_box, r"│ Stats: .*\(5 parts\) \(edited\)\n│\n│ -> Copy to clipboard\?")
             no_tok_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0", sessions / "s1" / "0", stats=None, title_kind="BUNDLE", edited=False, sdir=sessions / "s1"
             )
             self.assertNotIn("│ Stats:", no_tok_box)
-            self.assertIn("│ Summary (5 parts):", no_tok_box)
+            self.assertNotIn("│ Summary", no_tok_box)
 
         # Legacy meta.json without chars falls back to bytes; empty group expands at root
         legacy_plan = {
@@ -4650,7 +4647,8 @@ class TestRunBlock(unittest.TestCase):
                     rc_bare = self.mod.main([])
                 self.assertEqual(rc_bare, 0)
                 self.assertIn("╭─ BUNDLE ", buf_bare.getvalue())
-                self.assertIn("[rules]   Rules", buf_bare.getvalue())
+                self.assertIn("(1 part)", buf_bare.getvalue())
+                self.assertNotIn("│ Summary:", buf_bare.getvalue())
                 b0_bare = (sessions / "s1" / "0").read_text(encoding="utf-8")
                 self.assertIn("===== Rules =====\n## Terminal blocks (`", b0_bare)
                 self.assertNotIn("===== Prompt =====", b0_bare)
@@ -4675,6 +4673,241 @@ class TestRunBlock(unittest.TestCase):
                 os.environ.pop("RUN_BLOCK_CWD", None)
             else:
                 os.environ["RUN_BLOCK_CWD"] = old_cwd_env
+
+
+    def test_b11_height_clamping_altscreen_details_and_display_width(self):
+        import pty
+        import signal
+        import threading
+        import time
+        # 1. display_width() treats Unicode combining (Mn/Me), zero-width format (Cf), and control (Cc) chars as 0,
+        #    expands tabs to 8-col stops, and keeps _box_rows_above_prompt() exact
+        self.assertEqual(self.mod.display_width("e\u0301"), 1)
+        self.assertEqual(self.mod.display_width("a\u20dd"), 1)
+        self.assertEqual(self.mod.display_width("a\u200bb\u200dc\ufeffd"), 4)
+        self.assertEqual(self.mod.display_width("a\tb"), 9)
+        self.assertEqual(self.mod.display_width("abcd\te"), 9)
+        self.assertEqual(self.mod.display_width("\x1b[1;32mhi\t!\x1b[0m"), 9)
+        tab_wrapped = self.mod._wrap_box_line("col1\tcol2\tcol3_overflow", 18)
+        for ln in tab_wrapped:
+            self.assertNotIn("\t", ln)
+            self.assertLessEqual(self.mod.display_width(ln), 18)
+
+        # 2. Inline boxes clamp to term_rows with '... +N more' across PLAN, END, BUNDLE, and confirmation dialogs
+        sdir = self.tmp / "s_b11"
+        step1 = sdir / "1"
+        step1.mkdir(parents=True)
+        b0 = sdir / "0"
+        many_parts = [
+            "Session: s_b11",
+            "Next-Block: s_b11/1",
+            f"Workdir: {self.tmp}",
+            "Sandbox: off",
+            "Date: 2026-11-19 17:45 UTC",
+            "",
+        ]
+        for idx in range(1, 14):
+            many_parts.append(f"===== Part {idx} =====")
+            many_parts.append(f"Body content for part {idx}")
+        b0.write_text("\n".join(many_parts) + "\n", encoding="utf-8")
+        self.mod.refresh_bundle_meta(b0)
+
+        scr = step1 / "block.sh"
+        scr.write_text("\n".join(f"cat file_{i}.txt" for i in range(16)) + "\n", encoding="utf-8")
+        out_p = step1 / "out"
+        out_p.write_text("line 1\nline 2\n", encoding="utf-8")
+        sum_many = self.mod.summarize_script_actions(scr.read_text(encoding="utf-8"), work_dir=self.tmp)
+
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 14))):
+            plan_box, _, _ = self.mod.format_safety_box("s_b11/1", [], default_yes=True, summary=sum_many, script_path=scr)
+            plan_rows = plan_box.splitlines()
+            self.assertLessEqual(len(plan_rows), 14)
+            self.assertTrue(plan_rows[0].startswith("╭─ PLAN "))
+            self.assertTrue(any("... +" in r and " more" in r for r in plan_rows))
+
+            end_box, _, _ = self.mod.format_clipboard_box(
+                "s_b11/1",
+                out_p,
+                ok=True,
+                rc=0,
+                stats="2 lines · 14 chars",
+                title_kind="END",
+                extra_lines=[f"Line {i}" for i in range(20)],
+                sdir=sdir,
+            )
+            end_rows = end_box.splitlines()
+            self.assertLessEqual(len(end_rows), 14)
+            self.assertTrue(end_rows[0].startswith("╭─ END "))
+            self.assertTrue(any("... +" in r and " more" in r for r in end_rows))
+
+            prompt_box, _, _ = self.mod.format_prompt_box(
+                "STEP ALREADY EXISTS",
+                [f"Detail line {i}" for i in range(20)],
+                "-> Overwrite s_b11/1? [y/N]:",
+            )
+            prompt_rows = prompt_box.splitlines()
+            self.assertLessEqual(len(prompt_rows), 14)
+            self.assertTrue(prompt_rows[0].startswith("╭─ STEP ALREADY EXISTS "))
+            self.assertTrue(any("... +" in r and " more" in r for r in prompt_rows))
+
+        # 3. Fullscreen alternate-screen BUNDLE DETAILS scrolls (j/k/Down/Up/PgDn/PgUp), copies on Enter,
+        #    and returns cleanly without duplicating inline '╭─ BUNDLE ' headers
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w_scroll = _KeepOpenStringIO()
+        # d -> j -> pgdn -> pgup -> k -> q -> esc
+        tty_r_scroll = io.StringIO("d\nj\npgdn\npgup\nk\nq\nesc\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_scroll, tty_r_scroll)), \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 14))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy("s_b11/0", b0, title_kind="BUNDLE", extra_lines=[f"Bundle: {b0}"], sdir=sdir)
+
+        scroll_out = tty_w_scroll.getvalue()
+        self.assertEqual(scroll_out.count("╭─ BUNDLE "), 1)
+        self.assertEqual(scroll_out.count("\033[?1049h"), 1)
+        self.assertEqual(scroll_out.count("\033[?1049l"), 1)
+        self.assertIn("Lines 1-", scroll_out)
+        self.assertIn("Lines 2-", scroll_out)
+        self.assertIn("Skipped clipboard copy.", scroll_out)
+
+        # Enter inside fullscreen details copies to clipboard and exits cleanly
+        tty_w_copy = _KeepOpenStringIO()
+        tty_r_copy = io.StringIO("i\n\n")
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {b0}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w_copy, tty_r_copy)), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_clip_enter, \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((80, 14))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy("s_b11/0", b0, title_kind="BUNDLE", extra_lines=[f"Bundle: {b0}"], sdir=sdir)
+
+        mock_clip_enter.assert_called_once_with(["pbcopy"], b0)
+        copy_out = tty_w_copy.getvalue()
+        self.assertEqual(copy_out.count("╭─ BUNDLE "), 1)
+        self.assertIn("\033[?1049h", copy_out)
+        self.assertIn("\033[?1049l", copy_out)
+        self.assertIn(f"Copied {b0} to clipboard.", copy_out)
+
+        # 4. SIGWINCH height-only changes (rows: 24 -> 11 -> 24, cols fixed at 80) reflow PLAN, END, and confirm dialogs
+        if self.mod.HAS_PTY and hasattr(signal, "SIGWINCH"):
+            cur_size = [80, 24]
+
+            def _h_size(_fallback=(80, 24)):
+                return os.terminal_size((cur_size[0], cur_size[1]))
+
+            # 4a. confirm_execution height shrink & restore
+            m_fd1, s_fd1 = pty.openpty()
+            try:
+                tw1 = _KeepOpenStringIO()
+                tr1 = os.fdopen(os.dup(s_fd1), "r", encoding="utf-8", errors="replace")
+                with tr1:
+                    def _drv1():
+                        time.sleep(0.05)
+                        cur_size[1] = 11
+                        os.kill(os.getpid(), signal.SIGWINCH)
+                        time.sleep(0.08)
+                        cur_size[1] = 24
+                        os.kill(os.getpid(), signal.SIGWINCH)
+                        time.sleep(0.08)
+                        os.write(m_fd1, b"n")
+
+                    t1 = threading.Thread(target=_drv1, daemon=True)
+                    with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                         unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw1, tr1)), \
+                         unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=_h_size), \
+                         unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                        t1.start()
+                        self.mod.confirm_execution("s_b11/1", scr.read_text(encoding="utf-8"), summary=sum_many, script_path=scr)
+                        t1.join(timeout=2.0)
+                out1 = tw1.getvalue()
+                self.assertEqual(out1.count("╭─ PLAN "), 3)
+                self.assertIn("... +", out1)
+            finally:
+                os.close(m_fd1)
+                os.close(s_fd1)
+
+            # 4b. prompt_yes_no_box height shrink & restore
+            cur_size[1] = 24
+            m_fd2, s_fd2 = pty.openpty()
+            try:
+                tw2 = _KeepOpenStringIO()
+                tr2 = os.fdopen(os.dup(s_fd2), "r", encoding="utf-8", errors="replace")
+                with tr2:
+                    def _drv2():
+                        time.sleep(0.05)
+                        cur_size[1] = 10
+                        os.kill(os.getpid(), signal.SIGWINCH)
+                        time.sleep(0.08)
+                        cur_size[1] = 24
+                        os.kill(os.getpid(), signal.SIGWINCH)
+                        time.sleep(0.08)
+                        os.write(m_fd2, b"y")
+
+                    t2 = threading.Thread(target=_drv2, daemon=True)
+                    with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=_h_size), \
+                         unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                        t2.start()
+                        self.mod.prompt_yes_no_box(
+                            "CLEAN SESSIONS",
+                            [f"Session item {i}" for i in range(18)],
+                            "Delete sessions?",
+                            tty_streams=(tw2, tr2),
+                        )
+                        t2.join(timeout=2.0)
+                out2 = tw2.getvalue()
+                self.assertEqual(out2.count("╭─ CLEAN SESSIONS "), 3)
+                self.assertIn("... +", out2)
+            finally:
+                os.close(m_fd2)
+                os.close(s_fd2)
+
+            # 4c. offer_clipboard_copy height shrink & restore
+            cur_size[1] = 24
+            m_fd3, s_fd3 = pty.openpty()
+            try:
+                tw3 = _KeepOpenStringIO()
+                tr3 = os.fdopen(os.dup(s_fd3), "r", encoding="utf-8", errors="replace")
+                with tr3:
+                    def _drv3():
+                        time.sleep(0.05)
+                        cur_size[1] = 11
+                        os.kill(os.getpid(), signal.SIGWINCH)
+                        time.sleep(0.08)
+                        cur_size[1] = 24
+                        os.kill(os.getpid(), signal.SIGWINCH)
+                        time.sleep(0.08)
+                        os.write(m_fd3, b"\x1b")
+
+                    t3 = threading.Thread(target=_drv3, daemon=True)
+                    with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                         unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+                         unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], f"pbcopy < {out_p}")), \
+                         unittest.mock.patch.object(self.mod, "open_tty", return_value=(tw3, tr3)), \
+                         unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", side_effect=_h_size), \
+                         unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+                        t3.start()
+                        self.mod.offer_clipboard_copy(
+                            "s_b11/1",
+                            out_p,
+                            title_kind="END",
+                            extra_lines=[f"Output row {i}" for i in range(18)],
+                            sdir=sdir,
+                        )
+                        t3.join(timeout=2.0)
+                out3 = tw3.getvalue()
+                self.assertEqual(out3.count("╭─ END "), 3)
+                self.assertIn("... +", out3)
+            finally:
+                os.close(m_fd3)
+                os.close(s_fd3)
 
 
 if __name__ == "__main__":
