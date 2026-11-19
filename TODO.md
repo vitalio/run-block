@@ -163,3 +163,11 @@ Intermittent failure observed in `tests/test_run_block.py` `test_f56_progress_al
 - Step 1: read the stream merge and progress rendering in `src/runner.py`, reproduce with a loop of about 30 runs of the single test.
 - Step 2: if cross-stream ordering is intentionally not guaranteed, relax the test; if it is an output defect, fix `src/runner.py` and keep the assertion.
 - Acceptance criteria: 50 consecutive isolated runs of the test pass; full offline suite passes.
+
+# ⚪ [NEW] F77: Select a part with the cursor in the START SESSION i(nfo) Parts list instead of typing its number
+
+- Role: work
+- Context: `p(art)` in the `START SESSION` `i(nfo)` viewer asks for a part number (`_read_part_number`, `_browse_parts` in `src/ui.py`), but the `Parts` tree shows no numbers and its order (bundle/external groups, chain nesting from `_collect_hierarchy_rows` in `src/bundle_plan.py`) differs from the plan `index` order, so users cannot tell which number to type.
+- Add a cursor mode to the `Parts` list in `_build_info_screen` / `_show_info_fullscreen`: `p(art)` enters the mode, `Up`/`Down` (`j`/`k`) move a highlighted row, `Enter` opens that part in the existing part viewer (`_build_part_screen`), `Esc` returns to plain scrolling. Group/bundle node rows with several children are skipped or open their first part.
+- Carry the part `index` on the table row dicts built by `_make_table_row` so a highlighted row maps to `extract_bundle_part`, without adding numeric prefixes to the tree; keep `PART N/M` in the viewer title and `n`/`N` browsing.
+- Keep the numeric prompt only if it stays cheap (fallback for narrow terminals); update `README.md` `i(nfo)` description and unit tests in `tests/test_run_block.py`, rebuild `run_block` via `build.py`. Release as `PATCH`.
