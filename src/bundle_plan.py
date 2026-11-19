@@ -408,29 +408,37 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str) -> dict[str, 
     sum_gpt = sum(int(p.get("gpt") or 0) for p in parts)
     sum_claude = sum(int(p.get("claude") or 0) for p in parts)
     full_tok = count_tokens(full_text.encode("utf-8"))
-    f_lines = int(full_tok["lines"])
-    f_chars = int(full_tok["chars"])
-    f_bytes = int(full_tok["bytes"])
-    f_gpt = int(full_tok["gpt"])
-    f_claude = int(full_tok["claude"])
-    rem_lines = f_lines - sum_lines
-    rem_chars = f_chars - sum_chars
-    rem_bytes = f_bytes - sum_bytes
-    if (rem_lines > 0 or rem_chars > 0) and f_chars >= sum_chars and f_lines >= sum_lines:
-        out["lines"] = f_lines
-        out["chars"] = f_chars
-        out["bytes"] = f_bytes
-        out["gpt"] = f_gpt
-        out["claude"] = f_claude
+    try:
+        _, body = parse_stdin_preamble(full_text)
+    except Exception:
+        body = full_text
+    body_pos = full_text.find(body[:200]) if body.strip() else -1
+    prefix = full_text[:body_pos] if body_pos > 0 else ""
+    pre_tok = count_tokens(prefix.encode("utf-8")) if prefix else {}
+
+    def _hdr_val(key: str, sum_val: int) -> int:
+        return max(0, int(full_tok[key]) - sum_val, int(pre_tok.get(key) or 0))
+
+    hdr_lines = _hdr_val("lines", sum_lines)
+    hdr_chars = _hdr_val("chars", sum_chars)
+    hdr_bytes = _hdr_val("bytes", sum_bytes)
+    hdr_gpt = _hdr_val("gpt", sum_gpt)
+    hdr_claude = _hdr_val("claude", sum_claude)
+    if hdr_lines > 0 or hdr_chars > 0:
+        out["lines"] = sum_lines + hdr_lines
+        out["chars"] = sum_chars + hdr_chars
+        out["bytes"] = sum_bytes + hdr_bytes
+        out["gpt"] = sum_gpt + hdr_gpt
+        out["claude"] = sum_claude + hdr_claude
         out["gpt_exact"] = bool(full_tok["gpt_exact"])
         out["header"] = {
             "kind": "header",
             "name": "Headers & spacing",
-            "lines": max(0, rem_lines),
-            "chars": max(0, rem_chars),
-            "bytes": max(0, rem_bytes),
-            "gpt": max(0, f_gpt - sum_gpt),
-            "claude": max(0, f_claude - sum_claude),
+            "lines": hdr_lines,
+            "chars": hdr_chars,
+            "bytes": hdr_bytes,
+            "gpt": hdr_gpt,
+            "claude": hdr_claude,
         }
     else:
         out.pop("header", None)
@@ -706,10 +714,11 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     update_session_meta(sdir, bundle_plan=plan)
 
 
-def _format_tok_pair(gpt_cnt: int, claude_cnt: int) -> str:
+def _format_tok_pair(gpt_cnt: int, claude_cnt: int, *, unit: bool = True) -> str:
     lo = min(gpt_cnt, claude_cnt)
     hi = max(gpt_cnt, claude_cnt)
-    return f"~{_human_tok(lo)}–{_human_tok(hi)} tok" if lo != hi else f"~{_human_tok(lo)} tok"
+    body = f"~{_human_tok(lo)}–{_human_tok(hi)}" if lo != hi else f"~{_human_tok(lo)}"
+    return f"{body} tok" if unit else body
 
 
 def _new_tree_node(name: str, chain: list[str]) -> dict[str, object]:
@@ -774,9 +783,49 @@ def _build_bundle_tree(parts: list[dict[str, object]]) -> list[tuple[str, dict[s
     return root_items
 
 
-def _node_display_kind(node: dict[str, object]) -> str:
-    kinds = node.get("kinds") or []
-    return str(kinds[0]) if isinstance(kinds, list) and len(kinds) == 1 else "bundle"
+HEAVY_WARN_SHARE = 25.0
+HEAVY_WARN_TOK = 10000
+HEAVY_ACCENT_SHARE = 10.0
+HEAVY_ACCENT_TOK = 3000
+GROUP_LABEL_BUNDLE = ".agents_bundle"
+GROUP_LABEL_EXTERNAL = "external (not from .agents_bundle)"
+_BUNDLE_ORIGIN_KINDS = ("rule", "cmd", "include", "file")
+_TABLE_ROW_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)%\s+\S+\s+\d+\s+(~\S+)\s+\[")
+_COUNT_RE = re.compile(r"(\d+(?:\.\d+)?)([kKmM]?)")
+
+
+def _heavy_level(share_pct: float, tok_hi: float) -> str:
+    if share_pct >= HEAVY_WARN_SHARE or tok_hi >= HEAVY_WARN_TOK:
+        return "warn"
+    if share_pct >= HEAVY_ACCENT_SHARE or tok_hi >= HEAVY_ACCENT_TOK:
+        return "accent"
+    return ""
+
+
+def _parse_tok_hi(tok_str: str) -> float:
+    scale = {"": 1.0, "k": 1000.0, "m": 1000000.0}
+    best = 0.0
+    for num, suf in _COUNT_RE.findall(tok_str):
+        best = max(best, float(num) * scale[suf.lower()])
+    return best
+
+
+def bundle_row_heavy_level(line: str) -> str:
+    m = _TABLE_ROW_RE.match(line)
+    if not m:
+        return ""
+    return _heavy_level(float(m.group(1)), _parse_tok_hi(m.group(2)))
+
+
+def _is_bundle_origin(p: dict[str, object], protocol: str) -> bool:
+    if protocol != "boundary":
+        return False
+    kind = str(p.get("kind") or "")
+    if kind == "prompt":
+        return False
+    if kind in _BUNDLE_ORIGIN_KINDS:
+        return True
+    return bool(p.get("id") or p.get("via") or p.get("group") or _resolve_part_chain(p))
 
 
 def _tree_connector(ancestors_more: list[bool], is_last: bool) -> str:
@@ -796,16 +845,14 @@ def _make_table_row(
     claude_cnt: int,
     share_pct: float,
     tree_prefix: str = "",
-    num: int | None = None,
 ) -> dict[str, object]:
     return {
         "pct_str": f"{share_pct:.1f}%",
-        "chars_str": _human_chars(chars_cnt, short=True),
-        "lines_str": f"{lines_cnt}L",
-        "tok_str": _format_tok_pair(gpt_cnt, claude_cnt),
+        "chars_str": re.sub(r"\s*ch$", "", _human_chars(chars_cnt, short=True)),
+        "lines_str": str(lines_cnt),
+        "tok_str": _format_tok_pair(gpt_cnt, claude_cnt, unit=False),
         "kind": kind,
         "tree_prefix": tree_prefix,
-        "num": num,
         "desc": desc,
     }
 
@@ -822,28 +869,31 @@ def _part_extras_suffix(p: dict[str, object], *, include_ms: bool = True) -> str
 
 def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    hdr = plan.get("header")
-    if isinstance(hdr, dict) and (_part_chars(hdr) > 0 or int(hdr.get("lines") or 0) > 0):
-        rows.append(
-            _make_table_row(
-                kind="header",
-                desc=str(hdr.get("name") or "Headers & spacing"),
-                lines_cnt=int(hdr.get("lines") or 0),
-                chars_cnt=_part_chars(hdr),
-                gpt_cnt=int(hdr.get("gpt") or 0),
-                claude_cnt=int(hdr.get("claude") or 0),
-                share_pct=float(hdr.get("share_pct") or 0.0),
-            )
-        )
+    protocol = str(plan.get("protocol") or "")
     parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    root_items = _build_bundle_tree(parts)
+    framed = [p for p in parts if _is_bundle_origin(p, protocol)]
+    external = [p for p in parts if not _is_bundle_origin(p, protocol)]
+
+    def _emit_header() -> None:
+        hdr = plan.get("header")
+        if isinstance(hdr, dict) and (_part_chars(hdr) > 0 or int(hdr.get("lines") or 0) > 0):
+            rows.append(
+                _make_table_row(
+                    kind="header",
+                    desc=str(hdr.get("name") or "Headers & spacing"),
+                    lines_cnt=int(hdr.get("lines") or 0),
+                    chars_cnt=_part_chars(hdr),
+                    gpt_cnt=int(hdr.get("gpt") or 0),
+                    claude_cnt=int(hdr.get("claude") or 0),
+                    share_pct=float(hdr.get("share_pct") or 0.0),
+                )
+            )
 
     def _emit_part(p: dict[str, object], parent_name: str, ancestors_more: list[bool], is_last: bool | None) -> None:
         t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
         raw_lbl = _part_label(p)
         lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
         lbl += _part_extras_suffix(p, include_ms=details)
-        p_idx = int(p["index"]) if (details and isinstance(p.get("index"), int)) else None
         rows.append(
             _make_table_row(
                 kind=str(p.get("kind") or "part"),
@@ -854,7 +904,6 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
                 claude_cnt=int(p.get("claude") or 0),
                 share_pct=float(p.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
-                num=p_idx,
             )
         )
 
@@ -864,11 +913,13 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
         direct_parts: list[dict[str, object]] = list(node.get("direct_parts") or [])  # type: ignore[arg-type]
         if not has_children and len(direct_parts) == 1:
             p = direct_parts[0]
+            p_kind = str(p.get("kind") or "part")
+            if p_kind == "rule":
+                p_kind = "bundle"
             lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
-            p_idx = int(p["index"]) if (details and isinstance(p.get("index"), int)) else None
             rows.append(
                 _make_table_row(
-                    kind=str(p.get("kind") or "part"),
+                    kind=p_kind,
                     desc=lbl,
                     lines_cnt=int(p.get("lines") or 0),
                     chars_cnt=_part_chars(p),
@@ -876,7 +927,6 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
                     claude_cnt=int(p.get("claude") or 0),
                     share_pct=float(p.get("share_pct") or 0.0),
                     tree_prefix=t_pfx,
-                    num=p_idx,
                 )
             )
             return
@@ -885,7 +935,7 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
         lbl = f"{node['name']} ({cnt})" + (f" ({rc_errs} rc!=0)" if rc_errs else "")
         rows.append(
             _make_table_row(
-                kind=_node_display_kind(node),
+                kind="bundle",
                 desc=lbl,
                 lines_cnt=int(node.get("lines") or 0),
                 chars_cnt=int(node.get("chars") or 0),
@@ -905,27 +955,50 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
                 else:
                     _emit_part(c_obj, str(node["name"]), next_anc, c_last)
 
-    for it_type, it_obj in root_items:
-        if it_type == "node":
-            _emit_node(it_obj, [], None)
-        else:
-            _emit_part(it_obj, "", [], None)
+    def _emit_tree(subset: list[dict[str, object]]) -> None:
+        for it_type, it_obj in _build_bundle_tree(subset):
+            if it_type == "node":
+                _emit_node(it_obj, [], None)
+            else:
+                _emit_part(it_obj, "", [], None)
+
+    if framed:
+        rows.append({"label": GROUP_LABEL_BUNDLE})
+        _emit_tree(framed)
+        ext_start = len(rows)
+        _emit_header()
+        _emit_tree(external)
+        if len(rows) > ext_start:
+            rows.insert(ext_start, {"label": GROUP_LABEL_EXTERNAL})
+    else:
+        _emit_header()
+        _emit_tree(parts)
     return rows
 
 
-def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: str = "  ") -> list[str]:
-    if not rows:
-        return []
-    w_pct = max(len(str(r["pct_str"])) for r in rows)
-    w_ch = max(len(str(r["chars_str"])) for r in rows)
-    w_ln = max(len(str(r["lines_str"])) for r in rows)
-    w_tok = max(len(str(r["tok_str"])) for r in rows)
-    w_kind = max(len(f"[{r['kind']}]") for r in rows)
-    nums = [r["num"] for r in rows if r.get("num") is not None]
-    num_w = max((len(f"{n}.") for n in nums), default=0)
+def _group_label_line(label: str, indent: str) -> str:
+    rule = "──" if _supports_utf8() else "--"
+    return f"{indent}{rule} {label} {rule}"
 
-    out: list[str] = []
+
+def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: str = "  ") -> list[str]:
+    data = [r for r in rows if "label" not in r]
+    if not data:
+        return []
+    w_pct = max(len("%"), *(len(str(r["pct_str"])) for r in data))
+    w_ch = max(len("CHARS"), *(len(str(r["chars_str"])) for r in data))
+    w_ln = max(len("LINES"), *(len(str(r["lines_str"])) for r in data))
+    w_tok = max(len("~TOK"), *(len(str(r["tok_str"])) for r in data))
+    w_kind = max(len("KIND"), *(len(f"[{r['kind']}]") for r in data))
+
+    out: list[str] = [
+        f"{indent}{'%'.rjust(w_pct)} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
+        f"{'~TOK'.rjust(w_tok)}  {'KIND'.ljust(w_kind)}  SOURCE"
+    ]
     for r in rows:
+        if "label" in r:
+            out.append(_group_label_line(str(r["label"]), indent))
+            continue
         kind_col = f"[{r['kind']}]".ljust(w_kind)
         cols_prefix = (
             f"{indent}{str(r['pct_str']).rjust(w_pct)} "
@@ -934,10 +1007,7 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
             f"{str(r['tok_str']).rjust(w_tok)}  "
             f"{kind_col}  "
         )
-        t_pfx = str(r.get("tree_prefix") or "")
-        n_val = r.get("num")
-        n_pfx = (f"{n_val}.".rjust(num_w) + " ") if n_val is not None else ""
-        full_pfx = f"{cols_prefix}{t_pfx}{n_pfx}"
+        full_pfx = f"{cols_prefix}{r.get('tree_prefix') or ''}"
         sub_indent = " " * display_width(full_pfx)
         avail = max(16, max_width - display_width(full_pfx))
         desc = str(r.get("desc") or "")

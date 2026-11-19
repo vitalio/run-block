@@ -1543,11 +1543,26 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
         return lines
     out: list[str] = []
     tree_re = re.compile(r"^((?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))(.*)$")
-    tab_re = re.compile(r"^(\s*\S+%\s+\S+\s+ch\s+\S+L\s+~\S+\s+tok\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
+    tab_re = re.compile(r"^(\s*\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
+    hdr_re = re.compile(r"^(\s*)(%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
+    label_re = re.compile(r"^(\s*)((?:──|--) .+ (?:──|--))$")
+    heavy_colors = {"warn": _WARN_COLOR, "accent": _HIGHLIGHT_COLOR}
+    fn_heavy = globals().get("bundle_row_heavy_level")
     for line in lines:
+        m_hdr = hdr_re.match(line)
+        if m_hdr:
+            out.append(f"{m_hdr.group(1)}\x1b[7m{m_hdr.group(2)}{_ANSI_RESET}")
+            continue
+        m_lbl = label_re.match(line)
+        if m_lbl:
+            out.append(f"{m_lbl.group(1)}{_KEY_COLOR}{m_lbl.group(2)}{_ANSI_RESET}")
+            continue
         m_tab = tab_re.match(line)
         if m_tab:
             num_prefix, tag_br, tag, spaces, rest = m_tab.groups()
+            level = fn_heavy(line) if callable(fn_heavy) else ""
+            if level in heavy_colors:
+                num_prefix = f"{heavy_colors[level]}{num_prefix}{_ANSI_RESET}"
             t_col = _BUNDLE_TAG_COLORS.get(tag, _TAG_COLORS.get(tag, _BORDER_COLOR))
             m_tree = tree_re.match(rest)
             if m_tree:

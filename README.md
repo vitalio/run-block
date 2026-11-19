@@ -60,6 +60,15 @@ scrollback. All inline TUI boxes
 (`START SESSION`, `START STEP`, `END STEP`, and confirmation dialogs) clamp overflowing sections
 to the visible terminal height (`... +N more`) and reflow cleanly across both
 width and height `SIGWINCH` resizes.
+The `Summary` / `Parts` tables (`i(nfo)` and `--bundle-plan`) start with a
+`top`-style header row (`%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`) that
+shows units once. Fragments from `.agents_bundle` and everything else
+(`[header]`, `[prompt]`, unframed sections) are listed under separate group
+labels; `chain`-backed nodes and single-part bundle inclusions are `[bundle]`,
+while `[rule]` marks leaf and root rules. Rows with a share of at least 10%
+or ~3k tokens are accented, and rows with at least 25% or ~10k tokens are
+highlighted in the warning color.
+
 When `RUN_BLOCK_CWD` is `auto` and the `stdin` preamble provides an existing
 `Workdir` directory, that path is preferred over the current directory or
 Git root and written to `<session>/0`:

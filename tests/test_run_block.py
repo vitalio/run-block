@@ -3297,6 +3297,55 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(dict(meta_after["headers"]).get("Bundle-Boundary"), nonce)
 
 
+    def test_f68_top_style_table_kinds_groups_heavy_and_header(self) -> None:
+        def _part(idx, kind, name, chain, chars, share):
+            return {
+                "index": idx, "kind": kind, "name": name, "chain": chain, "lines": 1,
+                "chars": chars, "bytes": chars, "gpt": chars // 4, "claude": chars // 3,
+                "share_pct": share,
+            }
+
+        plan = {
+            "protocol": "boundary", "part_count": 3, "lines": 3, "chars": 1000,
+            "bytes": 1000, "gpt": 250, "claude": 330,
+            "parts": [
+                _part(1, "rule", "g:solo", ["g"], 300, 30.0),
+                _part(2, "rule", "root:r", [], 100, 10.0),
+                _part(3, "prompt", "Prompt", [], 50, 5.0),
+            ],
+            "warnings": [],
+        }
+        lines = self.mod.format_bundle_summary_lines(plan, max_width=100)
+        text = "\n".join(lines)
+        self.assertRegex(lines[0], r"^\s+% +CHARS +LINES +~TOK +KIND +SOURCE$")
+        self.assertIn(".agents_bundle", lines[1])
+        self.assertNotRegex(text, r"\d+L\b|\d+ ch\b| tok\b|[├└]─ \d+\.")
+        self.assertIn("[bundle]  g:solo", text)
+        self.assertIn("[rule]    root:r", text)
+        self.assertLess(text.index("external (not from .agents_bundle)"), text.index("[prompt]"))
+        levels = {}
+        for ln in lines:
+            for name in ("g:solo", "root:r", "Prompt"):
+                if ln.endswith(name):
+                    levels[name] = self.mod.bundle_row_heavy_level(ln)
+        self.assertEqual(levels, {"g:solo": "warn", "root:r": "accent", "Prompt": ""})
+
+        full = "Session: s1\nRole: work\n\nalpha\nbeta\n"
+        rec = self.mod.reconcile_bundle_plan(
+            {
+                "protocol": "boundary",
+                "parts": [
+                    {"index": 1, "kind": "prompt", "name": "Prompt", "lines": 10,
+                     "chars": 500, "bytes": 500, "gpt": 100, "claude": 100},
+                ],
+            },
+            full,
+        )
+        hdr = rec.get("header")
+        self.assertIsInstance(hdr, dict)
+        self.assertEqual(hdr["name"], "Headers & spacing")
+        self.assertGreater(hdr["chars"], 0)
+
     def test_f47_bundle_diagnostics_details_view_and_cli(self):
         proj = self.tmp / "f47_proj"
         proj.mkdir()
@@ -3424,8 +3473,10 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("╭─ INFO · s1/0 ", tty_out)
         self.assertNotIn("│ Summary (", tty_out)
         self.assertEqual(tty_out.count("│ Parts (6 parts):"), 1)
-        self.assertIn("[rule]    ├─ 2. r:bash", tty_out)
-        self.assertIn("[cmd]     └─ 5. failing_cmd", tty_out)
+        self.assertIn("[rule]    ├─ r:bash", tty_out)
+        self.assertIn("% CHARS LINES", tty_out)
+        self.assertIn("[header]  Headers & spacing", tty_out)
+        self.assertIn("[cmd]     └─ failing_cmd", tty_out)
         self.assertIn("rc=2", tty_out)
         self.assertIn("Skipped clipboard copy.", tty_out)
 
@@ -3964,8 +4015,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertIn("[header]  Headers & spacing", sum1_text)
         self.assertNotIn("vitalio/run_block: vitalio/run_block:", sum1_text)
         self.assertIn("vitalio/run_block:blocks/bash", sum1_text)
-        self.assertIn("[rule]    bundleA (2)", sum1_text)
-        self.assertIn("[rule]    └─ rulesetB (2)", sum1_text)
+        self.assertIn("[bundle]  bundleA (2)", sum1_text)
+        self.assertIn("[bundle]  └─ rulesetB (2)", sum1_text)
         self.assertIn("[cmd]     git status -sb", sum1_text)
         self.assertIn("[prompt]  Prompt", sum1_text)
 
@@ -3974,8 +4025,8 @@ class TestRunBlock(unittest.TestCase):
                 "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="START SESSION", bundle_details=True, sdir=sessions / "s1"
             )
         self.assertIn("(5 parts)\n│ Parts:", det_box)
-        self.assertIn("├─ 2. bundleA:r1", det_box)
-        self.assertIn("└─ 3. bundleA:r2", det_box)
+        self.assertIn("├─ bundleA:r1", det_box)
+        self.assertIn("└─ bundleA:r2", det_box)
 
         # Narrow terminal wraps ONLY the description column cleanly
         narrow_lines = self.mod.format_bundle_summary_lines(plan1, max_width=64)
@@ -4012,8 +4063,8 @@ class TestRunBlock(unittest.TestCase):
         self.assertEqual(enriched["chars"], 40)
         self.assertEqual(enriched["parts"][0]["chars"], 20)
         leg_sum = "\n".join(self.mod.format_bundle_summary_lines(enriched, max_width=100))
-        self.assertIn("[cmd]   root_cmd", leg_sum)
-        self.assertIn("[rule]  g:item", leg_sum)
+        self.assertIn("[cmd]     root_cmd", leg_sum)
+        self.assertIn("[bundle]  g:item", leg_sum)
 
         r_bp = subprocess.run(
             [str(SCRIPT), "--bundle-plan", "s1"],

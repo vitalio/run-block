@@ -1,3 +1,16 @@
+# ✅ [DONE] F68: Redesign bundle breakdown table in top style, fix header/kind attribution, and highlight heavy parts — *2026-11-19*
+
+- Depends on: F54
+- Redesign `Summary` and `Parts` tables in `src/bundle_plan.py` and `src/ui.py` (displayed in fullscreen `i(nfo)` and `--bundle-plan`) with a `top`-inspired column header row showing units once (`%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`) and omitting repeated unit suffixes (`ch`, `L`, `tok`) from data rows while retaining `%` and `~` markers.
+- Remove automatic numeric prefixes (`1.`, `2.`, ...) from `Parts` rows in `_collect_hierarchy_rows()` / `_render_bundle_table()` (`src/bundle_plan.py`) so the tree structure stays clean.
+- Highlight heavy fragments visually (bold and/or accent/warning color) using clear defaults (e.g. warn/bold at `>= 25%` share or `>= 10k` tokens, accent at `>= 10%` share or `>= 3k` tokens) so dominant context contributors stand out immediately.
+- Preserve the white `Stats:` foreground rendering inside fullscreen `i(nfo)` (`src/ui.py`) while keeping `Stats:` dimmed in compact inline boxes (introduced in `F54`).
+- Fix `reconcile_bundle_plan()` (`src/bundle_plan.py`) so `[header] Headers & spacing` is computed reliably from `<session>/0` headers and inter-section spacing in `boundary` mode instead of disappearing when raw fragment sums differ due to collapsed blank lines.
+- Clarify provenance and `kind` attribution entirely within `src/bundle_plan.py` using existing `Bundle-Boundary` and `chain` metadata (no `agents_bundle` changes required):
+  - Display all `chain`-backed container nodes (such as `vitalio/agents-rules:default`, `vitalio/agents-rules:core`) and single-part `bundle` inclusions (`chain != []`, such as `vitalio/agents_bundle`) as `[bundle]` rather than `[rule]`, reserving `[rule]` for leaf rules and direct root `rule` directives (`chain == []`).
+  - Clearly separate `.agents_bundle`-originated fragments (boundary-marked rules, root `$ <cmd>` entries, and includes) from non-`.agents_bundle` items (`[header]`, local/appended `[prompt]`, and unframed external stdin sections) via consistent table grouping/labeling.
+- Acceptance criteria: `top`-style column header with units, no repeated cell unit suffixes, no `Parts` numeric prefixes, heavy items highlighted, white `Stats:` preserved inside `i(nfo)`, `[header]` visible in `boundary` mode, `.agents_bundle` vs external provenance and `[bundle]` vs `[rule]` kinds clear; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+
 # ✅ [DONE] F76: Show only Parts without duplicate Summary in START SESSION i(nfo) — *2026-11-19*
 
 - Role: work
