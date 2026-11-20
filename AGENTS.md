@@ -44,6 +44,13 @@ rules are loaded via `.agents_bundle`.
   only when confirmed (or when `-y`/`--yes` is explicitly passed).
 - `src/cli.py` — CLI argument routing and self-update (`--update`,
   `--check-update`).
+- `tests/helpers.py` — shared `ROOT`, `SCRIPT`, `INSTALL_SH`, cached
+  `load_module()`, and `RunBlockTestCase` with in-process CLI helpers (`_run`,
+  `_run_in_process`, `_run_subprocess`, `_assert_ok`) and `RUN_BLOCK_*`
+  environment isolation.
+- `tests/test_cli.py`, `tests/test_safety.py`, `tests/test_ui.py`,
+  `tests/test_bundle.py`, `tests/test_runner.py` — modular offline unit test
+  suites mirroring `src/` boundaries.
 
 ## Bundle Input Protocol
 

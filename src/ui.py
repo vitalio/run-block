@@ -1205,38 +1205,22 @@ def confirm_execution(
 
 
 # --- Built-in token and byte statistics ---
-_ENC = None
-_ENC_TRIED = False
-
-
-def gpt_encoder():
-    global _ENC, _ENC_TRIED
-    if not _ENC_TRIED:
-        _ENC_TRIED = True
-        try:
-            import tiktoken  # type: ignore[import-not-found]
-            _ENC = tiktoken.get_encoding("o200k_base")
-        except Exception:
-            _ENC = None
-    return _ENC
+def gpt_encoder() -> None:
+    return None
 
 
 def count_tokens(data: bytes) -> dict[str, int | bool]:
     text = data.decode("utf-8", "replace")
     chars = len(text)
     lines = text.count("\n") + (1 if text and not text.endswith("\n") else 0)
-    enc = gpt_encoder()
-    if enc is not None:
-        gpt = len(enc.encode(text, disallowed_special=()))
-    else:
-        gpt = math.ceil(chars / 4)
+    gpt = math.ceil(chars / 4)
     return {
         "bytes": len(data),
         "chars": chars,
         "lines": lines,
         "claude": math.ceil(chars / 3.5),
         "gpt": gpt,
-        "gpt_exact": enc is not None,
+        "gpt_exact": False,
         "gemini": math.ceil(chars / 4),
     }
 

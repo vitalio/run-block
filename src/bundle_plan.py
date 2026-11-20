@@ -750,7 +750,7 @@ def _build_bundle_plan(
     total_bytes = 0
     total_gpt = 0
     total_claude = 0
-    gpt_exact = gpt_encoder() is not None
+    gpt_exact = False
 
     for idx, (meta, part_lines) in enumerate(raw_parts, 1):
         part_text = "\n".join(part_lines) + ("\n" if part_lines else "")

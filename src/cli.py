@@ -12,6 +12,8 @@ def version_tuple(v: str) -> tuple[int, ...]:
 
 
 def fetch_remote_script(url: str | None = None) -> str:
+    import urllib.request
+
     cfg_url, _ = get_setting("update_url")
     target_url = url or cfg_url
     if target_url.startswith(("http://", "https://")) and "?" not in target_url:
