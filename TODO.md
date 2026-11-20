@@ -6,16 +6,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Step 2: if cross-stream ordering is intentionally not guaranteed, relax the test; if it is an output defect, fix `src/runner.py` and keep the assertion.
 - Acceptance criteria: 50 consecutive isolated runs of the test pass; full offline suite passes.
 
-# 🎯 [NEXT] F57: Add a(ppend) prompt editor action across clipboard TUI cards (START SESSION, END STEP, SYNTAX ERROR, NOT RUN)
-
-- Add a shared `a(ppend)` action across all clipboard-copy prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py` (`[Y/n/a(ppend)/...]:` or compatible prompt suffix), recognizing `a`/`A` (and `append` in line-input mode).
-- On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying the target file or creating a `.orig` backup when the entered text is empty or whitespace-only.
-- Before the first non-empty append, preserve the original file via `_write_orig_backup_once()` (`0.orig` for `START SESSION`, `out.orig` for step output cards), then append the text:
-  - In `START SESSION`: append into the trailing `===== Prompt =====` section of `<session>/0` (creating it if absent) and call `refresh_bundle_meta()`.
-  - In `END STEP`, `SYNTAX ERROR`, and `NOT RUN`: append the user note/question to the clipboard target output (`out`) and refresh clipboard command/target if needed.
-- Recalculate line/byte/token `Stats:` with the `(edited)` marker and redraw the box in place so pressing `Enter`/`y` copies the updated content to the clipboard.
-- Acceptance criteria: `a(ppend)` works uniformly across `START SESSION`, `END STEP`, `SYNTAX ERROR`, and `NOT RUN`; empty input leaves files and `.orig` backups untouched; `.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_bundle.py` and `tests/test_runner.py` are updated.
-
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
 - Depends on: F42
@@ -40,6 +30,16 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
   3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
 - Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
 
+# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
+
+- Depends on: F57
+- Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
+- When `e(dit)` is triggered on `START SESSION` (`BUNDLE` before `F71`, inline or via `i(nfo)` in `F54`, `src/ui.py`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`.
+- Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `START SESSION` exits (`Y`/`Enter`, `n`/`Esc`, or non-interactive mode), keeping `0.orig` backup and `F57` `a(ppend)` compatibility intact.
+- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_bundle.py` verify the roundtrip.
+
+- Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
+
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
 - Depends on: F57, B8
@@ -50,16 +50,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Add code-context snippets (`+-2` lines) and escaping hints on `SyntaxError` / `IndentationError` in `--fix` (`cmd_fix()`) and shell/heredoc syntax failures (`_validate_step_script_syntax()` in `src/runner.py`, `src/safety.py`), including truncated heredoc or accidental fence/delimiter breakages.
 - Coordinate prompt keys and box titles with `F71` (`START STEP` / `END STEP` and `[Y/n/...]` conventions) and `F54` (`i(nfo)` unified viewer).
 - Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `README.md`, `tests/test_runner.py`, `tests/test_ui.py`.
-
-# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
-
-- Depends on: F57
-- Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
-- When `e(dit)` is triggered on `START SESSION` (`BUNDLE` before `F71`, inline or via `i(nfo)` in `F54`, `src/ui.py`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`.
-- Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `START SESSION` exits (`Y`/`Enter`, `n`/`Esc`, or non-interactive mode), keeping `0.orig` backup and `F57` `a(ppend)` compatibility intact.
-- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_bundle.py` verify the roundtrip.
-
-- Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
 
 # 🎯 [NEXT] F77: Select a part with the cursor in the START SESSION i(nfo) Parts list instead of typing its number
 

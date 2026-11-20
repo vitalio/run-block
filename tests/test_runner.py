@@ -923,7 +923,7 @@ class TestRunner(RunBlockTestCase):
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
-            self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", end_box)
             self.assertIn("Error:  noisy stderr line", end_box)
 
         # 2. Inside END STEP i(nfo), e(dit) creates out.orig and o(utput) preserves out.orig;
@@ -1177,6 +1177,48 @@ class TestRunner(RunBlockTestCase):
         finally:
             if saved_nc is not None:
                 os.environ["NO_COLOR"] = saved_nc
+
+    def test_f57_append_note_to_step_output_cards(self):
+        cases = (
+            ("END STEP", False, 2, None),
+            ("SYNTAX ERROR", False, 2, "extra"),
+            ("NOT RUN", False, 3, "extra"),
+        )
+        for kind, ok, rc, extra in cases:
+            with self.subTest(kind=kind):
+                f = self.tmp / kind.replace(" ", "_") / "s1" / "1" / "out"
+                f.parent.mkdir(parents=True, exist_ok=True)
+                initial_out = "[s1/1] START\nsome failure\n\n[s1/1] END (exit 2)\n"
+                f.write_text(initial_out, encoding="utf-8")
+                extra_lines = [f"Output: {f}", "Error: some failure"] if extra else None
+                tty_out, mock_copy, _ = self._f57_offer(
+                    f,
+                    "a\na\n\n",
+                    ["why did this fail?\n", "second question\n"],
+                    kind,
+                    extra_lines=extra_lines,
+                    rc=rc,
+                    ok=ok,
+                )
+                text = f.read_text(encoding="utf-8")
+                self.assertTrue(text.startswith(initial_out.rstrip("\n")))
+                self.assertLess(text.index("why did this fail?"), text.index("second question"))
+                self.assertEqual(f.with_name("out.orig").read_text(encoding="utf-8"), initial_out)
+                mock_copy.assert_called_once_with(["pbcopy"], f)
+                self.assertIn("a(ppend)", tty_out)
+                self.assertIn("(edited)", tty_out)
+                self.assertEqual(tty_out.count("╭─ " + kind + " "), 3)
+
+    def test_f57_empty_append_to_step_output_keeps_file_and_no_backup(self):
+        f = self.tmp / "s1" / "1" / "out"
+        f.parent.mkdir(parents=True, exist_ok=True)
+        initial_out = "[s1/1] START\nok\n\n[s1/1] END (exit 0)\n"
+        f.write_text(initial_out, encoding="utf-8")
+        tty_out, mock_copy, _ = self._f57_offer(f, "a\n\n", ["  \n"], "END STEP", rc=0, ok=True)
+        self.assertEqual(f.read_text(encoding="utf-8"), initial_out)
+        self.assertFalse(f.with_name("out.orig").exists())
+        self.assertNotIn("(edited)", tty_out)
+        mock_copy.assert_called_once_with(["pbcopy"], f)
 
 
 if __name__ == "__main__":

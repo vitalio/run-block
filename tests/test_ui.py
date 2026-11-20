@@ -31,7 +31,7 @@ class TestUi(RunBlockTestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
-        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/i(nfo)]:"))
+        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"))
         self.assertIn("╭─ END STEP ────", box)
         self.assertIn("│ Step:    s2/1", box)
         self.assertIn("│ Workdir: ", box)
@@ -39,12 +39,12 @@ class TestUi(RunBlockTestCase):
         self.assertNotIn("END STEP (", box)
         self.assertIn(f"│ Output: {f}", box)
         self.assertIn("│ Stats:  1 line · 6 chars · ~2 tokens", box)
-        self.assertIn("│ -> Copy to clipboard? [Y/n/i(nfo)]:", box)
+        self.assertIn("│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 9)
         self.assertEqual(len(lines[0]), 48)
         self.assertTrue(lines[0].startswith("╭─ END STEP ────"))
-        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/i(nfo)]:")
+        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:")
         self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 

@@ -255,16 +255,16 @@ class TestBundle(RunBlockTestCase):
                 title_kind="START SESSION",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
-            self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", sb_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", sb_box)
             self.assertNotIn("[Y/n/v(iew)]:", sb_box)
-            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/i(nfo)]:"))
+            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"))
 
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END STEP")
-            self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", end_box)
             for kind in ("NOT RUN", "SYNTAX ERROR"):
                 with self.subTest(title_kind=kind):
                     other_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind=kind)
-                    self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", other_box)
+                    self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", other_box)
                     self.assertNotIn("[Y/n/v(iew)]:", other_box)
 
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("i\n")), "info")
@@ -297,7 +297,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(edited_calls, [bundle_file])
         mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
         self.assertIn("Edited prompt", bundle_file.read_text(encoding="utf-8"))
-        self.assertIn("-> Copy to clipboard? [Y/n/i(nfo)]:", tty_w.getvalue())
+        self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", tty_w.getvalue())
         self.assertIn(f"✓ Copied {bundle_file} to clipboard.", tty_w.getvalue())
 
         tty_w_esc = _KeepOpenStringIO()
@@ -1825,6 +1825,77 @@ class TestBundle(RunBlockTestCase):
                 os.environ.pop("RUN_BLOCK_CWD", None)
             else:
                 os.environ["RUN_BLOCK_CWD"] = old_cwd_env
+
+    def test_f57_start_session_append_creates_prompt_section_and_backup(self):
+        sdir = self.tmp / "s1"
+        sdir.mkdir(parents=True, exist_ok=True)
+        bundle_file = sdir / "0"
+        initial_text = (
+            "Session: s1\n"
+            "Next-Block: s1/1\n"
+            f"Workdir: {self.tmp}\n"
+            "Sandbox: off\n"
+            "Date: 2026-11-20 13:00 UTC\n\n"
+            "Short context\n"
+        )
+        bundle_file.write_text(initial_text, encoding="utf-8")
+        initial_stats = self.mod.stats_line(bundle_file)
+        tty_out, mock_copy, refresh_calls = self._f57_offer(
+            bundle_file,
+            "a\na\n\n",
+            ["first note\n", "second note\n"],
+            "START SESSION",
+            extra_lines=[f"Bundle: {bundle_file}"],
+        )
+        text = bundle_file.read_text(encoding="utf-8")
+        self.assertEqual(text.count("===== Prompt ====="), 1)
+        self.assertTrue(text.startswith(initial_text.rstrip("\n")))
+        self.assertLess(text.index("first note"), text.index("second note"))
+        orig = sdir / "0.orig"
+        self.assertEqual(orig.read_text(encoding="utf-8"), initial_text)
+        self.assertEqual(refresh_calls, [bundle_file, bundle_file])
+        mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
+        self.assertIn("a(ppend)", tty_out)
+        self.assertIn("(edited)", tty_out)
+        self.assertNotEqual(self.mod.stats_line(bundle_file), initial_stats)
+        self.assertEqual(tty_out.count("╭─ START SESSION "), 3)
+
+    def test_f57_start_session_append_extends_existing_prompt_section(self):
+        sdir = self.tmp / "s1"
+        sdir.mkdir(parents=True, exist_ok=True)
+        bundle_file = sdir / "0"
+        initial_text = (
+            "Session: s1\n"
+            "Next-Block: s1/1\n\n"
+            "===== Rules =====\nsome rule\n\n"
+            "===== Prompt =====\nOriginal ask\n"
+        )
+        bundle_file.write_text(initial_text, encoding="utf-8")
+        self._f57_offer(
+            bundle_file, "a\n\n", ["follow-up question\n"], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
+        )
+        text = bundle_file.read_text(encoding="utf-8")
+        self.assertEqual(text.count("===== Prompt ====="), 1)
+        self.assertLess(text.index("Original ask"), text.index("follow-up question"))
+        self.assertGreater(text.index("follow-up question"), text.index("===== Prompt ====="))
+        self.assertEqual((sdir / "0.orig").read_text(encoding="utf-8"), initial_text)
+
+    def test_f57_start_session_empty_append_leaves_files_untouched(self):
+        sdir = self.tmp / "s1"
+        sdir.mkdir(parents=True, exist_ok=True)
+        bundle_file = sdir / "0"
+        initial_text = "Session: s1\nNext-Block: s1/1\n\nShort context\n"
+        bundle_file.write_text(initial_text, encoding="utf-8")
+        for blank in ("", "  \n\n\t\n"):
+            with self.subTest(blank=blank):
+                tty_out, mock_copy, refresh_calls = self._f57_offer(
+                    bundle_file, "a\n\n", [blank], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
+                )
+                self.assertEqual(bundle_file.read_text(encoding="utf-8"), initial_text)
+                self.assertFalse((sdir / "0.orig").exists())
+                self.assertEqual(refresh_calls, [])
+                self.assertNotIn("(edited)", tty_out)
+                mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
 
 
 if __name__ == "__main__":

@@ -151,6 +151,16 @@ in place to match the new width. Long lines inside TUI boxes (paths, outputs,
 errors, stats, steps, headers, and prompts) wrap cleanly to the terminal width
 with `│ ` borders and aligned hanging indents.
 
+At the clipboard prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, and
+`NOT RUN`, shown as `[Y/n/a(ppend)/i(nfo)]:`), `a(ppend)` opens an empty
+temporary `.md` file in your editor and appends the saved text: into the
+trailing `===== Prompt =====` section of `<session>/0` (created when absent,
+followed by a bundle metadata refresh) or at the end of the step `out`. The
+temporary file is always removed; empty or whitespace-only text changes
+nothing and creates no backup. Otherwise the original is preserved once as
+`0.orig` / `out.orig`, `Stats:` is recalculated with the `(edited)` marker,
+and `Enter`/`y` copies the updated content to the clipboard.
+
 ### 3. Patching a failed block (`--fix`)
 
 Use `--fix` for small, targeted patches; emit a fresh `<session>/<step+1>` block directly

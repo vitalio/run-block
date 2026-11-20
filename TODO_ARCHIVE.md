@@ -1,3 +1,13 @@
+# ✅ [DONE] F57: Add a(ppend) prompt editor action across clipboard TUI cards (START SESSION, END STEP, SYNTAX ERROR, NOT RUN) — *2026-11-21*
+
+- Add a shared `a(ppend)` action across all clipboard-copy prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`) in `src/ui.py`, `src/bundle.py`, and `src/runner.py` (`[Y/n/a(ppend)/...]:` or compatible prompt suffix), recognizing `a`/`A` (and `append` in line-input mode).
+- On `a(ppend)`, open an empty temporary `.md` file in the configured editor (`resolve_editor_command()` in `src/ui.py`), remove the temporary file on exit, and abort cleanly without modifying the target file or creating a `.orig` backup when the entered text is empty or whitespace-only.
+- Before the first non-empty append, preserve the original file via `_write_orig_backup_once()` (`0.orig` for `START SESSION`, `out.orig` for step output cards), then append the text:
+  - In `START SESSION`: append into the trailing `===== Prompt =====` section of `<session>/0` (creating it if absent) and call `refresh_bundle_meta()`.
+  - In `END STEP`, `SYNTAX ERROR`, and `NOT RUN`: append the user note/question to the clipboard target output (`out`) and refresh clipboard command/target if needed.
+- Recalculate line/byte/token `Stats:` with the `(edited)` marker and redraw the box in place so pressing `Enter`/`y` copies the updated content to the clipboard.
+- Acceptance criteria: `a(ppend)` works uniformly across `START SESSION`, `END STEP`, `SYNTAX ERROR`, and `NOT RUN`; empty input leaves files and `.orig` backups untouched; `.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_bundle.py` and `tests/test_runner.py` are updated.
+
 # ✅ [DONE] F42: Support marking sessions as completed (--done) with confirmation before reopening — *2026-11-21*
 
 - Persist session completion state (`"completed": true`, `"completed_at": "<YYYY-MM-DDTHH:MM:SSZ>"`, optional `"completed_note"`) and accumulated session statistics (`"stats"`: total steps, ok/failed/`--fix`/renumbered counts, total execution `duration_ms`, started/completed timestamps) in `<session>/meta.json` via helpers in `src/config.py` (`is_session_completed`, `set_session_completed`, `update_session_stats`), preserving completion and stats fields in `write_session_meta()` and resetting automatically when a session is recreated (`--start --force`).

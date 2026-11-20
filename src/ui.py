@@ -110,7 +110,7 @@ class _SigwinchWatcher:
 
 
 def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
-    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'info', or 'resize'."""
+    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'append', 'info', or 'resize'."""
     if flush:
         flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
@@ -119,6 +119,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "info"
         if ans in ("e", "edit"):
             return "edit"
+        if ans in ("a", "append"):
+            return "append"
         if ans in ("v", "view"):
             return "view"
         return "skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy"
@@ -131,6 +133,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "info"
         if ans in ("e", "edit"):
             return "edit"
+        if ans in ("a", "append"):
+            return "append"
         return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
@@ -153,6 +157,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
                     return "info"
                 if ch in (b"e", b"E"):
                     return "edit"
+                if ch in (b"a", b"A"):
+                    return "append"
                 if ch in (b"v", b"V"):
                     return "view"
                 if ch in (b"\r", b"\n", b"y", b"Y"):
@@ -2268,7 +2274,7 @@ def build_box_body_lines(
 
 def _clipboard_prompt_line(title_kind: str) -> str:
     _ = title_kind
-    return "-> Copy to clipboard? [Y/n/i(nfo)]:"
+    return "-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"
 
 
 def format_clipboard_box(
@@ -2321,6 +2327,37 @@ def format_clipboard_box(
         term_cols=term_cols,
         term_rows=term_rows,
     )
+
+
+def _prompt_append_text(tty_r, tty_w) -> str:
+    fd, name = tempfile.mkstemp(prefix="run_block_append_", suffix=".md")
+    os.close(fd)
+    tmp_path = Path(name)
+    try:
+        open_script_in_editor(tmp_path, tty_r, tty_w)
+        return tmp_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def append_note_to_file(target: Path, note: str, *, as_prompt: bool) -> bool:
+    text = note.strip()
+    if not text or not target.is_file():
+        return False
+    raw = target.read_bytes()
+    _write_orig_backup_once(_orig_file_backup_path(target), raw)
+    current = raw.decode("utf-8", errors="replace")
+    if as_prompt:
+        updated = inject_embedded_prompt(current, prompt=text) + "\n"
+    else:
+        updated = current.rstrip("\n") + "\n\n" + text + "\n"
+    target.write_text(updated, encoding="utf-8")
+    return True
 
 
 def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
@@ -3498,6 +3535,57 @@ def offer_clipboard_copy(
         with tty_w, tty_r:
             tty_w.write(f"\n{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
+
+            def _on_clip_edit(edited_path: Path) -> dict[str, object]:
+                nonlocal copy_target, cmd, cmd_str, is_edited
+                if is_start_bundle:
+                    fn_refresh = globals().get("refresh_bundle_meta")
+                    if callable(fn_refresh):
+                        fn_refresh(edited_path)
+                elif edited_path == edit_target:
+                    try:
+                        after_text = edited_path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        after_text = ""
+                    if is_end_box:
+                        copy_target = resolve_clipboard_target(edit_target, after_text)
+                    else:
+                        copy_target = edit_target
+                    new_clip = clipboard_command(copy_target)
+                    if new_clip is not None:
+                        cmd, cmd_str = new_clip
+                is_edited = _is_file_edited(edit_target, orig_path)
+                return {"edited": is_edited}
+
+            def _redraw_box() -> None:
+                nonlocal box, rule_width, cursor_offset, bottom, prev_cols, prev_rows
+                new_cols, new_rows = _term_size()
+                up_rows = _box_rows_above_prompt(box, new_cols)
+                prev_cols, prev_rows = new_cols, new_rows
+                box, rule_width, cursor_offset = format_clipboard_box(
+                    label,
+                    copy_target,
+                    ok=ok,
+                    rc=rc,
+                    stats=stats_line(copy_target),
+                    title_kind=title_kind,
+                    extra_lines=extra_lines,
+                    cmd_str=cmd_str,
+                    edited=is_edited,
+                    error_source=edit_target,
+                    duration_s=duration_s,
+                    op_timings=op_timings,
+                    failed_step=failed_step,
+                    bundle_details=False,
+                    sdir=sdir,
+                    term_cols=new_cols,
+                    term_rows=max(6, new_rows - 1),
+                )
+                bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                tty_w.flush()
+
             first_read = True
             while True:
                 action = read_clipboard_key(tty_r, flush=first_read)
@@ -3538,27 +3626,6 @@ def offer_clipboard_copy(
                         tty_w.flush()
                     continue
                 if action == "info":
-                    def _on_clip_edit(edited_path: Path) -> dict[str, object]:
-                        nonlocal copy_target, cmd, cmd_str, is_edited
-                        if is_start_bundle:
-                            fn_refresh = globals().get("refresh_bundle_meta")
-                            if callable(fn_refresh):
-                                fn_refresh(edited_path)
-                        elif edited_path == edit_target:
-                            try:
-                                after_text = edited_path.read_text(encoding="utf-8", errors="replace")
-                            except OSError:
-                                after_text = ""
-                            if is_end_box:
-                                copy_target = resolve_clipboard_target(edit_target, after_text)
-                            else:
-                                copy_target = edit_target
-                            new_clip = clipboard_command(copy_target)
-                            if new_clip is not None:
-                                cmd, cmd_str = new_clip
-                        is_edited = _is_file_edited(edit_target, orig_path)
-                        return {"edited": is_edited}
-
                     info_state = _show_info_fullscreen(
                         title_kind=title_kind,
                         label=label,
@@ -3615,6 +3682,12 @@ def offer_clipboard_copy(
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                         continue
+                if action == "append":
+                    note = _prompt_append_text(tty_r, tty_w)
+                    if append_note_to_file(edit_target, note, as_prompt=is_start_bundle):
+                        _on_clip_edit(edit_target)
+                    _redraw_box()
+                    continue
                 if action in ("view", "edit"):
                     continue
                 if action == "copy":

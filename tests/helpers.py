@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import ModuleType
 
@@ -226,3 +227,43 @@ class RunBlockTestCase(unittest.TestCase):
             env=env,
             check=check,
         )
+
+    def _f57_offer(self, target, keys, notes, title_kind, extra_lines=None, rc=None, ok=True):
+        editor_paths: list[Path] = []
+        note_iter = iter(notes)
+
+        def stub_editor(p, _r, _w):
+            editor_paths.append(p)
+            self.assertEqual(p.suffix, ".md")
+            self.assertEqual(p.read_text(encoding="utf-8"), "")
+            p.write_text(next(note_iter), encoding="utf-8")
+
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = _KeepOpenStringIO()
+        tty_r = io.StringIO(keys)
+        refresh_calls: list[Path] = []
+        with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+             unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+             unittest.mock.patch.object(self.mod, "clipboard_command", side_effect=lambda p: (["pbcopy"], f"pbcopy < {p}")), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=stub_editor), \
+             unittest.mock.patch.object(self.mod, "refresh_bundle_meta", side_effect=lambda p: refresh_calls.append(p)), \
+             unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy, \
+             unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            self.mod.offer_clipboard_copy(
+                "s1/0" if title_kind == "START SESSION" else "s1/1",
+                target,
+                ok=ok,
+                rc=rc,
+                title_kind=title_kind,
+                extra_lines=extra_lines,
+            )
+        for p in editor_paths:
+            self.assertFalse(p.exists(), msg="temporary append file must be removed")
+        return tty_w.getvalue(), mock_copy, refresh_calls

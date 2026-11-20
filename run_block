@@ -65,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.26.0"
+VERSION = "0.27.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing a session: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block; prints an `END SESSION` summary with accumulated statistics and marks the session `[DONE]` in `--list`). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -2648,7 +2648,7 @@ class _SigwinchWatcher:
 
 
 def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
-    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'info', or 'resize'."""
+    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'append', 'info', or 'resize'."""
     if flush:
         flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
@@ -2657,6 +2657,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "info"
         if ans in ("e", "edit"):
             return "edit"
+        if ans in ("a", "append"):
+            return "append"
         if ans in ("v", "view"):
             return "view"
         return "skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy"
@@ -2669,6 +2671,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "info"
         if ans in ("e", "edit"):
             return "edit"
+        if ans in ("a", "append"):
+            return "append"
         return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
@@ -2691,6 +2695,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
                     return "info"
                 if ch in (b"e", b"E"):
                     return "edit"
+                if ch in (b"a", b"A"):
+                    return "append"
                 if ch in (b"v", b"V"):
                     return "view"
                 if ch in (b"\r", b"\n", b"y", b"Y"):
@@ -4806,7 +4812,7 @@ def build_box_body_lines(
 
 def _clipboard_prompt_line(title_kind: str) -> str:
     _ = title_kind
-    return "-> Copy to clipboard? [Y/n/i(nfo)]:"
+    return "-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"
 
 
 def format_clipboard_box(
@@ -4859,6 +4865,37 @@ def format_clipboard_box(
         term_cols=term_cols,
         term_rows=term_rows,
     )
+
+
+def _prompt_append_text(tty_r, tty_w) -> str:
+    fd, name = tempfile.mkstemp(prefix="run_block_append_", suffix=".md")
+    os.close(fd)
+    tmp_path = Path(name)
+    try:
+        open_script_in_editor(tmp_path, tty_r, tty_w)
+        return tmp_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def append_note_to_file(target: Path, note: str, *, as_prompt: bool) -> bool:
+    text = note.strip()
+    if not text or not target.is_file():
+        return False
+    raw = target.read_bytes()
+    _write_orig_backup_once(_orig_file_backup_path(target), raw)
+    current = raw.decode("utf-8", errors="replace")
+    if as_prompt:
+        updated = inject_embedded_prompt(current, prompt=text) + "\n"
+    else:
+        updated = current.rstrip("\n") + "\n\n" + text + "\n"
+    target.write_text(updated, encoding="utf-8")
+    return True
 
 
 def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
@@ -6036,6 +6073,57 @@ def offer_clipboard_copy(
         with tty_w, tty_r:
             tty_w.write(f"\n{box}\r\033[1A\033[{cursor_offset}C")
             tty_w.flush()
+
+            def _on_clip_edit(edited_path: Path) -> dict[str, object]:
+                nonlocal copy_target, cmd, cmd_str, is_edited
+                if is_start_bundle:
+                    fn_refresh = globals().get("refresh_bundle_meta")
+                    if callable(fn_refresh):
+                        fn_refresh(edited_path)
+                elif edited_path == edit_target:
+                    try:
+                        after_text = edited_path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        after_text = ""
+                    if is_end_box:
+                        copy_target = resolve_clipboard_target(edit_target, after_text)
+                    else:
+                        copy_target = edit_target
+                    new_clip = clipboard_command(copy_target)
+                    if new_clip is not None:
+                        cmd, cmd_str = new_clip
+                is_edited = _is_file_edited(edit_target, orig_path)
+                return {"edited": is_edited}
+
+            def _redraw_box() -> None:
+                nonlocal box, rule_width, cursor_offset, bottom, prev_cols, prev_rows
+                new_cols, new_rows = _term_size()
+                up_rows = _box_rows_above_prompt(box, new_cols)
+                prev_cols, prev_rows = new_cols, new_rows
+                box, rule_width, cursor_offset = format_clipboard_box(
+                    label,
+                    copy_target,
+                    ok=ok,
+                    rc=rc,
+                    stats=stats_line(copy_target),
+                    title_kind=title_kind,
+                    extra_lines=extra_lines,
+                    cmd_str=cmd_str,
+                    edited=is_edited,
+                    error_source=edit_target,
+                    duration_s=duration_s,
+                    op_timings=op_timings,
+                    failed_step=failed_step,
+                    bundle_details=False,
+                    sdir=sdir,
+                    term_cols=new_cols,
+                    term_rows=max(6, new_rows - 1),
+                )
+                bottom = _format_bottom_rule(rule_width, border_color=border_col)
+                move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
+                tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
+                tty_w.flush()
+
             first_read = True
             while True:
                 action = read_clipboard_key(tty_r, flush=first_read)
@@ -6076,27 +6164,6 @@ def offer_clipboard_copy(
                         tty_w.flush()
                     continue
                 if action == "info":
-                    def _on_clip_edit(edited_path: Path) -> dict[str, object]:
-                        nonlocal copy_target, cmd, cmd_str, is_edited
-                        if is_start_bundle:
-                            fn_refresh = globals().get("refresh_bundle_meta")
-                            if callable(fn_refresh):
-                                fn_refresh(edited_path)
-                        elif edited_path == edit_target:
-                            try:
-                                after_text = edited_path.read_text(encoding="utf-8", errors="replace")
-                            except OSError:
-                                after_text = ""
-                            if is_end_box:
-                                copy_target = resolve_clipboard_target(edit_target, after_text)
-                            else:
-                                copy_target = edit_target
-                            new_clip = clipboard_command(copy_target)
-                            if new_clip is not None:
-                                cmd, cmd_str = new_clip
-                        is_edited = _is_file_edited(edit_target, orig_path)
-                        return {"edited": is_edited}
-
                     info_state = _show_info_fullscreen(
                         title_kind=title_kind,
                         label=label,
@@ -6153,6 +6220,12 @@ def offer_clipboard_copy(
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                         continue
+                if action == "append":
+                    note = _prompt_append_text(tty_r, tty_w)
+                    if append_note_to_file(edit_target, note, as_prompt=is_start_bundle):
+                        _on_clip_edit(edit_target)
+                    _redraw_box()
+                    continue
                 if action in ("view", "edit"):
                     continue
                 if action == "copy":
