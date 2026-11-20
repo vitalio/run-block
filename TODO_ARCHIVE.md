@@ -1,3 +1,8 @@
+# ✅ [DONE] F15: Forbid trailing prose after closing fence in block rules — *2026-11-20, Already enforced in Rule 1 of src/rules/blocks/bash.md and pwsh.md*
+
+- Tighten Rule 1 in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
+- Rebuild `./run_block` via `build.py` and update `tests/test_bundle.py`.
+
 # ✅ [DONE] F78: Speed up test suite and CLI startup (remove tiktoken, lazy urllib, in-process runner) and split test_run_block.py into modular tests/test_*.py — *2026-11-20, Removed tiktoken, made urllib.request lazy, split tests/ into modular files with in-process runner, and fixed test_f59 SIGWINCH race*
 
 - Role: work
