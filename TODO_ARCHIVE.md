@@ -1,3 +1,56 @@
+# ❌ [CANCELED] F48: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Re-prefixed as D9 per ADR 0001*
+
+- Depends on: F42, D2
+- Role: design
+- Design candidate for `role=design` to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
+- Evaluate structured `--json` execution output for `<session>/<step>` (status: `ok`/`syntax_error`/`not_run`/`completed`, `exit_code`, safety findings, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` non-TTY handshake, and env sanitization so client LLM API keys do not leak into executed step scripts.
+- Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
+
+# ❌ [CANCELED] F38: Design explicit parent-step DAG lineage for session branches and retries — *Re-prefixed as D8 per ADR 0001*
+
+- Depends on: F35
+- Role: design
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
+- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
+
+# ❌ [CANCELED] F36: Design pre-flight sandbox dry-run preview via temporary git worktree — *Re-prefixed as D7 per ADR 0001*
+
+- Depends on: F37
+- Role: design
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
+- Define how actual mutated files and diff summaries are presented in `START STEP` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_runner.py` and `tests/test_safety.py`.
+
+# ❌ [CANCELED] F37: Design session execution policies and post-step revert guards — *Re-prefixed as D6 per ADR 0001*
+
+- Depends on: F34
+- Role: design
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Evaluate declarative session-level execution constraints in `meta.json` / `.agents_bundle` (`src/bundle.py`, `src/config.py`), such as allowed write path globs, maximum modified file count, or network-access restrictions.
+- Define enforcement and rollback semantics in `src/runner.py` and `src/safety.py` (pre-execution policy checks plus post-step diff verification with automatic revert on violation) and cover with `tests/test_runner.py` and `tests/test_safety.py`.
+
+# ❌ [CANCELED] F35: Design tamper-evident hash chain and parent-step verification for session history — *Re-prefixed as D5 per ADR 0001*
+
+- Depends on: F34
+- Role: design
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
+- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
+
+# ❌ [CANCELED] F34: Design workspace state fingerprinting and drift detection across steps — *Re-prefixed as D4 per ADR 0001*
+
+- Role: design
+- Design candidate for `role=design` before decomposing into implementation tasks.
+- Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
+- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_runner.py` and `tests/test_safety.py`.
+
+# ❌ [CANCELED] F16: Prevent unintended interactive pagers during block execution — *Re-prefixed as D3 per ADR 0001*
+
+- Role: design
+- Encountered a stall during block execution when a model-generated inspection command (`git diff HEAD`) opened an interactive pager inside the PTY, forcing manual `q` / `Ctrl+C` intervention.
+- Need to design a balanced approach in `run_block` rules (and/or runner defaults) that prevents trivial interactive pagination/stalls when reading output without blocking intentional human-in-the-loop prompts, keeping in mind a future automation layer that will introduce stricter non-interactive rules.
+
 # ✅ [DONE] F15: Forbid trailing prose after closing fence in block rules — *2026-11-20, Already enforced in Rule 1 of src/rules/blocks/bash.md and pwsh.md*
 
 - Tighten Rule 1 in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
