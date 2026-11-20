@@ -1,3 +1,12 @@
+# 🎯 [NEXT] F78: Speed up test suite and CLI startup (remove tiktoken, lazy urllib, in-process test runner, and fix flaky test_f59)
+
+- Role: work
+- In `src/ui.py` (`gpt_encoder()`, `count_tokens()`) and `src/bundle_plan.py` (`parse_bundle_fragments()`), remove the optional third-party `import tiktoken` (`o200k_base`) path so `run_block` strictly obeys `stack/python-stdlib`, has deterministic token estimates across machines, and avoids the ~190 ms BPE load penalty on every CLI and test invocation.
+- Move `import urllib.request` out of top-level `src/header.py` into `fetch_remote_script()` in `src/cli.py` so regular CLI startups do not pay the `urllib.request` import overhead (~40 ms), and verify in `tests/test_run_block.py` that `urllib.request` and `tiktoken` are not loaded during normal commands.
+- In `tests/test_run_block.py` (`TestRunBlock`), load `./run_block` once in `setUpClass()` instead of reloading `load_module()` on every `setUp()`, and add in-process CLI helpers `_assert_ok()`, `_run_in_process()`, `_run_subprocess()`, and `_run()` (capturing `stdout`/`stderr` via `contextlib.redirect_stdout` / `redirect_stderr` and including diagnostic `stdout`/`stderr` in `msg=` on exit-code checks, keeping real `subprocess.run` for CLI entrypoint and `install.sh` smoke tests and using `sys.executable` instead of `"python3"` literals).
+- Fix the `SIGWINCH` race in `test_f59_sigwinch_in_place_box_redraw` (where two concurrent `threading.Timer(0.02)` and `threading.Timer(0.03)` signals can coalesce or straddle the 25 ms debounce window in `read_clipboard_key()`, causing `AssertionError: 1 != 2` on `len(prev_calls)`) and tighten PTY driver sleeps across `test_f59_sigwinch_in_place_box_redraw` and `test_b11_height_clamping_altscreen_details_and_display_width`.
+- Rebuild `./run_block` via `build.py`, verify `python3 build.py --check`, ensure `python3 -m unittest discover -s tests` finishes in `<3s` (down from `~21s`) and `test_f59_sigwinch_in_place_box_redraw` passes 50 consecutive runs, and bump `VERSION` for a PATCH release.
+
 # 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
 
 - Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
@@ -122,8 +131,10 @@
 
 # ⚪ [NEW] F70: Support model-aware token counting once model API integration is added
 
-- Future enhancement (blocked on model API integration): replace the current fixed `tiktoken` (`o200k_base`) / char-heuristic (`~lo–hi tokens`) estimator in `src/ui.py` and `src/bundle_plan.py` with model-specific token counting (provider tokenizer or count-tokens API) based on the active selected model.
-- Retain offline stdlib/local heuristic fallback when no model API or tokenizer is configured.
+- Role: work
+- Future enhancement (blocked on model API integration in `todo_flow:D5`): extend the pre-flight stdlib `~lo–hi tokens` estimator in `src/ui.py` (`count_tokens()`, `format_stats()`) and `src/bundle_plan.py` (`analyze_bundle_plan()`) with model-aware token accounting:
+  - Keep fast offline stdlib heuristic estimation for pre-flight TUI cards (`START SESSION`, `START STEP`, `END STEP`, `--bundle-plan`) before a request is sent to the model.
+  - Record exact post-turn token usage (`input_tokens`, `output_tokens`, cache read/write tokens) returned by the provider API response in `<session>/chat.json` and `<session>/meta.json`, and surface optional provider `count_tokens` / profile-tuned pre-flight estimates when an API profile is active.
 
 # ⚪ [NEW] F72: Rename project to run-block and CLI utility to rxb
 
