@@ -162,6 +162,140 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("│ Exit:   ", rendered)
         self.assertIn("│ Output: ", rendered)
 
+    def test_f42_session_state_helpers(self):
+        sdir = self.mod.start_session("s9")
+        self.assertFalse(self.mod.is_session_completed(sdir))
+        self.mod.update_session_stats(sdir, ok=True, duration_s=1.5)
+        self.mod.update_session_stats(sdir, ok=False, duration_s=0.25, is_fix=True, renumbered=True)
+        meta = self.mod.set_session_completed(sdir, note="  wrapped up  ")
+        self.assertTrue(meta["completed"])
+        self.assertRegex(str(meta["completed_at"]), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertEqual(meta["completed_note"], "wrapped up")
+        stats = meta["stats"]
+        self.assertEqual(
+            {k: stats[k] for k in ("steps", "ok", "failed", "fix", "renumbered", "duration_ms")},
+            {"steps": 2, "ok": 1, "failed": 1, "fix": 1, "renumbered": 1, "duration_ms": 1750},
+        )
+        self.assertEqual(stats["completed_at"], meta["completed_at"])
+        self.mod.write_session_meta(sdir, [("Role", "work")])
+        kept = self.mod.read_session_meta(sdir)
+        self.assertTrue(kept["completed"])
+        self.assertEqual(kept["stats"]["steps"], 2)
+        self.assertEqual(kept["headers"], [["Role", "work"]])
+        self.mod.clear_session_completed(sdir)
+        cleared = self.mod.read_session_meta(sdir)
+        for key in ("completed", "completed_at", "completed_note"):
+            self.assertNotIn(key, cleared)
+        self.assertNotIn("completed_at", cleared["stats"])
+        self.assertEqual(cleared["stats"]["steps"], 2)
+        self.mod.set_session_completed(sdir)
+        self.mod.start_session("s9", force=True)
+        self.assertFalse(self.mod.is_session_completed(sdir))
+        self.assertNotIn("stats", self.mod.read_session_meta(sdir))
+
+    def test_f42_done_stats_card_and_list_badge(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n"), 0)
+            self.assertNotEqual(self.mod.cmd_normal("s1/2", "exit 3\n"), 0)
+        meta_path = self.tmp / "s1" / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            (meta["stats"]["steps"], meta["stats"]["ok"], meta["stats"]["failed"]), (2, 1, 1)
+        )
+        self.assertNotIn("completed", meta)
+
+        r = self._run([str(SCRIPT), "--done", "s1", "-m", "wrap up"])
+        self._assert_ok(r)
+        self.assertIn("╭─ END SESSION ", r.stdout)
+        self.assertRegex(r.stdout, r"Steps:\s+2")
+        self.assertRegex(r.stdout, r"1 ok, 1 failed, 0 --fix, 0 renumbered")
+        self.assertRegex(r.stdout, r"Note:\s+wrap up")
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        self.assertIs(meta["completed"], True)
+        self.assertEqual(meta["completed_note"], "wrap up")
+
+        r_list = self._run([str(SCRIPT), "--list"])
+        self._assert_ok(r_list)
+        self.assertRegex(r_list.stdout, r"s1 .*last: s1/2 .*\[DONE\]")
+        r_blocks = self._run([str(SCRIPT), "--list", "s1"])
+        self._assert_ok(r_blocks)
+        self.assertIn("[DONE]:", r_blocks.stdout)
+        r_again = self._run([str(SCRIPT), "--done", "s1"])
+        self._assert_ok(r_again)
+        self.assertIn("already marked as completed", r_again.stdout)
+
+        self.mod.start_session("s2")
+        r_latest = self._run([str(SCRIPT), "--done", "-y"])
+        self._assert_ok(r_latest)
+        self.assertIn("[s2] END SESSION", r_latest.stdout)
+
+    def test_f42_completed_session_blocks_runs_until_reopened(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n"), 0)
+            self.assertEqual(self.mod.cmd_done("s1"), 0)
+        sdir = self.tmp / "s1"
+        fix_code = "old = 'echo one'\nnew = 'echo fixed'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n"
+        cases = (
+            ("run", lambda: self.mod.cmd_normal("s1/2", "echo two\n"), "2"),
+            ("fix", lambda: self.mod.cmd_fix("s1/1", fix_code), "1_1"),
+            ("retry", lambda: self.mod.cmd_retry("s1/1"), None),
+        )
+        for kind, call, absent in cases:
+            with self.subTest(kind=kind):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = call()
+                self.assertEqual(rc, 2, msg=buf.getvalue())
+                self.assertIn("marked as completed", re.sub(r"[│\s]+", " ", buf.getvalue()))
+                self.assertTrue(self.mod.is_session_completed(sdir))
+                if absent is not None:
+                    self.assertFalse(self.mod._step_dir(sdir, absent).exists())
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo two\n", auto_yes=True), 0)
+        self.assertFalse(self.mod.is_session_completed(sdir))
+        meta = self.mod.read_session_meta(sdir)
+        self.assertEqual(meta["stats"]["steps"], 2)
+        self.assertNotIn("completed_at", meta["stats"])
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.mod.cmd_done("s1")
+        os.environ["RUN_BLOCK_HEADLESS"] = "1"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_retry("s1/2"), 0)
+        self.assertFalse(self.mod.is_session_completed(sdir))
+
+    def test_f42_completed_session_interactive_confirmation(self):
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.mod.cmd_normal("s1/1", "echo one\n")
+            self.mod.cmd_done("s1", note="done for today")
+        sdir = self.tmp / "s1"
+        with unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=False) as box, \
+                unittest.mock.patch.object(self.mod, "offer_clipboard_copy"), \
+                contextlib.redirect_stdout(_Tty()):
+            rc = self.mod.cmd_normal("s1/2", "echo two\n")
+        self.assertEqual(rc, 130)
+        box.assert_called_once()
+        args, kwargs = box.call_args
+        self.assertEqual(args[0], "SESSION COMPLETED")
+        self.assertEqual(args[2], "-> Reopen session s1?")
+        self.assertFalse(kwargs["default_yes"])
+        self.assertTrue(any("done for today" in ln for ln in args[1]))
+        self.assertTrue(self.mod.is_session_completed(sdir))
+        self.assertFalse(self.mod._step_dir(sdir, "2").exists())
+
+        with unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=True), \
+                unittest.mock.patch.object(self.mod, "run_script", return_value=0) as run, \
+                contextlib.redirect_stdout(_Tty()):
+            rc = self.mod.cmd_normal("s1/2", "echo two\n")
+        self.assertEqual(rc, 0)
+        run.assert_called_once()
+        self.assertFalse(self.mod.is_session_completed(sdir))
+
     def test_list_show_and_retry(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.mod.cmd_normal("s1/1", "echo first_step\n")

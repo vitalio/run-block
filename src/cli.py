@@ -204,6 +204,27 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit(f"{prog}: usage: {prog} --list [session]")
         return cmd_list(args[1] if len(args) == 2 else None)
 
+    if args[0] == "--done":
+        done_usage = f"{prog} --done [-y] [session] [-m NOTE]"
+        if prompt_args:
+            _reject_prompt_for("--done", done_usage)
+        done_note: str | None = None
+        done_session: str | None = None
+        j = 1
+        while j < len(args):
+            tok = args[j]
+            if tok == "-m":
+                if j + 1 >= len(args):
+                    raise SystemExit(f"{prog}: -m requires an argument")
+                done_note = args[j + 1]
+                j += 2
+            elif tok.startswith("-") or done_session is not None:
+                raise SystemExit(f"{prog}: usage: {done_usage}")
+            else:
+                done_session = tok
+                j += 1
+        return cmd_done(done_session, note=done_note, auto_yes=auto_yes)
+
     if args[0] == "--show":
         show_usage = f"{prog} --show [session[/step]] [--part N]"
         if prompt_args:

@@ -1030,6 +1030,16 @@ def run_script(
         write_private(err_path, err_text, overwrite=True)
     else:
         err_path.unlink(missing_ok=True)
+    try:
+        update_session_stats(
+            sdir,
+            ok=(rc == 0),
+            duration_s=float(duration_s or 0.0),
+            is_fix="_" in step_dir.name,
+            renumbered=bool(renumbered_from),
+        )
+    except OSError:
+        pass
     clip_target = resolve_clipboard_target(out_path, full_output)
     if headless:
         if stdin_diag_lines:
@@ -1130,6 +1140,101 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     return out, None
 
 
+def _done_badge(sdir: Path) -> str:
+    return " [DONE]" if is_session_completed(sdir) else ""
+
+
+def _session_stats_lines(meta: dict[str, object]) -> list[str]:
+    stats = _session_stats(meta)
+    lines = [
+        f"Steps: {stat_int(stats, 'steps')}",
+        (
+            f"Results: {stat_int(stats, 'ok')} ok, {stat_int(stats, 'failed')} failed, "
+            f"{stat_int(stats, 'fix')} --fix, {stat_int(stats, 'renumbered')} renumbered"
+        ),
+        f"Duration: {format_duration(stat_int(stats, 'duration_ms') / 1000.0)}",
+    ]
+    if stats.get("started_at"):
+        lines.append(f"Started: {stats['started_at']}")
+    return lines
+
+
+def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool = False) -> int:
+    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    base = ensure_base()
+    if session:
+        sdir = base / session
+        if not sdir.is_dir():
+            raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
+    else:
+        found = _find_latest_session_dir()
+        if found is None:
+            raise SystemExit(f"{prog_name()}: no sessions found in {base}")
+        sdir = found
+    name = sdir.name
+    if is_session_completed(sdir):
+        when = read_session_meta(sdir).get("completed_at") or "unknown time"
+        sys.stdout.write(f"{prog_name()}: session {name} is already marked as completed ({when})\n")
+        return 0
+    meta = set_session_completed(sdir, note=note)
+    lines = [f"Session: {name}", f"Completed: {meta.get('completed_at')}", *_session_stats_lines(meta)]
+    if meta.get("completed_note"):
+        lines.append(f"Note: {meta['completed_note']}")
+    if headless:
+        sys.stdout.write(f"[{name}] END SESSION\n" + "".join(f"{ln}\n" for ln in lines[1:]))
+    else:
+        sys.stdout.write(format_info_box("END SESSION", lines) + "\n")
+    sys.stdout.flush()
+    return 0
+
+
+def _guard_completed_session(
+    label: str,
+    sdir: Path,
+    step_name: str,
+    out_path: Path,
+    headless: bool,
+    fix_target: str | None = None,
+) -> int | None:
+    if not is_session_completed(sdir):
+        return None
+    session = sdir.name
+    if headless:
+        clear_session_completed(sdir)
+        return None
+    rc = 2
+    reason = f"session {session} is marked as completed (pass -y/--yes to reopen and run)"
+    if sys.stdout.isatty():
+        meta = read_session_meta(sdir)
+        lines = [f"Session: {session}", f"Completed: {meta.get('completed_at') or 'unknown'}"]
+        if meta.get("completed_note"):
+            lines.append(f"Note: {meta['completed_note']}")
+        lines.append(f"Step: {label}")
+        choice = prompt_yes_no_box(
+            "SESSION COMPLETED",
+            lines,
+            f"-> Reopen session {session}?",
+            default_yes=False,
+            yes_status="✓ Session reopened.",
+            no_status="✗ Session stays completed.",
+            label=label,
+            sdir=sdir,
+        )
+        if choice is True:
+            clear_session_completed(sdir)
+            return None
+        rc = 130
+        reason = f"session {session} is marked as completed (not reopened)"
+    step_dir = _step_dir(sdir, step_name)
+    existed = step_dir.exists()
+    rc_out = not_run_exit(
+        label, sdir, step_name, out_path, f"[{label}] NOT RUN: {reason}", rc=rc, headless=headless, fix_target=fix_target
+    )
+    if not existed:
+        shutil.rmtree(step_dir, ignore_errors=True)
+    return rc_out
+
+
 def cmd_normal(
     ref: str, payload: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
@@ -1150,6 +1255,9 @@ def cmd_normal(
     out_path = step_dir / "out"
     if split_err:
         return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
+    rc_done = _guard_completed_session(label, sdir, step, out_path, headless)
+    if rc_done is not None:
+        return rc_done
 
     aborted_marker = step_dir / "aborted"
     renumbered_from: str | None = None
@@ -1342,6 +1450,10 @@ def cmd_fix(
             fix_target=target_ref,
         )
 
+    rc_done = _guard_completed_session(label, sdir, new_step, out_path, headless, fix_target=target_ref)
+    if rc_done is not None:
+        return rc_done
+
     max_attempts = int(get_setting("max_fix_attempts")[0])
     prior_failures = _consecutive_failed_fixes(sdir, base_step)
     if prior_failures >= max_attempts:
@@ -1513,7 +1625,7 @@ def cmd_list(session: str | None = None) -> int:
                 last = f"{sdir.name}/0 (BUNDLE)"
             else:
                 last = "empty"
-            sys.stdout.write(f"  {sdir.name:<8}  {len(scripts):>3} block(s)  {_human_size(sz):>9}   last: {last}\n")
+            sys.stdout.write(f"  {sdir.name:<8}  {len(scripts):>3} block(s)  {_human_size(sz):>9}   last: {last}{_done_badge(sdir)}\n")
         sys.stdout.write(f"Total storage: {_human_size(total_bytes)} ({len(sdirs)} session(s))\n")
         session = sdirs[-1].name
         sys.stdout.write(f"\nRecent blocks in {session}:\n")
@@ -1521,7 +1633,7 @@ def cmd_list(session: str | None = None) -> int:
         sdir = base / session
         if not sdir.is_dir():
             raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
-        sys.stdout.write(f"Blocks in {session} ({_human_size(_dir_size_bytes(sdir))}):\n")
+        sys.stdout.write(f"Blocks in {session} ({_human_size(_dir_size_bytes(sdir))}){_done_badge(sdir)}:\n")
     sdir = base / session
     if (sdir / "0").is_file():
         ref0 = f"{session}/0"
@@ -1632,6 +1744,11 @@ def cmd_retry(
     out_path = step_dir / "out"
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
+    rc_done = _guard_completed_session(
+        f"{session}/{step}", sdir, step, out_path, auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    )
+    if rc_done is not None:
+        return rc_done
     out_path.unlink(missing_ok=True)
     (step_dir / "out.orig").unlink(missing_ok=True)
     (step_dir / "meta.json").unlink(missing_ok=True)

@@ -37,7 +37,8 @@ rules are loaded via `.agents_bundle`.
   `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
   `Date`) and the prompt body.
 - Session completion state (`--done`): persist `"completed": true` and
-  `"completed_at"` (UTC ISO timestamp) in `<session>/meta.json` without
+  `"completed_at"` (UTC ISO timestamp), optional `"completed_note"`, and accumulated `"stats"`
+  (updated by `run_script` via `update_session_stats`) in `<session>/meta.json` without
   altering `<session>/0` headers. Before running any block (`<session>/<step>`,
   `--fix`, or `--retry`) on a completed session, warn and prompt for
   confirmation (`SESSION COMPLETED`, default `No`), clearing the completed flag

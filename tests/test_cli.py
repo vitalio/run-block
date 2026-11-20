@@ -57,6 +57,34 @@ class TestCli(RunBlockTestCase):
         r_lazy = subprocess.run([sys.executable, "-c", lazy_check], capture_output=True, text=True, check=False)
         self.assertEqual(r_lazy.returncode, 0, msg=f"stdout:\n{r_lazy.stdout}\nstderr:\n{r_lazy.stderr}")
 
+    def test_f42_done_cli_flags_and_help(self):
+        r = self._run_subprocess([str(SCRIPT), "-h"])
+        self._assert_ok(r)
+        self.assertIn("--done [session] [-m NOTE]", r.stdout)
+        self.assertIn("[DONE]", r.stdout)
+
+        self.mod.start_session("s1")
+        bad_cases = (
+            (["--done", "nosuch"], "not found"),
+            (["--done", "s1", "-m"], "-m requires an argument"),
+            (["--done", "s1", "s2"], "usage:"),
+            (["--done", "--bogus"], "usage:"),
+            (["--done", "-p", "x"], "cannot be used"),
+        )
+        for args, needle in bad_cases:
+            with self.subTest(args=args):
+                rb = self._run([str(SCRIPT), *args])
+                self.assertEqual(rb.returncode, 1, msg=rb.stdout + rb.stderr)
+                self.assertIn(needle, rb.stderr)
+
+        r_done = self._run([str(SCRIPT), "--done", "-y", "s1", "-m", "wrap"])
+        self._assert_ok(r_done)
+        self.assertIn("[s1] END SESSION", r_done.stdout)
+        self.assertIn("Note: wrap", r_done.stdout)
+        r_list = self._run([str(SCRIPT), "--list"])
+        self._assert_ok(r_list)
+        self.assertRegex(r_list.stdout, r"s1 .*\[DONE\]")
+
     def test_embedded_rules_files_exist(self):
         self.assertFalse((ROOT / "src/bundles").exists())
         ab_txt = (ROOT / ".agents_bundle").read_text(encoding="utf-8")

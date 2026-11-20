@@ -3,12 +3,13 @@
 """Usage:
   {prog}                           Start a rule-only session on TTY stdin (or read bundle from piped stdin)
   <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0
-  {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes for non-interactive headless mode)
+  {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes: non-interactive headless mode, also reopens a completed session)
   {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
   {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full, --part N)
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
-  {prog} --list | -l [session]       List sessions or blocks in a session
+  {prog} --list | -l [session]       List sessions or blocks in a session ([DONE] marks completed sessions)
+  {prog} --done [session] [-m NOTE]  Mark session completed and print END SESSION summary (later blocks ask to reopen)
   {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
   {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)

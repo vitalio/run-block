@@ -291,6 +291,10 @@ def write_session_meta(
         data["headers"] = [[k, v] for k, v in headers]
     if bundle_plan is not None:
         data["bundle_plan"] = bundle_plan
+    prev = read_session_meta(session_dir)
+    for key in _SESSION_STATE_KEYS:
+        if key in prev:
+            data[key] = prev[key]
     if not data:
         meta_file.unlink(missing_ok=True)
         return None
@@ -317,6 +321,80 @@ def update_session_meta(session_dir: Path, **updates: object) -> Path | None:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         f.write(payload)
     return meta_file
+
+
+_SESSION_STATE_KEYS = ("completed", "completed_at", "completed_note", "stats")
+_STAT_COUNTERS = ("steps", "ok", "failed", "fix", "renumbered", "duration_ms")
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _session_stats(meta: dict[str, object]) -> dict[str, object]:
+    raw = meta.get("stats")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def stat_int(stats: dict[str, object], key: str) -> int:
+    try:
+        return int(stats.get(key, 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_session_completed(session_dir: Path | None) -> bool:
+    return bool(read_session_meta(session_dir).get("completed"))
+
+
+def set_session_completed(session_dir: Path, note: str | None = None) -> dict[str, object]:
+    now = _utc_now_iso()
+    stats = _session_stats(read_session_meta(session_dir))
+    stats["completed_at"] = now
+    update_session_meta(
+        session_dir,
+        completed=True,
+        completed_at=now,
+        completed_note=(note or "").strip() or None,
+        stats=stats,
+    )
+    return read_session_meta(session_dir)
+
+
+def clear_session_completed(session_dir: Path) -> None:
+    stats = _session_stats(read_session_meta(session_dir))
+    stats.pop("completed_at", None)
+    update_session_meta(
+        session_dir,
+        completed=None,
+        completed_at=None,
+        completed_note=None,
+        stats=stats or None,
+    )
+
+
+def update_session_stats(
+    session_dir: Path,
+    *,
+    ok: bool,
+    duration_s: float = 0.0,
+    is_fix: bool = False,
+    renumbered: bool = False,
+) -> None:
+    stats = _session_stats(read_session_meta(session_dir))
+    now = _utc_now_iso()
+    stats.setdefault("started_at", now)
+    stats["last_step_at"] = now
+    counters = {key: stat_int(stats, key) for key in _STAT_COUNTERS}
+    counters["steps"] += 1
+    counters["ok" if ok else "failed"] += 1
+    if is_fix:
+        counters["fix"] += 1
+    if renumbered:
+        counters["renumbered"] += 1
+    counters["duration_ms"] += int(round(max(duration_s, 0.0) * 1000))
+    stats.update(counters)
+    update_session_meta(session_dir, stats=stats)
 
 
 def format_duration(seconds: float) -> str:

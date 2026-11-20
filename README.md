@@ -165,6 +165,30 @@ text = text.replace(old, new, 1)
 RUN_FIX
 ```
 
+### 4. Completing a session (`--done`)
+
+```bash
+run_block --done [session] [-m "wrap-up note"]
+```
+
+Marks a session (default: the most recent one) as completed: `completed`,
+`completed_at`, and an optional `completed_note` are stored in
+`<session>/meta.json` together with the statistics accumulated while blocks
+ran (`stats`: steps, ok/failed/`--fix`/renumbered counts, total duration),
+and an `END SESSION` card prints the summary. `--done` is also allowed
+inside the final block of a session, and `--list` shows completed sessions
+with a `[DONE]` badge.
+
+Running another block (`<session>/<step>`, `--fix`, or `--retry`) on a
+completed session first shows a `SESSION COMPLETED` confirmation
+(`Reopen session <session>? [y/N/i(nfo)]`, default `No`); `y` clears the
+completion marker and continues into `START STEP`. With `-y`/`--yes` (or
+`RUN_BLOCK_HEADLESS=1`) the session is reopened automatically; on a
+non-interactive stdout without `-y` the step exits with `NOT RUN: session
+<session> is marked as completed (pass -y/--yes to reopen and run)`.
+Recreating a session with `--start --force` resets the completion state and
+statistics.
+
 ## Environment Variables
 
 `run_block` works out of the box with zero configuration files and honors standard environment variables:
@@ -194,12 +218,13 @@ RUN_FIX
 | :--- | :--- |
 | `run_block [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
 | `<command> \| run_block [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
-| `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode) |
+| `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode; also reopens a completed session) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
 | `run_block --bundle-plan [<session>] [--json] [--full] [--part N]` | Summarize bundle parts and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
 | `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
 | `run_block --retry [-y] [session/step]` | Re-run the last (or specified) block |
-| `run_block --list`, `-l [session]` | List sessions and blocks with their status and summary |
+| `run_block --list`, `-l [session]` | List sessions and blocks with their status and summary (`[DONE]` marks completed sessions) |
+| `run_block --done [-y] [session] [-m NOTE]` | Mark a session (default: latest) as completed and print the `END SESSION` summary with accumulated statistics |
 | `run_block --show [session/step]` | Show saved script and output of a block (or `<session>/0` bundle) |
 | `run_block --show [<session>[/0]] --part N` | Print only part `N` (1-based part `index` from `--bundle-plan --json`) of `<session>/0` (latest session when omitted); exits non-zero for non-zero steps or out-of-range parts |
 | `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |

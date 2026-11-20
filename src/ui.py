@@ -1329,6 +1329,8 @@ _TITLE_COLORS = {
     "NOT RUN": "\x1b[1;91m",
     "MISSING PREVIOUS STEP": "\x1b[1;93m",
     "STEP ALREADY EXISTS": "\x1b[1;93m",
+    "SESSION COMPLETED": "\x1b[1;93m",
+    "END SESSION": "\x1b[1;92m",
 }
 _BORDER_COLOR = "\x1b[96m"
 _KEY_COLOR = "\x1b[2m"
