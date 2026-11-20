@@ -3,7 +3,7 @@
 - Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
 - When `e(dit)` is triggered on `START SESSION` (`BUNDLE` before `F71`, inline or via `i(nfo)` in `F54`, `src/ui.py`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`.
 - Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `START SESSION` exits (`Y`/`Enter`, `n`/`Esc`, or non-interactive mode), keeping `0.orig` backup and `F57` `a(ppend)` compatibility intact.
-- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_run_block.py` verify the roundtrip.
+- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_bundle.py` verify the roundtrip.
 
 - Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
 
@@ -15,7 +15,7 @@
   - In `START SESSION`: append into the trailing `===== Prompt =====` section of `<session>/0` (creating it if absent) and call `refresh_bundle_meta()`.
   - In `END STEP`, `SYNTAX ERROR`, and `NOT RUN`: append the user note/question to the clipboard target output (`out`) and refresh clipboard command/target if needed.
 - Recalculate line/byte/token `Stats:` with the `(edited)` marker and redraw the box in place so pressing `Enter`/`y` copies the updated content to the clipboard.
-- Acceptance criteria: `a(ppend)` works uniformly across `START SESSION`, `END STEP`, `SYNTAX ERROR`, and `NOT RUN`; empty input leaves files and `.orig` backups untouched; `.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_run_block.py` are updated.
+- Acceptance criteria: `a(ppend)` works uniformly across `START SESSION`, `END STEP`, `SYNTAX ERROR`, and `NOT RUN`; empty input leaves files and `.orig` backups untouched; `.orig` is saved once and `Stats:` updates with `(edited)`; `README.md` and offline tests in `tests/test_bundle.py` and `tests/test_runner.py` are updated.
 
 # 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
 
@@ -25,7 +25,7 @@
   1. Subcommand guards: allow read-only inspection (`--list`, `--show`, `--info`, `--bundle-plan`) and completing the current session (`--done` / `END SESSION`), while blocking recursive step execution (`<session>/<step>`, `--fix`, `--retry`) unless explicitly overridden.
   2. Nested session initialization (`<cmd> | run_block` / `--start`): specify console framing, clipboard handoff policy (copying the spawned `<session>/0` bundle vs suppressing outer step clipboard copy), and `parent_session` / `spawned_sessions` linkage in `<session>/meta.json`.
   3. Headless / machine-readable (`--json` in `F48`) interaction when a step spawns a child session.
-- Target files for downstream implementation: `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/cli.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_run_block.py`.
+- Target files for downstream implementation: `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/cli.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py`, `tests/test_runner.py`.
 
 - Concrete reproduction scenario: running a nested session initializer inside an active step (`todo_md <ID> | agents_bundle role=execute | run_block`) prints the inner `START SESSION` (`BUNDLE`) box (`<child>/0`) inside the outer `[sN/k] START ... [sN/k] END` block output, skips copying `<child>/0` to the clipboard because `IN_RUN_BLOCK=1`, and then triggers the outer `END STEP` (`END`) box's `-> Copy to clipboard?` prompt for the outer step log (with `[sN/k]` wrappers) instead of copying the clean `<child>/0` bundle and suppressing the outer clipboard prompt.
 
@@ -37,7 +37,7 @@
   1. Step execution outcome (`ok`, `exit <rc>`, `not-run`, `syntax-error`, `aborted`, `saved`) derived from structured step metadata or output markers without overloading `END`.
   2. Session lifecycle state (`active` / `bundle-only` / `done` via `<session>/meta.json` `completed` and accumulated `"stats"` from `F42`), `END SESSION` summary metrics, and next actionable step (`Next-Block: sN/<k>`).
   3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
-- Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_run_block.py`.
+- Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
 
 # 🎯 [NEXT] F42: Support marking sessions as completed (--done) with confirmation before reopening
 
@@ -46,12 +46,12 @@
 - Check session completion before `START STEP` (`PLAN`) across normal runs (`<session>/<step>`), `--fix`, and `--retry`:
   - Interactive TTY: display a `SESSION COMPLETED` confirmation box (`-> Reopen session <session>? [y/N/i(nfo)]:` / `prompt_yes_no_box`, default `No`); on confirmation (`y`), clear the completion marker in `meta.json` and proceed directly into `START STEP`, otherwise exit with `NOT RUN`.
   - Non-interactive / headless: auto-reopen and run when `-y`/`--yes` (`RUN_BLOCK_HEADLESS=1`) is set; otherwise fail with `NOT RUN: session <session> is marked as completed (pass -y/--yes to reopen and run)`.
-- Document `END SESSION` and session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md`, plus `src/header.py`, `README.md`, and unit tests in `tests/test_run_block.py`.
+- Document `END SESSION` and session completion rules synchronously in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md`, plus `src/header.py`, `README.md`, and unit tests in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # ⚪ [NEW] F15: Forbid trailing prose after closing fence in block rules
 
 - Tighten Rule 1 in `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so any prose must appear strictly BEFORE the opening code fence and the closing fence must be the exact final 3 characters of the response (never emit text after the closing fence).
-- Rebuild `./run_block` via `build.py` and update `tests/test_run_block.py`.
+- Rebuild `./run_block` via `build.py` and update `tests/test_bundle.py`.
 
 # ⚪ [NEW] F16: Prevent unintended interactive pagers during block execution
 
@@ -66,7 +66,7 @@
 - Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
 - Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.
 - Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
-- Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_run_block.py`.
+- Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_runner.py` and `tests/test_cli.py`.
 
 - Note: `HIDDEN_SESSION_HEADER_KEYS` filtering (`src/config.py`, `src/bundle_plan.py`, `src/ui.py`) is already implemented; remaining scope covers `--list` filtering/columns, `--info [session]`, `--show` `--script`/`--out`, and `--retry <session>`.
 
@@ -75,35 +75,35 @@
 - Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
-- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_run_block.py`.
+- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_runner.py` and `tests/test_safety.py`.
 
 # ⚪ [NEW] F35: Design tamper-evident hash chain and parent-step verification for session history
 
 - Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
-- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_run_block.py`.
+- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # ⚪ [NEW] F36: Design pre-flight sandbox dry-run preview via temporary git worktree
 
 - Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
-- Define how actual mutated files and diff summaries are presented in `START STEP` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_run_block.py`.
+- Define how actual mutated files and diff summaries are presented in `START STEP` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_runner.py` and `tests/test_safety.py`.
 
 # ⚪ [NEW] F37: Design session execution policies and post-step revert guards
 
 - Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Evaluate declarative session-level execution constraints in `meta.json` / `.agents_bundle` (`src/bundle.py`, `src/config.py`), such as allowed write path globs, maximum modified file count, or network-access restrictions.
-- Define enforcement and rollback semantics in `src/runner.py` and `src/safety.py` (pre-execution policy checks plus post-step diff verification with automatic revert on violation) and cover with `tests/test_run_block.py`.
+- Define enforcement and rollback semantics in `src/runner.py` and `src/safety.py` (pre-execution policy checks plus post-step diff verification with automatic revert on violation) and cover with `tests/test_runner.py` and `tests/test_safety.py`.
 
 # ⚪ [NEW] F38: Design explicit parent-step DAG lineage for session branches and retries
 
 - Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
-- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_run_block.py`.
+- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # ⚪ [NEW] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture
 
@@ -131,8 +131,8 @@
 
 - Role: plan
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `rxb` (updating embedded block rules, protocol markers, and env vars/compatibility aliases per the ecosystem rename design).
-- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/test_run_block.py`, and `.github/`.
-- Acceptance criteria: `build.py` outputs `rxb`, `install.sh`/`install.ps1` install `rxb` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `rxb`, and `tests/test_run_block.py` passes.
+- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
+- Acceptance criteria: `build.py` outputs `rxb`, `install.sh`/`install.ps1` install `rxb` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `rxb`, and `python3 -m unittest discover -s tests` passes.
 
 # ⚪ [NEW] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
@@ -142,12 +142,12 @@
 - Improve root-cause `Error:` extraction and failure hints in `END STEP` (`src/runner.py` `run_script()`): parse structured `Traceback` / `AssertionError` / `SyntaxError` (`file:line` and exception summary) from captured `stderr` instead of showing only generic runner tails like `FAILED (failures=1)`, and when `AssertionError: '<needle>' not found in ...` occurs, surface the closest matching line from the captured output.
 - Add code-context snippets (`+-2` lines) and escaping hints on `SyntaxError` / `IndentationError` in `--fix` (`cmd_fix()`) and shell/heredoc syntax failures (`_validate_step_script_syntax()` in `src/runner.py`, `src/safety.py`), including truncated heredoc or accidental fence/delimiter breakages.
 - Coordinate prompt keys and box titles with `F71` (`START STEP` / `END STEP` and `[Y/n/...]` conventions) and `F54` (`i(nfo)` unified viewer).
-- Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `README.md`, `tests/test_run_block.py`.
+- Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `README.md`, `tests/test_runner.py`, `tests/test_ui.py`.
 
 # ⚪ [NEW] B12: Stabilize flaky test_f56_progress_alignment_colors_and_silent_collapse (stdout/stderr ordering in live progress output)
 
 - Role: work
-Intermittent failure observed in `tests/test_run_block.py` `test_f56_progress_alignment_colors_and_silent_collapse`: the `live_e2e` assertion expects `hello_f56` directly followed by the `✓ [2/3] (` line, but `err_f56` from the next operation (`echo err_f56 >&2`) sometimes appears in between.
+Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment_colors_and_silent_collapse`: the `live_e2e` assertion expects `hello_f56` directly followed by the `✓ [2/3] (` line, but `err_f56` from the next operation (`echo err_f56 >&2`) sometimes appears in between.
 - Suspected cause (unconfirmed): ordering race between separately read child `stdout` and `stderr` descriptors merged into `out` in `src/runner.py`.
 - Step 1: read the stream merge and progress rendering in `src/runner.py`, reproduce with a loop of about 30 runs of the single test.
 - Step 2: if cross-stream ordering is intentionally not guaranteed, relax the test; if it is an output defect, fix `src/runner.py` and keep the assertion.
@@ -159,4 +159,4 @@ Intermittent failure observed in `tests/test_run_block.py` `test_f56_progress_al
 - Context: `p(art)` in the `START SESSION` `i(nfo)` viewer asks for a part number (`_read_part_number`, `_browse_parts` in `src/ui.py`), but the `Parts` tree shows no numbers and its order (bundle/external groups, chain nesting from `_collect_hierarchy_rows` in `src/bundle_plan.py`) differs from the plan `index` order, so users cannot tell which number to type.
 - Add a cursor mode to the `Parts` list in `_build_info_screen` / `_show_info_fullscreen`: `p(art)` enters the mode, `Up`/`Down` (`j`/`k`) move a highlighted row, `Enter` opens that part in the existing part viewer (`_build_part_screen`), `Esc` returns to plain scrolling. Group/bundle node rows with several children are skipped or open their first part.
 - Carry the part `index` on the table row dicts built by `_make_table_row` so a highlighted row maps to `extract_bundle_part`, without adding numeric prefixes to the tree; keep `PART N/M` in the viewer title and `n`/`N` browsing.
-- Keep the numeric prompt only if it stays cheap (fallback for narrow terminals); update `README.md` `i(nfo)` description and unit tests in `tests/test_run_block.py`, rebuild `run_block` via `build.py`. Release as `PATCH`.
+- Keep the numeric prompt only if it stays cheap (fallback for narrow terminals); update `README.md` `i(nfo)` description and unit tests in `tests/test_ui.py` and `tests/test_bundle.py`, rebuild `run_block` via `build.py`. Release as `PATCH`.
