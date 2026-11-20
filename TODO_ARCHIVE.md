@@ -1,3 +1,16 @@
+# ✅ [DONE] F73: Support -p/--prompt flag to embed prompt text into session bundle — *2026-11-20, Added repeatable -p/--prompt flag to embed prompt text into session bundle across TTY and piped start modes*
+
+- Depends on: F66
+- Add repeatable `-p TEXT` / `--prompt TEXT` CLI options in `src/cli.py` and `cmd_start()` (`src/bundle.py`), joining multiple non-empty values with `\n\n` (ignoring whitespace-only values) symmetrically with `agents_bundle`.
+- Support `-p` / `--prompt` across all session-creation modes: bare `run_block -p "..."` and `run_block --start -p "..."` in TTY without `stdin`, and piped `<cmd> | run_block -p "..."` / `<cmd> | run_block --start -p "..."`, combined with `--session`, `--sandbox`, and `--force`.
+- Reject `-p` / `--prompt` with an explicit CLI usage error when passed to incompatible commands (`<session>/<step>`, `--fix`, `--retry`, `--list`, `--show`, `--plan`, `--bundle-plan`, `--clean`, `--sandbox`, `--update`, `--check-update`).
+- Embed the prompt cleanly into the bundle body in `format_start_bundle()` (`src/bundle.py`) and `src/bundle_plan.py`:
+  - When `stdin` is empty (or wrapped as `===== Prompt =====` by `F66`), include `===== Prompt =====` with the `-p` text alongside embedded `===== Rules =====`.
+  - When `stdin` already ends with a `===== Prompt =====` section (including boundary-marked fragments from `agents_bundle`), append `\n\n<prompt>` inside that trailing `===== Prompt =====` section (before `<!-- bundle:<nonce>:end -->` if present) without duplicating the section header.
+  - When `stdin` has other sections without a trailing `===== Prompt =====`, append `===== Prompt =====\n<prompt>` at the end and register it in `bundle_plan` as `kind: "prompt"` (`name: "Prompt"`) even when `Bundle-Boundary` is active.
+- Coordinate with `F69` (`0.raw` preservation) and `F57` (`a(ppend)`): ensure `0.raw` and clean `<session>/0` stay consistent and `bundle_plan` counts the embedded prompt accurately.
+- Update `--help` in `src/header.py`, `README.md`, `src/rules/blocks/bash.md` / `src/rules/blocks/pwsh.md` if applicable, add offline tests in `tests/test_run_block.py`, and rebuild `./run_block` via `build.py`.
+
 # ✅ [DONE] F64: Record part line ranges and support viewing individual parts by number in Details and CLI — *2026-11-19*
 
 - Depends on: F63, F54, F68

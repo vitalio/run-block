@@ -73,33 +73,86 @@ def cmd_update(force: bool = False, url: str | None = None, target_path: Path | 
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+_SANDBOX_MODE_TOKENS = ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
+
+
+def _extract_prompt_args(argv: list[str]) -> tuple[list[str], list[str]]:
     prog = prog_name()
-    if "-h" in args or "--help" in args:
+    rest: list[str] = []
+    prompts: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-p", "--prompt"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires an argument")
+            prompts.append(argv[i + 1])
+            i += 2
+        elif a.startswith("--prompt="):
+            prompts.append(a.split("=", 1)[1])
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return rest, prompts
+
+
+def _reject_prompt_for(command_label: str, usage: str) -> None:
+    prog = prog_name()
+    raise SystemExit(f"{prog}: -p/--prompt cannot be used with {command_label} (usage: {usage})")
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    prog = prog_name()
+    if "-h" in raw_args or "--help" in raw_args:
         sys.stdout.write(usage_text())
         return 0
-    if "-V" in args or "--version" in args:
+    if "-V" in raw_args or "--version" in raw_args:
         sys.stdout.write(f"{prog} {VERSION}\n")
         return 0
+
+    has_bare_sandbox_flag = False
+    for idx, tok in enumerate(raw_args):
+        if tok == "--sandbox":
+            if idx + 1 >= len(raw_args) or raw_args[idx + 1].lower() not in _SANDBOX_MODE_TOKENS:
+                has_bare_sandbox_flag = True
+
+    args, prompt_args = _extract_prompt_args(raw_args)
+
     if args and args[0] == "--plan":
+        if prompt_args:
+            _reject_prompt_for("--plan", f"{prog} --plan < script.sh")
         if len(args) != 1:
             raise SystemExit(f"{prog}: usage: {prog} --plan < script.sh")
         return cmd_plan(sys.stdin.read())
     if args and args[0] == "--bundle-plan":
+        if prompt_args:
+            _reject_prompt_for("--bundle-plan", f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]")
         return cmd_bundle_plan(args[1:])
     if args and args[0] == "--clean":
+        if prompt_args:
+            _reject_prompt_for(
+                "--clean",
+                f"{prog} --clean [--keep N | --older-than DAYS | --max-size MB | --all] [--yes] [session...]",
+            )
         return cmd_clean(args[1:])
 
-    if args and args[0] == "--sandbox":
+    has_start_opt = any(
+        x in ("--start", "--bundle", "--session", "--force") or x.startswith("--session=")
+        for x in args
+    )
+    if args and args[0] == "--sandbox" and not has_start_opt:
         rest_sb = args[1:]
         if not any("/" in x or x.startswith("-") for x in rest_sb):
             has_session_arg = len(rest_sb) >= 2 or (
-                len(rest_sb) == 1
-                and rest_sb[0].lower()
-                not in ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
+                len(rest_sb) == 1 and rest_sb[0].lower() not in _SANDBOX_MODE_TOKENS
             )
-            if in_run_block() or has_session_arg or sys.stdin.isatty():
+            if in_run_block() or has_session_arg or has_bare_sandbox_flag or (
+                sys.stdin.isatty() and not prompt_args
+            ):
+                if prompt_args:
+                    _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
                 return cmd_sandbox(rest_sb)
 
     auto_yes = False
@@ -118,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             sandbox_override = a.split("=", 1)[1] or "strict"
             i += 1
         elif a == "--sandbox":
-            if i + 1 < len(args) and args[i + 1].lower() in ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net"):
+            if i + 1 < len(args) and args[i + 1].lower() in _SANDBOX_MODE_TOKENS:
                 sandbox_override = args[i + 1]
                 i += 2
             else:
@@ -130,26 +183,37 @@ def main(argv: list[str] | None = None) -> int:
     args = filtered
 
     if not args:
-        if sandbox_override is not None and sys.stdin.isatty():
-            return cmd_sandbox([sandbox_override])
-        return cmd_start([], sandbox_override=sandbox_override)
+        if sandbox_override is not None and not has_start_opt:
+            if in_run_block() or has_bare_sandbox_flag or (sys.stdin.isatty() and not prompt_args):
+                if prompt_args:
+                    _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
+                return cmd_sandbox([sandbox_override])
+        return cmd_start([], sandbox_override=sandbox_override, prompt=prompt_args)
 
     if sandbox_override is not None and len(args) == 1 and "/" not in args[0] and not args[0].startswith("-"):
+        if prompt_args:
+            _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
         return cmd_sandbox([sandbox_override, args[0]])
 
     if args[0] in ("--list", "-l"):
+        if prompt_args:
+            _reject_prompt_for(args[0], f"{prog} --list [session]")
         if len(args) > 2:
             raise SystemExit(f"{prog}: usage: {prog} --list [session]")
         return cmd_list(args[1] if len(args) == 2 else None)
 
     if args[0] == "--show":
         show_usage = f"{prog} --show [session[/step]] [--part N]"
+        if prompt_args:
+            _reject_prompt_for("--show", show_usage)
         show_rest, show_part = parse_part_option(args[1:], show_usage)
         if len(show_rest) > 1:
             raise SystemExit(f"{prog}: usage: {show_usage}")
         return cmd_show(show_rest[0] if show_rest else None, part=show_part)
 
     if args[0] in ("--retry", "--rerun"):
+        if prompt_args:
+            _reject_prompt_for(args[0], f"{prog} --retry [-y] [session/step]")
         if len(args) > 2:
             raise SystemExit(f"{prog}: usage: {prog} --retry [-y] [session/step]")
         return cmd_retry(
@@ -157,11 +221,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args[0] == "--check-update":
+        if prompt_args:
+            _reject_prompt_for("--check-update", f"{prog} --check-update")
         if len(args) != 1:
             raise SystemExit(f"{prog}: usage: {prog} --check-update")
         return cmd_check_update()
 
     if args[0] in ("--update", "--self-update"):
+        if prompt_args:
+            _reject_prompt_for(args[0], f"{prog} --update [--force]")
         force = "--force" in args[1:]
         rest = [a for a in args[1:] if a != "--force"]
         if rest:
@@ -169,14 +237,24 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_update(force=force)
 
     if args[0] in ("--start", "--bundle"):
-        return cmd_start(args[1:], sandbox_override=sandbox_override)
+        return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)
 
     if args[0] == "--fix":
+        if prompt_args:
+            _reject_prompt_for("--fix", f"{prog} --fix [-y] <session>/<target>")
         if len(args) != 2:
             raise SystemExit(f"{prog}: usage: {prog} --fix [-y] <session>/<target>")
         return cmd_fix(
             args[1], sys.stdin.read(), auto_yes=auto_yes, sandbox_override=sandbox_override
         )
+
+    if args[0] in ("--session", "--force") or args[0].startswith("--session="):
+        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args)
+
+    if prompt_args:
+        if len(args) == 1 and "/" in args[0] and not args[0].startswith("-"):
+            _reject_prompt_for(args[0], f"{prog} [-y] <session>/<step>")
+        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args)
 
     if len(args) != 1 or args[0].startswith("-"):
         raise SystemExit(

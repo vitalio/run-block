@@ -15,10 +15,12 @@ def format_start_bundle(
     work_dir: Path | None = None,
     now: datetime | None = None,
     sandbox_mode: str | None = None,
+    prompt: str | list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     stdin_headers, raw_body = parse_stdin_preamble(stdin_body)
     boundary = get_bundle_boundary(stdin_headers)
     raw_body = inject_embedded_block_rule(raw_body, boundary=boundary)
+    raw_body = inject_embedded_prompt(raw_body, prompt=prompt, boundary=boundary)
     clean_body, bundle_plan = parse_bundle_fragments(raw_body, boundary=boundary)
     exposed_headers = filter_exposed_headers(stdin_headers)
     if work_dir is not None:
@@ -63,6 +65,7 @@ def format_start_bundle(
     return {
         "console_lines": console_lines,
         "full": full_text,
+        "raw_body": raw_body,
         "stdin_headers": stdin_headers,
         "exposed_headers": exposed_headers,
         "bundle_plan": bundle_plan,
@@ -102,11 +105,25 @@ def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
     write_private(bundle_path, "\n".join(lines) + "\n", overwrite=True)
 
 
-def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: str | None = None) -> int:
+def cmd_start(
+    argv: list[str],
+    stdin_text: str | None = None,
+    sandbox_override: str | None = None,
+    prompt: str | list[str] | tuple[str, ...] | None = None,
+) -> int:
     prog = prog_name()
+    start_usage = (
+        f"{prog}: usage: <command> | {prog} [--start] [-p TEXT] [--session NAME] [--sandbox [MODE]] [--force]"
+    )
     force = False
     session_arg: str | None = None
     sb_arg: str | None = sandbox_override
+    prompts: list[str] = []
+    if prompt is not None:
+        if isinstance(prompt, str):
+            prompts.append(prompt)
+        else:
+            prompts.extend(str(p) for p in prompt)
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -131,18 +148,28 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
                 raise SystemExit(f"{prog}: --session requires an argument")
             session_arg = argv[i + 1]
             i += 2
+        elif a.startswith("--session="):
+            val = a.split("=", 1)[1]
+            if not val:
+                raise SystemExit(f"{prog}: --session requires an argument")
+            session_arg = val
+            i += 1
+        elif a in ("-p", "--prompt"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires an argument")
+            prompts.append(argv[i + 1])
+            i += 2
+        elif a.startswith("--prompt="):
+            prompts.append(a.split("=", 1)[1])
+            i += 1
         elif a.startswith("-"):
-            raise SystemExit(
-                f"{prog}: usage: <command> | {prog} [--start] [--session NAME] [--sandbox [MODE]] [--force]"
-            )
+            raise SystemExit(start_usage)
         else:
             if session_arg is None and re.fullmatch(r"s\d+", a):
                 session_arg = a
                 i += 1
             else:
-                raise SystemExit(
-                    f"{prog}: usage: <command> | {prog} [--start] [--session NAME] [--sandbox [MODE]] [--force]"
-                )
+                raise SystemExit(start_usage)
 
     if stdin_text is None:
         stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
@@ -150,7 +177,12 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     sdir = start_session(session_arg, force=force, sandbox_mode=sb_arg)
     session_name = sdir.name
     bundle_path = sdir / "0"
-    res = format_start_bundle(session_name=session_name, stdin_body=stdin_text, sandbox_mode=sb_arg)
+    res = format_start_bundle(
+        session_name=session_name,
+        stdin_body=stdin_text,
+        sandbox_mode=sb_arg,
+        prompt=prompts,
+    )
     write_private(bundle_path, str(res["full"]), overwrite=True)
     stdin_headers = list(res.get("stdin_headers") or [])
     bundle_plan = res.get("bundle_plan")

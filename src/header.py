@@ -13,7 +13,8 @@
   {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
-  {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force)
+  {prog} -p | --prompt TEXT          Embed repeatable prompt text into the started session bundle (===== Prompt =====)
+  {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force, -p/--prompt TEXT)
   {prog} --update [--force]          Self-update {prog} from GitHub (vitalio/run_block)
   {prog} --check-update              Check if a newer version is available
   {prog} -V | --version              Print version and exit 0

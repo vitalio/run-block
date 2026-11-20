@@ -33,8 +33,11 @@ and open `START SESSION`, or pipe any context bundle on `stdin` into `run_block`
 inject the terminal block rules into `===== Rules =====` (deduplicating against
 existing `blocks/bash` / `blocks/pwsh` rule parts or `## Terminal blocks (`
 headings, and wrapping unlabeled plain `stdin` text under `===== Prompt =====`)
-and copy
-`<session>/0` to your clipboard.
+and copy `<session>/0` to your clipboard. Pass repeatable `-p TEXT` / `--prompt TEXT`
+options on bare `run_block`, `<command> | run_block`, or `run_block --start` to
+embed or append prompt text into the trailing `===== Prompt =====` section (joining
+multiple non-empty values with `\n\n`, ignoring whitespace-only values, and
+registering `kind: "prompt"` in `bundle_plan`).
 Optional leading `Key: Value` header lines on `stdin` (separated from the
 body by a blank line) are parsed into `<session>/meta.json`. Exposed
 non-transport headers (such as `Role:`, `Task:`, `Title:`) are displayed in
@@ -85,8 +88,9 @@ Git root and written to `<session>/0`:
 
 ```bash
 run_block
-cat context.txt | run_block
-run_block --start --session s1 < context.txt
+run_block -p "Investigate failing test"
+cat context.txt | run_block -p "Focus on edge cases"
+run_block --start --session s1 -p "Implement feature" < context.txt
 ```
 
 ## Running and Fixing Blocks
@@ -188,8 +192,8 @@ RUN_FIX
 
 | Command | Description |
 | :--- | :--- |
-| `run_block` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`) |
-| `<command> \| run_block` | Start a new session from `stdin` context bundle into `<session>/0` |
+| `run_block [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
+| `<command> \| run_block [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
 | `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
 | `run_block --bundle-plan [<session>] [--json] [--full] [--part N]` | Summarize bundle parts and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
@@ -200,7 +204,7 @@ RUN_FIX
 | `run_block --show [<session>[/0]] --part N` | Print only part `N` (1-based part `index` from `--bundle-plan --json`) of `<session>/0` (latest session when omitted); exits non-zero for non-zero steps or out-of-range parts |
 | `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
 | `run_block --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
-| `run_block --start [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
+| `run_block --start [-p TEXT] [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
 | `run_block --update [--force]` | Self-update `run_block` from GitHub (`vitalio/run_block`) |
 | `run_block --check-update` | Check GitHub for a newer version |
 | `run_block -V`, `--version` | Print version and exit `0` |

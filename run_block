@@ -13,7 +13,8 @@
   {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
-  {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force)
+  {prog} -p | --prompt TEXT          Embed repeatable prompt text into the started session bundle (===== Prompt =====)
+  {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force, -p/--prompt TEXT)
   {prog} --update [--force]          Self-update {prog} from GitHub (vitalio/run_block)
   {prog} --check-update              Check if a newer version is available
   {prog} -V | --version              Print version and exit 0
@@ -64,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.24.0"
+VERSION = "0.25.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = "## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<'RUN_BLOCK'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<'RUN_BLOCK'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<'RUN_FIX'\nold = 'wrong_command'\nnew = 'right_command'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead."
@@ -6269,6 +6270,133 @@ def inject_embedded_block_rule(
     return f"===== Rules =====\n{rule_text}\n\n===== Prompt =====\n{stripped}"
 
 
+def normalize_prompt_text(prompt: str | list[str] | tuple[str, ...] | None) -> str:
+    if prompt is None:
+        return ""
+    items = [prompt] if isinstance(prompt, str) else list(prompt)
+    cleaned: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        norm = item.replace("\r\n", "\n").strip("\n")
+        if norm.strip():
+            cleaned.append(norm.strip())
+    return "\n\n".join(cleaned)
+
+
+def _append_to_unframed_prompt_tail(
+    lines: list[str], start_idx: int, prompt_lines: list[str]
+) -> list[str] | None:
+    last_sec_idx: int | None = None
+    last_sec_title = ""
+    for idx in range(start_idx, len(lines)):
+        m = SECTION_HEADER_RE.match(lines[idx].strip())
+        if m:
+            last_sec_idx = idx
+            last_sec_title = m.group(1).strip().lower()
+    if last_sec_idx is None or last_sec_title != "prompt":
+        return None
+    trimmed = list(lines)
+    while trimmed and not trimmed[-1].strip():
+        trimmed.pop()
+    has_body = any(ln.strip() for ln in trimmed[last_sec_idx + 1 :])
+    if has_body:
+        return [*trimmed, "", *prompt_lines]
+    return [*trimmed[: last_sec_idx + 1], *prompt_lines]
+
+
+def inject_embedded_prompt(
+    raw_body: str,
+    prompt: str | list[str] | tuple[str, ...] | None = None,
+    boundary: str | None = None,
+) -> str:
+    prompt_text = normalize_prompt_text(prompt)
+    norm_body = (raw_body or "").replace("\r\n", "\n")
+    if not prompt_text:
+        return norm_body
+    prompt_lines = prompt_text.splitlines()
+    boundary_val = (boundary or "").strip() or None
+    lines = norm_body.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if boundary_val:
+        esc = re.escape(boundary_val)
+        part_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:part(?:\s+(\{{.*\}}))?\s*-->\s*$")
+        end_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:end\s*-->\s*$")
+        last_end_idx: int | None = None
+        for idx, line in enumerate(lines):
+            if end_re.match(line):
+                last_end_idx = idx
+        if last_end_idx is not None:
+            tail_after_end = lines[last_end_idx + 1 :]
+            if any(ln.strip() for ln in tail_after_end):
+                updated = _append_to_unframed_prompt_tail(lines, last_end_idx + 1, prompt_lines)
+                if updated is not None:
+                    return "\n".join(updated)
+            else:
+                last_part_idx: int | None = None
+                last_meta: dict[str, object] = {}
+                for idx in range(last_end_idx - 1, -1, -1):
+                    m_part = part_re.match(lines[idx])
+                    if m_part:
+                        last_part_idx = idx
+                        if m_part.group(1):
+                            try:
+                                parsed = json.loads(m_part.group(1))
+                                if isinstance(parsed, dict):
+                                    last_meta = parsed
+                            except ValueError:
+                                pass
+                        break
+                if last_part_idx is not None:
+                    part_kind = str(last_meta.get("kind") or "").strip().lower()
+                    inner = list(lines[last_part_idx + 1 : last_end_idx])
+                    while inner and not inner[-1].strip():
+                        inner.pop()
+                    first_inner = next((ln.strip() for ln in inner if ln.strip()), "")
+                    m_inner_sec = SECTION_HEADER_RE.match(first_inner) if first_inner else None
+                    prev_nonempty = next(
+                        (lines[j].strip() for j in range(last_part_idx - 1, -1, -1) if lines[j].strip()),
+                        "",
+                    )
+                    m_prev_sec = SECTION_HEADER_RE.match(prev_nonempty) if prev_nonempty else None
+                    is_prompt_part = part_kind == "prompt" or (
+                        part_kind in ("", "section")
+                        and (
+                            (m_inner_sec is not None and m_inner_sec.group(1).strip().lower() == "prompt")
+                            or (m_prev_sec is not None and m_prev_sec.group(1).strip().lower() == "prompt")
+                        )
+                    )
+                    if is_prompt_part:
+                        non_empty_inner = [ln for ln in inner if ln.strip()]
+                        only_header = (
+                            len(non_empty_inner) == 1
+                            and SECTION_HEADER_RE.match(non_empty_inner[0].strip()) is not None
+                        )
+                        prefix = [*lines[: last_part_idx + 1], *inner]
+                        if non_empty_inner and not only_header:
+                            prefix.append("")
+                        return "\n".join([*prefix, *prompt_lines, lines[last_end_idx]])
+            part_meta = json.dumps({"kind": "prompt", "name": "Prompt"}, ensure_ascii=False)
+            prompt_block = [
+                f"<!-- bundle:{boundary_val}:part {part_meta} -->",
+                "===== Prompt =====",
+                *prompt_lines,
+                f"<!-- bundle:{boundary_val}:end -->",
+            ]
+            if lines:
+                return "\n".join([*lines, "", *prompt_block])
+            return "\n".join(prompt_block)
+
+    updated_plain = _append_to_unframed_prompt_tail(lines, 0, prompt_lines)
+    if updated_plain is not None:
+        return "\n".join(updated_plain)
+    if lines:
+        return "\n".join([*lines, "", "===== Prompt =====", *prompt_lines])
+    return "\n".join(["===== Prompt =====", *prompt_lines])
+
+
 def _parse_header_filter_tokens(raw: str) -> set[str]:
     tokens: set[str] = set()
     for tok in re.split(r"[\s,]+", raw or ""):
@@ -6843,6 +6971,21 @@ def _split_section_fallback(norm_text: str, boundary_val: str | None) -> tuple[s
     return clean_body, plan
 
 
+def _collect_unframed_parts(
+    unframed_lines: list[str],
+    *,
+    is_first: bool,
+) -> list[tuple[dict[str, object], list[str]]]:
+    real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
+    while real_unframed and not real_unframed[0].strip():
+        real_unframed.pop(0)
+    while real_unframed and not real_unframed[-1].strip():
+        real_unframed.pop()
+    if any(x.strip() for x in real_unframed):
+        return [(_infer_section_meta(None, is_sections=True, is_preamble=is_first), real_unframed)]
+    return []
+
+
 def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple[str, dict[str, object]]:
     if not body_text:
         return "", _build_bundle_plan("empty", boundary, [])
@@ -6870,13 +7013,7 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
                 if in_part:
                     raw_parts.append((cur_meta, cur_lines))
                 else:
-                    real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
-                    while real_unframed and not real_unframed[0].strip():
-                        real_unframed.pop(0)
-                    while real_unframed and not real_unframed[-1].strip():
-                        real_unframed.pop()
-                    if any(x.strip() for x in real_unframed):
-                        raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(len(raw_parts) == 0)), real_unframed))
+                    raw_parts.extend(_collect_unframed_parts(unframed_lines, is_first=(len(raw_parts) == 0)))
                 unframed_lines = []
                 in_part = True
                 cur_lines = []
@@ -6909,13 +7046,7 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
         if in_part:
             raw_parts.append((cur_meta, cur_lines))
         else:
-            real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
-            while real_unframed and not real_unframed[0].strip():
-                real_unframed.pop(0)
-            while real_unframed and not real_unframed[-1].strip():
-                real_unframed.pop()
-            if any(x.strip() for x in real_unframed):
-                raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(len(raw_parts) == 0)), real_unframed))
+            raw_parts.extend(_collect_unframed_parts(unframed_lines, is_first=(len(raw_parts) == 0)))
 
         if found_markers > 0:
             clean_body = "\n".join(stripped_lines)
@@ -9394,10 +9525,12 @@ def format_start_bundle(
     work_dir: Path | None = None,
     now: datetime | None = None,
     sandbox_mode: str | None = None,
+    prompt: str | list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     stdin_headers, raw_body = parse_stdin_preamble(stdin_body)
     boundary = get_bundle_boundary(stdin_headers)
     raw_body = inject_embedded_block_rule(raw_body, boundary=boundary)
+    raw_body = inject_embedded_prompt(raw_body, prompt=prompt, boundary=boundary)
     clean_body, bundle_plan = parse_bundle_fragments(raw_body, boundary=boundary)
     exposed_headers = filter_exposed_headers(stdin_headers)
     if work_dir is not None:
@@ -9442,6 +9575,7 @@ def format_start_bundle(
     return {
         "console_lines": console_lines,
         "full": full_text,
+        "raw_body": raw_body,
         "stdin_headers": stdin_headers,
         "exposed_headers": exposed_headers,
         "bundle_plan": bundle_plan,
@@ -9481,11 +9615,25 @@ def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
     write_private(bundle_path, "\n".join(lines) + "\n", overwrite=True)
 
 
-def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: str | None = None) -> int:
+def cmd_start(
+    argv: list[str],
+    stdin_text: str | None = None,
+    sandbox_override: str | None = None,
+    prompt: str | list[str] | tuple[str, ...] | None = None,
+) -> int:
     prog = prog_name()
+    start_usage = (
+        f"{prog}: usage: <command> | {prog} [--start] [-p TEXT] [--session NAME] [--sandbox [MODE]] [--force]"
+    )
     force = False
     session_arg: str | None = None
     sb_arg: str | None = sandbox_override
+    prompts: list[str] = []
+    if prompt is not None:
+        if isinstance(prompt, str):
+            prompts.append(prompt)
+        else:
+            prompts.extend(str(p) for p in prompt)
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -9510,18 +9658,28 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
                 raise SystemExit(f"{prog}: --session requires an argument")
             session_arg = argv[i + 1]
             i += 2
+        elif a.startswith("--session="):
+            val = a.split("=", 1)[1]
+            if not val:
+                raise SystemExit(f"{prog}: --session requires an argument")
+            session_arg = val
+            i += 1
+        elif a in ("-p", "--prompt"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires an argument")
+            prompts.append(argv[i + 1])
+            i += 2
+        elif a.startswith("--prompt="):
+            prompts.append(a.split("=", 1)[1])
+            i += 1
         elif a.startswith("-"):
-            raise SystemExit(
-                f"{prog}: usage: <command> | {prog} [--start] [--session NAME] [--sandbox [MODE]] [--force]"
-            )
+            raise SystemExit(start_usage)
         else:
             if session_arg is None and re.fullmatch(r"s\d+", a):
                 session_arg = a
                 i += 1
             else:
-                raise SystemExit(
-                    f"{prog}: usage: <command> | {prog} [--start] [--session NAME] [--sandbox [MODE]] [--force]"
-                )
+                raise SystemExit(start_usage)
 
     if stdin_text is None:
         stdin_text = "" if sys.stdin.isatty() else sys.stdin.read()
@@ -9529,7 +9687,12 @@ def cmd_start(argv: list[str], stdin_text: str | None = None, sandbox_override: 
     sdir = start_session(session_arg, force=force, sandbox_mode=sb_arg)
     session_name = sdir.name
     bundle_path = sdir / "0"
-    res = format_start_bundle(session_name=session_name, stdin_body=stdin_text, sandbox_mode=sb_arg)
+    res = format_start_bundle(
+        session_name=session_name,
+        stdin_body=stdin_text,
+        sandbox_mode=sb_arg,
+        prompt=prompts,
+    )
     write_private(bundle_path, str(res["full"]), overwrite=True)
     stdin_headers = list(res.get("stdin_headers") or [])
     bundle_plan = res.get("bundle_plan")
@@ -9651,33 +9814,86 @@ def cmd_update(force: bool = False, url: str | None = None, target_path: Path | 
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
+_SANDBOX_MODE_TOKENS = ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
+
+
+def _extract_prompt_args(argv: list[str]) -> tuple[list[str], list[str]]:
     prog = prog_name()
-    if "-h" in args or "--help" in args:
+    rest: list[str] = []
+    prompts: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-p", "--prompt"):
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog}: {a} requires an argument")
+            prompts.append(argv[i + 1])
+            i += 2
+        elif a.startswith("--prompt="):
+            prompts.append(a.split("=", 1)[1])
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return rest, prompts
+
+
+def _reject_prompt_for(command_label: str, usage: str) -> None:
+    prog = prog_name()
+    raise SystemExit(f"{prog}: -p/--prompt cannot be used with {command_label} (usage: {usage})")
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    prog = prog_name()
+    if "-h" in raw_args or "--help" in raw_args:
         sys.stdout.write(usage_text())
         return 0
-    if "-V" in args or "--version" in args:
+    if "-V" in raw_args or "--version" in raw_args:
         sys.stdout.write(f"{prog} {VERSION}\n")
         return 0
+
+    has_bare_sandbox_flag = False
+    for idx, tok in enumerate(raw_args):
+        if tok == "--sandbox":
+            if idx + 1 >= len(raw_args) or raw_args[idx + 1].lower() not in _SANDBOX_MODE_TOKENS:
+                has_bare_sandbox_flag = True
+
+    args, prompt_args = _extract_prompt_args(raw_args)
+
     if args and args[0] == "--plan":
+        if prompt_args:
+            _reject_prompt_for("--plan", f"{prog} --plan < script.sh")
         if len(args) != 1:
             raise SystemExit(f"{prog}: usage: {prog} --plan < script.sh")
         return cmd_plan(sys.stdin.read())
     if args and args[0] == "--bundle-plan":
+        if prompt_args:
+            _reject_prompt_for("--bundle-plan", f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]")
         return cmd_bundle_plan(args[1:])
     if args and args[0] == "--clean":
+        if prompt_args:
+            _reject_prompt_for(
+                "--clean",
+                f"{prog} --clean [--keep N | --older-than DAYS | --max-size MB | --all] [--yes] [session...]",
+            )
         return cmd_clean(args[1:])
 
-    if args and args[0] == "--sandbox":
+    has_start_opt = any(
+        x in ("--start", "--bundle", "--session", "--force") or x.startswith("--session=")
+        for x in args
+    )
+    if args and args[0] == "--sandbox" and not has_start_opt:
         rest_sb = args[1:]
         if not any("/" in x or x.startswith("-") for x in rest_sb):
             has_session_arg = len(rest_sb) >= 2 or (
-                len(rest_sb) == 1
-                and rest_sb[0].lower()
-                not in ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
+                len(rest_sb) == 1 and rest_sb[0].lower() not in _SANDBOX_MODE_TOKENS
             )
-            if in_run_block() or has_session_arg or sys.stdin.isatty():
+            if in_run_block() or has_session_arg or has_bare_sandbox_flag or (
+                sys.stdin.isatty() and not prompt_args
+            ):
+                if prompt_args:
+                    _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
                 return cmd_sandbox(rest_sb)
 
     auto_yes = False
@@ -9696,7 +9912,7 @@ def main(argv: list[str] | None = None) -> int:
             sandbox_override = a.split("=", 1)[1] or "strict"
             i += 1
         elif a == "--sandbox":
-            if i + 1 < len(args) and args[i + 1].lower() in ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net"):
+            if i + 1 < len(args) and args[i + 1].lower() in _SANDBOX_MODE_TOKENS:
                 sandbox_override = args[i + 1]
                 i += 2
             else:
@@ -9708,26 +9924,37 @@ def main(argv: list[str] | None = None) -> int:
     args = filtered
 
     if not args:
-        if sandbox_override is not None and sys.stdin.isatty():
-            return cmd_sandbox([sandbox_override])
-        return cmd_start([], sandbox_override=sandbox_override)
+        if sandbox_override is not None and not has_start_opt:
+            if in_run_block() or has_bare_sandbox_flag or (sys.stdin.isatty() and not prompt_args):
+                if prompt_args:
+                    _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
+                return cmd_sandbox([sandbox_override])
+        return cmd_start([], sandbox_override=sandbox_override, prompt=prompt_args)
 
     if sandbox_override is not None and len(args) == 1 and "/" not in args[0] and not args[0].startswith("-"):
+        if prompt_args:
+            _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
         return cmd_sandbox([sandbox_override, args[0]])
 
     if args[0] in ("--list", "-l"):
+        if prompt_args:
+            _reject_prompt_for(args[0], f"{prog} --list [session]")
         if len(args) > 2:
             raise SystemExit(f"{prog}: usage: {prog} --list [session]")
         return cmd_list(args[1] if len(args) == 2 else None)
 
     if args[0] == "--show":
         show_usage = f"{prog} --show [session[/step]] [--part N]"
+        if prompt_args:
+            _reject_prompt_for("--show", show_usage)
         show_rest, show_part = parse_part_option(args[1:], show_usage)
         if len(show_rest) > 1:
             raise SystemExit(f"{prog}: usage: {show_usage}")
         return cmd_show(show_rest[0] if show_rest else None, part=show_part)
 
     if args[0] in ("--retry", "--rerun"):
+        if prompt_args:
+            _reject_prompt_for(args[0], f"{prog} --retry [-y] [session/step]")
         if len(args) > 2:
             raise SystemExit(f"{prog}: usage: {prog} --retry [-y] [session/step]")
         return cmd_retry(
@@ -9735,11 +9962,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args[0] == "--check-update":
+        if prompt_args:
+            _reject_prompt_for("--check-update", f"{prog} --check-update")
         if len(args) != 1:
             raise SystemExit(f"{prog}: usage: {prog} --check-update")
         return cmd_check_update()
 
     if args[0] in ("--update", "--self-update"):
+        if prompt_args:
+            _reject_prompt_for(args[0], f"{prog} --update [--force]")
         force = "--force" in args[1:]
         rest = [a for a in args[1:] if a != "--force"]
         if rest:
@@ -9747,14 +9978,24 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_update(force=force)
 
     if args[0] in ("--start", "--bundle"):
-        return cmd_start(args[1:], sandbox_override=sandbox_override)
+        return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)
 
     if args[0] == "--fix":
+        if prompt_args:
+            _reject_prompt_for("--fix", f"{prog} --fix [-y] <session>/<target>")
         if len(args) != 2:
             raise SystemExit(f"{prog}: usage: {prog} --fix [-y] <session>/<target>")
         return cmd_fix(
             args[1], sys.stdin.read(), auto_yes=auto_yes, sandbox_override=sandbox_override
         )
+
+    if args[0] in ("--session", "--force") or args[0].startswith("--session="):
+        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args)
+
+    if prompt_args:
+        if len(args) == 1 and "/" in args[0] and not args[0].startswith("-"):
+            _reject_prompt_for(args[0], f"{prog} [-y] <session>/<step>")
+        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args)
 
     if len(args) != 1 or args[0].startswith("-"):
         raise SystemExit(

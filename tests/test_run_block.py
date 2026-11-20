@@ -5516,6 +5516,219 @@ class TestRunBlock(unittest.TestCase):
             self.assertIn(f"PART {idx['p1']}/{total}", shown)
             self.assertIn("Do the task", shown)
 
+    def test_f73_prompt_flag_embedding_and_cli_validation(self):
+        proj = self.tmp / "f73_proj"
+        proj.mkdir()
+        nonce = "f73nonce"
+
+        # 1. Empty stdin: includes ===== Rules ===== and ===== Prompt ===== with joined repeatable prompts
+        res_empty = self.mod.format_start_bundle(
+            "s1",
+            stdin_body="",
+            work_dir=proj,
+            prompt=["First prompt", "   \n\t  ", "Second prompt"],
+        )
+        full_empty = str(res_empty["full"])
+        self.assertIn("===== Rules =====\n## Terminal blocks (`", full_empty)
+        self.assertIn("\n\n===== Prompt =====\nFirst prompt\n\nSecond prompt\n", full_empty)
+        plan_empty = res_empty["bundle_plan"]
+        self.assertEqual([p["kind"] for p in plan_empty["parts"]], ["rules", "prompt"])
+        self.assertEqual(plan_empty["parts"][1]["name"], "Prompt")
+        _, part2_txt = self.mod.extract_bundle_part(plan_empty, full_empty, 2)
+        self.assertEqual(part2_txt, "===== Prompt =====\nFirst prompt\n\nSecond prompt\n")
+
+        # Whitespace-only prompts are ignored completely
+        res_ws = self.mod.format_start_bundle("s1", stdin_body="", work_dir=proj, prompt=["", "   "])
+        self.assertNotIn("===== Prompt =====", str(res_ws["full"]))
+        self.assertEqual(len(res_ws["bundle_plan"]["parts"]), 1)
+
+        # 2. Unlabeled plain stdin wrapped as ===== Prompt ===== by F66: appends \n\n<prompt> without duplicate header
+        res_plain = self.mod.format_start_bundle(
+            "s2",
+            stdin_body="Unlabeled base request\n",
+            work_dir=proj,
+            prompt="Extra instruction",
+        )
+        full_plain = str(res_plain["full"])
+        self.assertEqual(full_plain.count("===== Prompt ====="), 1)
+        self.assertIn("===== Prompt =====\nUnlabeled base request\n\nExtra instruction\n", full_plain)
+        self.assertEqual([p["kind"] for p in res_plain["bundle_plan"]["parts"]], ["rules", "prompt"])
+
+        # 3. Trailing ===== Prompt ===== section (plain and boundary-marked): appends inside trailing section
+        res_trail_plain = self.mod.format_start_bundle(
+            "s3",
+            stdin_body="===== Rules =====\nRule A\n\n===== Prompt =====\nBase task\n",
+            work_dir=proj,
+            prompt=["Follow-up 1", "Follow-up 2"],
+        )
+        full_trail_plain = str(res_trail_plain["full"])
+        self.assertEqual(full_trail_plain.count("===== Prompt ====="), 1)
+        self.assertIn("===== Prompt =====\nBase task\n\nFollow-up 1\n\nFollow-up 2\n", full_trail_plain)
+
+        boundary_with_prompt = (
+            f"Bundle-Boundary: {nonce}\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind": "rule", "id": "pkg:r1", "chain": ["pkg"]}} -->\n'
+            "Rule content\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind": "prompt", "name": "Prompt", "chain": []}} -->\n'
+            "===== Prompt =====\n"
+            "Piped bundle prompt\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_trail_bnd = self.mod.format_start_bundle(
+            "s4",
+            stdin_body=boundary_with_prompt,
+            work_dir=proj,
+            prompt="CLI extra prompt",
+        )
+        full_trail_bnd = str(res_trail_bnd["full"])
+        raw_trail_bnd = str(res_trail_bnd["raw_body"])
+        self.assertEqual(full_trail_bnd.count("===== Prompt ====="), 1)
+        self.assertIn("===== Prompt =====\nPiped bundle prompt\n\nCLI extra prompt\n", full_trail_bnd)
+        self.assertNotIn(f"bundle:{nonce}", full_trail_bnd)
+        self.assertIn(f"Piped bundle prompt\n\nCLI extra prompt\n<!-- bundle:{nonce}:end -->", raw_trail_bnd)
+        plan_trail_bnd = res_trail_bnd["bundle_plan"]
+        self.assertEqual([p["kind"] for p in plan_trail_bnd["parts"]], ["rule", "rule", "prompt"])
+        _, bnd_prompt_chunk = self.mod.extract_bundle_part(plan_trail_bnd, full_trail_bnd, 3)
+        self.assertEqual(bnd_prompt_chunk, "===== Prompt =====\nPiped bundle prompt\n\nCLI extra prompt\n")
+
+        # 4. Other sections without trailing ===== Prompt ===== (with and without Bundle-Boundary)
+        boundary_no_prompt = (
+            f"Bundle-Boundary: {nonce}\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind": "rule", "id": "pkg:r1", "chain": ["pkg"]}} -->\n'
+            "Rule content\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind": "cmd", "name": "git status", "rc": 0, "ms": 5}} -->\n'
+            "===== " + chr(36) + " git status =====\n"
+            "===== Prompt =====\n"
+            "Decoy prompt header inside cmd output\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_other_bnd = self.mod.format_start_bundle(
+            "s5",
+            stdin_body=boundary_no_prompt,
+            work_dir=proj,
+            prompt="Appended final prompt",
+        )
+        full_other_bnd = str(res_other_bnd["full"])
+        self.assertTrue(full_other_bnd.endswith("===== Prompt =====\nAppended final prompt\n"))
+        plan_other_bnd = res_other_bnd["bundle_plan"]
+        self.assertEqual([p["kind"] for p in plan_other_bnd["parts"]], ["rule", "rule", "cmd", "prompt"])
+        self.assertEqual(plan_other_bnd["parts"][-1]["name"], "Prompt")
+        _, bnd_appended_chunk = self.mod.extract_bundle_part(plan_other_bnd, full_other_bnd, 4)
+        self.assertEqual(bnd_appended_chunk, "===== Prompt =====\nAppended final prompt\n")
+
+        # 5. CLI modes (TTY and piped, bare and --start, with --session, --sandbox, --force) & incompatible rejections
+        sessions = self.tmp / "f73_sessions"
+        old_base = self.mod.BASE_DIR
+        old_cwd_env = os.environ.get("RUN_BLOCK_CWD")
+        self.mod.BASE_DIR = sessions
+        os.environ["RUN_BLOCK_CWD"] = str(proj)
+        try:
+            class _FakeTtyIn(io.StringIO):
+                def isatty(self) -> bool:
+                    return True
+
+            with unittest.mock.patch.object(self.mod, "no_clipboard", return_value=True):
+                # Bare run_block -p in TTY without stdin
+                with unittest.mock.patch.object(self.mod.sys, "stdin", _FakeTtyIn()):
+                    buf = io.StringIO()
+                    with contextlib.redirect_stdout(buf):
+                        rc = self.mod.main(["-p", "TTY prompt 1", "-p", "   ", "--prompt", "TTY prompt 2"])
+                    self.assertEqual(rc, 0)
+                    b_s1 = (sessions / "s1" / "0").read_text(encoding="utf-8")
+                    self.assertIn("===== Rules =====\n## Terminal blocks (`", b_s1)
+                    self.assertIn("===== Prompt =====\nTTY prompt 1\n\nTTY prompt 2\n", b_s1)
+
+                    # run_block --start -p in TTY with --session, --sandbox, --force
+                    buf2 = io.StringIO()
+                    with contextlib.redirect_stdout(buf2):
+                        rc2 = self.mod.main([
+                            "--start", "--session", "s1", "--sandbox", "strict", "--force",
+                            "--prompt=Start prompt",
+                        ])
+                    self.assertEqual(rc2, 0)
+                    b_s1_forced = (sessions / "s1" / "0").read_text(encoding="utf-8")
+                    self.assertIn("Sandbox: strict", b_s1_forced)
+                    self.assertIn("===== Prompt =====\nStart prompt\n", b_s1_forced)
+
+                    # Bare run_block -p with --session, --sandbox, --force in TTY
+                    buf3 = io.StringIO()
+                    with contextlib.redirect_stdout(buf3):
+                        rc3 = self.mod.main([
+                            "-p", "Bare combined", "--session", "s2", "--sandbox", "nonet", "--force",
+                        ])
+                    self.assertEqual(rc3, 0)
+                    b_s2 = (sessions / "s2" / "0").read_text(encoding="utf-8")
+                    self.assertIn("Sandbox: nonet", b_s2)
+                    self.assertIn("===== Prompt =====\nBare combined\n", b_s2)
+
+                # Piped stdin: <cmd> | run_block -p and <cmd> | run_block --start -p
+                with unittest.mock.patch.object(
+                    self.mod.sys, "stdin", io.StringIO("===== Prompt =====\nFrom pipe\n")
+                ):
+                    buf4 = io.StringIO()
+                    with contextlib.redirect_stdout(buf4):
+                        rc4 = self.mod.main(["-p", "From flag", "--session", "s3", "--sandbox", "strict"])
+                    self.assertEqual(rc4, 0)
+                    b_s3 = (sessions / "s3" / "0").read_text(encoding="utf-8")
+                    self.assertEqual(b_s3.count("===== Prompt ====="), 1)
+                    self.assertIn("===== Prompt =====\nFrom pipe\n\nFrom flag\n", b_s3)
+
+                with unittest.mock.patch.object(
+                    self.mod.sys, "stdin", io.StringIO("===== $ echo hi =====\nhi\n")
+                ):
+                    buf5 = io.StringIO()
+                    with contextlib.redirect_stdout(buf5):
+                        rc5 = self.mod.main([
+                            "--start", "-p", "After cmd", "--session", "s3", "--force", "--no-sandbox",
+                        ])
+                    self.assertEqual(rc5, 0)
+                    b_s3_f = (sessions / "s3" / "0").read_text(encoding="utf-8")
+                    self.assertIn("Sandbox: off", b_s3_f)
+                    self.assertIn("===== Prompt =====\nAfter cmd\n", b_s3_f)
+
+                # Missing argument for -p / --prompt
+                for bad_argv in (["-p"], ["--start", "--prompt"]):
+                    with self.subTest(bad_argv=bad_argv):
+                        with self.assertRaises(SystemExit) as cm:
+                            self.mod.main(bad_argv)
+                        self.assertIn("requires an argument", str(cm.exception))
+
+                # Incompatible commands must reject -p / --prompt
+                incompatible_cases = [
+                    ["s1/1", "-p", "no"],
+                    ["-p", "no", "s1/1"],
+                    ["--fix", "s1/1", "-p", "no"],
+                    ["--retry", "-p", "no"],
+                    ["--retry", "s1/1", "--prompt", "no"],
+                    ["--list", "-p", "no"],
+                    ["-l", "s1", "-p", "no"],
+                    ["--show", "-p", "no"],
+                    ["--show", "s1/0", "--prompt=no"],
+                    ["--plan", "-p", "no"],
+                    ["--bundle-plan", "-p", "no"],
+                    ["--bundle-plan", "s1", "-p", "no"],
+                    ["--clean", "-p", "no"],
+                    ["--sandbox", "-p", "no"],
+                    ["--sandbox", "s1", "-p", "no"],
+                    ["--sandbox", "strict", "s1", "-p", "no"],
+                    ["--update", "-p", "no"],
+                    ["--check-update", "-p", "no"],
+                ]
+                for bad_cmd in incompatible_cases:
+                    with self.subTest(bad_cmd=bad_cmd):
+                        with self.assertRaises(SystemExit) as cm:
+                            self.mod.main(bad_cmd)
+                        self.assertIn("-p/--prompt", str(cm.exception))
+                        self.assertIn("usage:", str(cm.exception))
+        finally:
+            self.mod.BASE_DIR = old_base
+            if old_cwd_env is None:
+                os.environ.pop("RUN_BLOCK_CWD", None)
+            else:
+                os.environ["RUN_BLOCK_CWD"] = old_cwd_env
+
 
 if __name__ == "__main__":
     unittest.main()

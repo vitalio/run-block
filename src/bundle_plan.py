@@ -161,6 +161,133 @@ def inject_embedded_block_rule(
     return f"===== Rules =====\n{rule_text}\n\n===== Prompt =====\n{stripped}"
 
 
+def normalize_prompt_text(prompt: str | list[str] | tuple[str, ...] | None) -> str:
+    if prompt is None:
+        return ""
+    items = [prompt] if isinstance(prompt, str) else list(prompt)
+    cleaned: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        norm = item.replace("\r\n", "\n").strip("\n")
+        if norm.strip():
+            cleaned.append(norm.strip())
+    return "\n\n".join(cleaned)
+
+
+def _append_to_unframed_prompt_tail(
+    lines: list[str], start_idx: int, prompt_lines: list[str]
+) -> list[str] | None:
+    last_sec_idx: int | None = None
+    last_sec_title = ""
+    for idx in range(start_idx, len(lines)):
+        m = SECTION_HEADER_RE.match(lines[idx].strip())
+        if m:
+            last_sec_idx = idx
+            last_sec_title = m.group(1).strip().lower()
+    if last_sec_idx is None or last_sec_title != "prompt":
+        return None
+    trimmed = list(lines)
+    while trimmed and not trimmed[-1].strip():
+        trimmed.pop()
+    has_body = any(ln.strip() for ln in trimmed[last_sec_idx + 1 :])
+    if has_body:
+        return [*trimmed, "", *prompt_lines]
+    return [*trimmed[: last_sec_idx + 1], *prompt_lines]
+
+
+def inject_embedded_prompt(
+    raw_body: str,
+    prompt: str | list[str] | tuple[str, ...] | None = None,
+    boundary: str | None = None,
+) -> str:
+    prompt_text = normalize_prompt_text(prompt)
+    norm_body = (raw_body or "").replace("\r\n", "\n")
+    if not prompt_text:
+        return norm_body
+    prompt_lines = prompt_text.splitlines()
+    boundary_val = (boundary or "").strip() or None
+    lines = norm_body.splitlines()
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if boundary_val:
+        esc = re.escape(boundary_val)
+        part_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:part(?:\s+(\{{.*\}}))?\s*-->\s*$")
+        end_re = re.compile(rf"^\s*<!--\s*bundle:{esc}:end\s*-->\s*$")
+        last_end_idx: int | None = None
+        for idx, line in enumerate(lines):
+            if end_re.match(line):
+                last_end_idx = idx
+        if last_end_idx is not None:
+            tail_after_end = lines[last_end_idx + 1 :]
+            if any(ln.strip() for ln in tail_after_end):
+                updated = _append_to_unframed_prompt_tail(lines, last_end_idx + 1, prompt_lines)
+                if updated is not None:
+                    return "\n".join(updated)
+            else:
+                last_part_idx: int | None = None
+                last_meta: dict[str, object] = {}
+                for idx in range(last_end_idx - 1, -1, -1):
+                    m_part = part_re.match(lines[idx])
+                    if m_part:
+                        last_part_idx = idx
+                        if m_part.group(1):
+                            try:
+                                parsed = json.loads(m_part.group(1))
+                                if isinstance(parsed, dict):
+                                    last_meta = parsed
+                            except ValueError:
+                                pass
+                        break
+                if last_part_idx is not None:
+                    part_kind = str(last_meta.get("kind") or "").strip().lower()
+                    inner = list(lines[last_part_idx + 1 : last_end_idx])
+                    while inner and not inner[-1].strip():
+                        inner.pop()
+                    first_inner = next((ln.strip() for ln in inner if ln.strip()), "")
+                    m_inner_sec = SECTION_HEADER_RE.match(first_inner) if first_inner else None
+                    prev_nonempty = next(
+                        (lines[j].strip() for j in range(last_part_idx - 1, -1, -1) if lines[j].strip()),
+                        "",
+                    )
+                    m_prev_sec = SECTION_HEADER_RE.match(prev_nonempty) if prev_nonempty else None
+                    is_prompt_part = part_kind == "prompt" or (
+                        part_kind in ("", "section")
+                        and (
+                            (m_inner_sec is not None and m_inner_sec.group(1).strip().lower() == "prompt")
+                            or (m_prev_sec is not None and m_prev_sec.group(1).strip().lower() == "prompt")
+                        )
+                    )
+                    if is_prompt_part:
+                        non_empty_inner = [ln for ln in inner if ln.strip()]
+                        only_header = (
+                            len(non_empty_inner) == 1
+                            and SECTION_HEADER_RE.match(non_empty_inner[0].strip()) is not None
+                        )
+                        prefix = [*lines[: last_part_idx + 1], *inner]
+                        if non_empty_inner and not only_header:
+                            prefix.append("")
+                        return "\n".join([*prefix, *prompt_lines, lines[last_end_idx]])
+            part_meta = json.dumps({"kind": "prompt", "name": "Prompt"}, ensure_ascii=False)
+            prompt_block = [
+                f"<!-- bundle:{boundary_val}:part {part_meta} -->",
+                "===== Prompt =====",
+                *prompt_lines,
+                f"<!-- bundle:{boundary_val}:end -->",
+            ]
+            if lines:
+                return "\n".join([*lines, "", *prompt_block])
+            return "\n".join(prompt_block)
+
+    updated_plain = _append_to_unframed_prompt_tail(lines, 0, prompt_lines)
+    if updated_plain is not None:
+        return "\n".join(updated_plain)
+    if lines:
+        return "\n".join([*lines, "", "===== Prompt =====", *prompt_lines])
+    return "\n".join(["===== Prompt =====", *prompt_lines])
+
+
 def _parse_header_filter_tokens(raw: str) -> set[str]:
     tokens: set[str] = set()
     for tok in re.split(r"[\s,]+", raw or ""):
@@ -735,6 +862,21 @@ def _split_section_fallback(norm_text: str, boundary_val: str | None) -> tuple[s
     return clean_body, plan
 
 
+def _collect_unframed_parts(
+    unframed_lines: list[str],
+    *,
+    is_first: bool,
+) -> list[tuple[dict[str, object], list[str]]]:
+    real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
+    while real_unframed and not real_unframed[0].strip():
+        real_unframed.pop(0)
+    while real_unframed and not real_unframed[-1].strip():
+        real_unframed.pop()
+    if any(x.strip() for x in real_unframed):
+        return [(_infer_section_meta(None, is_sections=True, is_preamble=is_first), real_unframed)]
+    return []
+
+
 def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple[str, dict[str, object]]:
     if not body_text:
         return "", _build_bundle_plan("empty", boundary, [])
@@ -762,13 +904,7 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
                 if in_part:
                     raw_parts.append((cur_meta, cur_lines))
                 else:
-                    real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
-                    while real_unframed and not real_unframed[0].strip():
-                        real_unframed.pop(0)
-                    while real_unframed and not real_unframed[-1].strip():
-                        real_unframed.pop()
-                    if any(x.strip() for x in real_unframed):
-                        raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(len(raw_parts) == 0)), real_unframed))
+                    raw_parts.extend(_collect_unframed_parts(unframed_lines, is_first=(len(raw_parts) == 0)))
                 unframed_lines = []
                 in_part = True
                 cur_lines = []
@@ -801,13 +937,7 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
         if in_part:
             raw_parts.append((cur_meta, cur_lines))
         else:
-            real_unframed = [ln for ln in unframed_lines if not SECTION_HEADER_RE.match(ln.strip())]
-            while real_unframed and not real_unframed[0].strip():
-                real_unframed.pop(0)
-            while real_unframed and not real_unframed[-1].strip():
-                real_unframed.pop()
-            if any(x.strip() for x in real_unframed):
-                raw_parts.append((_infer_section_meta(None, is_sections=True, is_preamble=(len(raw_parts) == 0)), real_unframed))
+            raw_parts.extend(_collect_unframed_parts(unframed_lines, is_first=(len(raw_parts) == 0)))
 
         if found_markers > 0:
             clean_body = "\n".join(stripped_lines)
