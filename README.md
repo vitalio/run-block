@@ -55,24 +55,31 @@ tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
 provided). The inline `START SESSION` box stays compact (retaining core headers, `Bundle:`,
 dim `Stats:`, and `Bundle warnings` when present, while full per-part tables
 stay in `run_block --bundle-plan`); press `i` at any interactive prompt to open
-the alternate-screen fullscreen `i(nfo)` metadata viewer (`Up`/`Down`, `j`/`k`,
-`PgUp`/`PgDn` to scroll, `e(dit)`/`s(cript)`/`o(utput)` to edit artifacts,
-`v(iew)` to open the plain-text report in your editor, `p(art)` (in
-`START SESSION`) to open a part by its 1-based number (`n`/`N` browse parts,
-`e(dit)` opens `<session>/0` in your editor), `Enter` to copy,
-`Esc`/`q`/`i` to return) without leaving duplicate headers or stale lines in
-scrollback. All inline TUI boxes
+the borderless alternate-screen fullscreen `i(nfo)` metadata viewer
+(`INFO · <label> · <~path>` title bar with `(edited)` suffix when modified,
+`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn` to scroll, `e(dit)`/`s(cript)`/`o(utput)`
+to edit artifacts, `p(rompt)` on clipboard-copyable screens to append prompt
+or output notes, `v(iew)` to open the plain-text report in your editor,
+`Tab` (`Tab: parts` in `START SESSION`) to toggle the part selection cursor
+across `#1..#N` (`Up`/`Down` or `j`/`k` move the cursor, `Enter` opens
+`PART N/M` with `n`/`N` part browsing and `e(dit)`, `Tab`/`Esc` exits cursor
+mode), `Enter` to copy, and `Esc`/`q`/`i` to return) without leaving duplicate
+headers or stale lines in scrollback. All inline TUI boxes
 (`START SESSION`, `START STEP`, `END STEP`, and confirmation dialogs) clamp overflowing sections
 to the visible terminal height (`... +N more`) and reflow cleanly across both
 width and height `SIGWINCH` resizes.
 The `Summary` / `Parts` tables (`i(nfo)` and `--bundle-plan`) start with a
-`top`-style header row (`%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`) that
-shows units once. Fragments from `.agents_bundle` and everything else
-(`[header]`, `[prompt]`, unframed sections) are listed under separate group
-labels; `chain`-backed nodes and single-part bundle inclusions are `[bundle]`,
-while `[rule]` marks leaf and root rules. Rows with a share of at least 10%
-or ~3k tokens are accented, and rows with at least 25% or ~10k tokens are
-highlighted in the warning color.
+`top`-style header row (`#`, `%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`)
+followed by a top `100.0%` `[total]` row and ending with a bottom `100.0%`
+`[total]` row (`<N> parts`, or `<N> parts (edited)` when modified). All bundle
+parts are ordered strictly in their physical appearance order (starting with
+`#1 [header] Headers & spacing` when leading session/preamble headers exist
+through `#N [prompt]` at the end), with tree hierarchy built purely from each
+part's `chain` metadata and nested `%` shares indented by tree depth (`depth * 2`
+spaces). `chain`-backed nodes and single-part bundle inclusions are `[bundle]`,
+while `[rule]` marks leaf and root rules. Non-`[total]` rows with a share of at
+least 10% or ~3k tokens are accented, and rows with at least 25% or ~10k tokens
+are highlighted in the warning color.
 
 Each part in `bundle_plan` also records 1-based `line_start` / `line_end` line
 ranges inside the final cleaned `<session>/0` (body-relative for `stdin`
@@ -152,14 +159,15 @@ errors, stats, steps, headers, and prompts) wrap cleanly to the terminal width
 with `│ ` borders and aligned hanging indents.
 
 At the clipboard prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, and
-`NOT RUN`, shown as `[Y/n/a(ppend)/i(nfo)]:`), `a(ppend)` opens an empty
-temporary `.md` file in your editor and appends the saved text: into the
-trailing `===== Prompt =====` section of `<session>/0` (created when absent,
-followed by a bundle metadata refresh) or at the end of the step `out`. The
-temporary file is always removed; empty or whitespace-only text changes
-nothing and creates no backup. Otherwise the original is preserved once as
-`0.orig` / `out.orig`, `Stats:` is recalculated with the `(edited)` marker,
-and `Enter`/`y` copies the updated content to the clipboard.
+`NOT RUN`, shown as `[Y/n/p(rompt)/i(nfo)]:`, as well as `p(rompt)` inside
+their fullscreen `i(nfo)` views), `p(rompt)` opens an empty temporary `.md`
+file in your editor and appends the saved text: into the trailing
+`===== Prompt =====` section of `<session>/0` (created when absent, followed by
+a bundle metadata refresh) or at the end of the step `out`. The temporary file
+is always removed; empty or whitespace-only text changes nothing and creates no
+backup. Otherwise the original is preserved once as `0.orig` / `out.orig`,
+`Stats:` and `[total]` rows are recalculated with the `(edited)` marker, and
+`Enter`/`y` copies the updated content to the clipboard.
 
 ### 3. Patching a failed block (`--fix`)
 

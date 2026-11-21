@@ -255,16 +255,16 @@ class TestBundle(RunBlockTestCase):
                 title_kind="START SESSION",
                 extra_lines=["Session: s1", "Next-Block: s1/1", f"Bundle: {bundle_file}"],
             )
-            self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", sb_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", sb_box)
             self.assertNotIn("[Y/n/v(iew)]:", sb_box)
-            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"))
+            self.assertEqual(sb_off, len("│ -> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:"))
 
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind="END STEP")
-            self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", end_box)
             for kind in ("NOT RUN", "SYNTAX ERROR"):
                 with self.subTest(title_kind=kind):
                     other_box, _, _ = self.mod.format_clipboard_box("s1/1", bundle_file, title_kind=kind)
-                    self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", other_box)
+                    self.assertIn("-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", other_box)
                     self.assertNotIn("[Y/n/v(iew)]:", other_box)
 
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("i\n")), "info")
@@ -297,7 +297,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(edited_calls, [bundle_file])
         mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
         self.assertIn("Edited prompt", bundle_file.read_text(encoding="utf-8"))
-        self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", tty_w.getvalue())
+        self.assertIn("-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", tty_w.getvalue())
         self.assertIn(f"✓ Copied {bundle_file} to clipboard.", tty_w.getvalue())
 
         tty_w_esc = _KeepOpenStringIO()
@@ -590,14 +590,16 @@ class TestBundle(RunBlockTestCase):
         self.assertIsInstance(plan, dict)
         self.assertEqual(plan["protocol"], "boundary")
         self.assertEqual(plan["boundary"], nonce)
-        self.assertEqual(plan["part_count"], 4)
+        self.assertEqual(plan["part_count"], 5)
         parts = plan["parts"]
-        self.assertEqual([p["kind"] for p in parts], ["rule", "cmd", "include", "prompt"])
-        self.assertEqual(parts[0]["id"], "vitalio/run_block:blocks/bash")
-        self.assertEqual(parts[0]["name"], "vitalio/run_block:blocks/bash")
-        self.assertEqual(parts[1]["rc"], 0)
-        self.assertEqual(parts[1]["ms"], 7)
-        self.assertEqual(parts[2]["name"], "AGENTS.md")
+        self.assertEqual([p["kind"] for p in parts], ["header", "rule", "cmd", "include", "prompt"])
+        self.assertEqual(parts[0]["name"], "Headers & spacing")
+        self.assertEqual(parts[0]["index"], 1)
+        self.assertEqual(parts[1]["id"], "vitalio/run_block:blocks/bash")
+        self.assertEqual(parts[1]["name"], "vitalio/run_block:blocks/bash")
+        self.assertEqual(parts[2]["rc"], 0)
+        self.assertEqual(parts[2]["ms"], 7)
+        self.assertEqual(parts[3]["name"], "AGENTS.md")
         for p in parts:
             self.assertNotIn("body", p)
             self.assertNotIn("text", p)
@@ -606,12 +608,11 @@ class TestBundle(RunBlockTestCase):
             self.assertGreater(p["gpt"], 0)
             self.assertGreater(p["claude"], 0)
             self.assertGreater(p["share_pct"], 0.0)
-        hdr_entry = plan.get("header") or {}
-        self.assertGreater(hdr_entry.get("chars", 0), 0)
-        self.assertAlmostEqual(sum(p["share_pct"] for p in parts) + hdr_entry["share_pct"], 100.0, delta=0.5)
-        self.assertEqual(plan["chars"], sum(p["chars"] for p in parts) + hdr_entry["chars"])
-        self.assertEqual(plan["bytes"], sum(p["bytes"] for p in parts) + hdr_entry["bytes"])
-        self.assertEqual(plan["lines"], sum(p["lines"] for p in parts) + hdr_entry["lines"])
+        self.assertNotIn("header", plan)
+        self.assertAlmostEqual(sum(p["share_pct"] for p in parts), 100.0, delta=0.5)
+        self.assertEqual(plan["chars"], sum(p["chars"] for p in parts))
+        self.assertEqual(plan["bytes"], sum(p["bytes"] for p in parts))
+        self.assertEqual(plan["lines"], sum(p["lines"] for p in parts))
         self.assertEqual(plan["chars"], len(b0))
 
         # 2. Bundle-Expose: * with Bundle-Hide forwards all non-Bundle non-reserved headers except hidden
@@ -666,10 +667,10 @@ class TestBundle(RunBlockTestCase):
         meta2 = self.mod.read_session_meta(sessions / "s2")
         self.assertNotIn("headers", meta2)
         self.assertEqual(meta2["bundle_plan"]["protocol"], "sections")
-        self.assertEqual(meta2["bundle_plan"]["part_count"], 2)
+        self.assertEqual(meta2["bundle_plan"]["part_count"], 3)
         self.assertEqual(
             [(part["kind"], part["name"]) for part in meta2["bundle_plan"]["parts"]],
-            [("rules", "Rules"), ("prompt", "Prompt")],
+            [("header", "Headers & spacing"), ("rules", "Rules"), ("prompt", "Prompt")],
         )
 
         # 5. Editing <session>/0 refreshes bundle_plan in meta.json via refresh_bundle_meta
@@ -682,7 +683,7 @@ class TestBundle(RunBlockTestCase):
         self.mod.refresh_bundle_meta(b0_path)
         meta_after = self.mod.read_session_meta(sessions / "s1")
         self.assertEqual(meta_after["bundle_plan"]["protocol"], "sections")
-        self.assertEqual(meta_after["bundle_plan"]["part_count"], 1)
+        self.assertEqual(meta_after["bundle_plan"]["part_count"], 2)
         self.assertEqual(dict(meta_after["headers"]).get("Bundle-Boundary"), nonce)
 
     def test_f68_top_style_table_kinds_groups_heavy_and_header(self) -> None:
@@ -705,12 +706,16 @@ class TestBundle(RunBlockTestCase):
         }
         lines = self.mod.format_bundle_summary_lines(plan, max_width=100)
         text = "\n".join(lines)
-        self.assertRegex(lines[0], r"^\s+% +CHARS +LINES +~TOK +KIND +SOURCE$")
-        self.assertIn(".agents_bundle", lines[1])
+        self.assertRegex(lines[0], r"^\s+# +\s*% +CHARS +LINES +~TOK +KIND +SOURCE$")
+        self.assertIn("[total]   3 parts", lines[1])
+        self.assertIn("[total]   3 parts", lines[-1])
+        self.assertEqual(self.mod.bundle_row_heavy_level(lines[1]), "")
+        self.assertNotIn(".agents_bundle", text)
+        self.assertNotIn("external", text)
         self.assertNotRegex(text, r"\d+L\b|\d+ ch\b| tok\b|[├└]─ \d+\.")
         self.assertIn("[bundle]  g:solo", text)
         self.assertIn("[rule]    root:r", text)
-        self.assertLess(text.index("external (not from .agents_bundle)"), text.index("[prompt]"))
+        self.assertLess(text.index("[rule]    root:r"), text.index("[prompt]  Prompt"))
         levels = {}
         for ln in lines:
             for name in ("g:solo", "root:r", "Prompt"):
@@ -729,9 +734,15 @@ class TestBundle(RunBlockTestCase):
             },
             full,
         )
-        hdr = rec.get("header")
-        self.assertIsInstance(hdr, dict)
+        self.assertNotIn("header", rec)
+        self.assertEqual(rec["part_count"], 2)
+        hdr = rec["parts"][0]
+        self.assertEqual(hdr["index"], 1)
+        self.assertEqual(hdr["kind"], "header")
         self.assertEqual(hdr["name"], "Headers & spacing")
+        self.assertEqual(hdr["chain"], [])
+        self.assertEqual((hdr["line_start"], hdr["line_end"]), (1, 3))
+        self.assertEqual(rec["parts"][1]["index"], 2)
         self.assertGreater(hdr["chars"], 0)
 
     def test_f47_bundle_diagnostics_details_view_and_cli(self):
@@ -787,7 +798,7 @@ class TestBundle(RunBlockTestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         # Inline BUNDLE stays compact (headers, Bundle:, Stats:, warnings) without Summary table or leaking secret value
-        self.assertIn("(6 parts)\n│\n│ Bundle warnings (6):", r_start.stdout)
+        self.assertIn("(7 parts)\n│\n│ Bundle warnings (6):", r_start.stdout)
         self.assertNotIn("│ Summary:", r_start.stdout)
         self.assertIn("Bundle warnings (6):", r_start.stdout)
         self.assertIn("[cmd_empty]", r_start.stdout)
@@ -806,8 +817,8 @@ class TestBundle(RunBlockTestCase):
             ["fragment_oversized", "cmd_empty", "cmd_rc", "fragment_oversized", "secret_detected", "token_budget"],
         )
         self.assertNotIn(env_secret, (sessions / "s1" / "meta.json").read_text(encoding="utf-8"))
-        # Rule fragments (parts 1 and 2) must not trigger secret_detected
-        self.assertTrue(all(w.get("part_index") not in (1, 2) for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
+        # Rule fragments (parts 2 and 3, after #1 header) must not trigger secret_detected
+        self.assertTrue(all(w.get("part_index") not in (1, 2, 3) for w in plan_meta["warnings"] if w["code"] == "secret_detected"))
 
         # 2. Interactive START SESSION i(nfo) toggle (with d(etails) alias) in offer_clipboard_copy
         self.assertEqual(self.mod.read_clipboard_key(io.StringIO("d\n")), "info")
@@ -858,11 +869,12 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn("│ Summary:", tty_out)
         self.assertIn("\033[?1049h", tty_out)
         self.assertIn("\033[?1049l", tty_out)
-        self.assertIn("╭─ INFO · s1/0 ", tty_out)
-        self.assertNotIn("│ Summary (", tty_out)
-        self.assertEqual(tty_out.count("│ Parts (6 parts):"), 1)
+        self.assertIn("INFO · s1/0 · ", tty_out)
+        self.assertNotIn("╭─ INFO", tty_out)
+        self.assertNotIn("Parts (7 parts):", tty_out)
+        self.assertIn("[total]   7 parts", tty_out)
         self.assertIn("[rule]    ├─ r:bash", tty_out)
-        self.assertIn("% CHARS LINES", tty_out)
+        self.assertIn("CHARS LINES", tty_out)
         self.assertIn("[header]  Headers & spacing", tty_out)
         self.assertIn("[cmd]     └─ failing_cmd", tty_out)
         self.assertIn("rc=2", tty_out)
@@ -880,9 +892,9 @@ class TestBundle(RunBlockTestCase):
         )
         self.assertEqual(r_bp_sess.returncode, 0, r_bp_sess.stderr)
         self.assertIn("Bundle Plan (s1, protocol: boundary):", r_bp_sess.stdout)
-        self.assertIn("Summary (6 parts):", r_bp_sess.stdout)
+        self.assertIn("Summary (7 parts):", r_bp_sess.stdout)
         self.assertIn("Warnings (6):", r_bp_sess.stdout)
-        self.assertNotIn("Parts (6):", r_bp_sess.stdout)
+        self.assertNotIn("Parts (7):", r_bp_sess.stdout)
 
         r_bp_full = self._run(
             [str(SCRIPT), "--bundle-plan", "--full", "s1"],
@@ -893,7 +905,7 @@ class TestBundle(RunBlockTestCase):
             check=False,
         )
         self.assertEqual(r_bp_full.returncode, 0, r_bp_full.stderr)
-        self.assertIn("Parts (6):", r_bp_full.stdout)
+        self.assertIn("Parts (7):", r_bp_full.stdout)
         self.assertIn("failing_cmd", r_bp_full.stdout)
         self.assertIn("rc=2", r_bp_full.stdout)
 
@@ -908,7 +920,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_bp_json.returncode, 0, r_bp_json.stderr)
         j_sess = json.loads(r_bp_json.stdout)
         self.assertEqual(j_sess["session"], "s1")
-        self.assertEqual(j_sess["part_count"], 6)
+        self.assertEqual(j_sess["part_count"], 7)
         self.assertEqual(len(j_sess["warnings"]), 6)
 
         r_bp_stdin = self._run(
@@ -1172,7 +1184,7 @@ class TestBundle(RunBlockTestCase):
         )
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
         out_s = r_start.stdout
-        self.assertRegex(out_s, r"│ Stats: .*\(5 parts\)\n╰")
+        self.assertRegex(out_s, r"│ Stats: .*\(6 parts\)\n╰")
         self.assertNotIn("│ Summary:", out_s)
 
         plan1 = self.mod.load_session_bundle_plan(sessions / "s1")
@@ -1187,12 +1199,14 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("[bundle]  └─ rulesetB (2)", sum1_text)
         self.assertIn("[cmd]     git status -sb", sum1_text)
         self.assertIn("[prompt]  Prompt", sum1_text)
+        self.assertLess(sum1_text.index("[header]  Headers & spacing"), sum1_text.index("vitalio/run_block:blocks/bash"))
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
             det_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="START SESSION", bundle_details=True, sdir=sessions / "s1"
             )
-        self.assertIn("(5 parts)\n│ Parts:", det_box)
+        self.assertIn("(6 parts)\n│   #", det_box)
+        self.assertIn("[total]   6 parts", det_box)
         self.assertIn("├─ bundleA:r1", det_box)
         self.assertIn("└─ bundleA:r2", det_box)
 
@@ -1206,7 +1220,7 @@ class TestBundle(RunBlockTestCase):
             ed_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="START SESSION", edited=True, sdir=sessions / "s1"
             )
-            self.assertRegex(ed_box, r"│ Stats: .*\(5 parts\) \(edited\)\n│\n│ -> Copy to clipboard\?")
+            self.assertRegex(ed_box, r"│ Stats: .*\(6 parts\) \(edited\)\n│\n│ -> Copy to clipboard\?")
             no_tok_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0", sessions / "s1" / "0", stats=None, title_kind="START SESSION", edited=False, sdir=sessions / "s1"
             )
@@ -1304,7 +1318,8 @@ class TestBundle(RunBlockTestCase):
         self.assertLess(full_prepend.index("## Terminal blocks (`"), full_prepend.index("Decoy section inside file"))
         plan_prepend = res_prepend["bundle_plan"]
         assert isinstance(plan_prepend, dict)
-        p0 = plan_prepend["parts"][0]
+        self.assertEqual(plan_prepend["parts"][0]["kind"], "header")
+        p0 = plan_prepend["parts"][1]
         self.assertEqual(p0["kind"], "rule")
         self.assertEqual(p0["id"], "run_block:blocks/bash")
         self.assertEqual(p0["chain"], ["run_block"])
@@ -1356,10 +1371,10 @@ class TestBundle(RunBlockTestCase):
             stdin_body=f"Bundle-Boundary: {nonce}\n\n{legacy_part_body}",
             work_dir=proj,
         )
-        self.assertEqual(res_dedup_part["bundle_plan"]["part_count"], 1)
+        self.assertEqual(res_dedup_part["bundle_plan"]["part_count"], 2)
         self.assertEqual(
-            [part["id"] for part in res_dedup_part["bundle_plan"]["parts"]],
-            ["vitalio/run_block:blocks/bash"],
+            [part.get("id") or part.get("kind") for part in res_dedup_part["bundle_plan"]["parts"]],
+            ["header", "vitalio/run_block:blocks/bash"],
         )
 
         res_dedup_heading = self.mod.format_start_bundle(
@@ -1386,7 +1401,7 @@ class TestBundle(RunBlockTestCase):
                     rc_bare = self.mod.main([])
                 self.assertEqual(rc_bare, 0)
                 self.assertIn("╭─ START SESSION ", buf_bare.getvalue())
-                self.assertIn("(1 part)", buf_bare.getvalue())
+                self.assertIn("(2 parts)", buf_bare.getvalue())
                 self.assertNotIn("│ Summary:", buf_bare.getvalue())
                 b0_bare = (sessions / "s1" / "0").read_text(encoding="utf-8")
                 self.assertIn("===== Rules =====\n## Terminal blocks (`", b0_bare)
@@ -1554,11 +1569,11 @@ class TestBundle(RunBlockTestCase):
             f"<!-- bundle:{nonce}:end -->\n"
         )
 
-        # Prompt parsing without a TTY (readline fallback)
-        self.assertEqual(self.mod._read_part_number(io.StringIO("2\n"), io.StringIO(), 3), 2)
-        for raw in ("x\n", "0\n", "4\n", "\n"):
-            with self.subTest(raw=raw):
-                self.assertIsNone(self.mod._read_part_number(io.StringIO(raw), io.StringIO(), 3))
+        # Pager key parsing for Tab and p(rompt)
+        self.assertEqual(self.mod._parse_pager_line("\t\n"), "tab")
+        self.assertEqual(self.mod._parse_pager_line("tab\n"), "tab")
+        self.assertEqual(self.mod._parse_pager_line("p\n"), "prompt")
+        self.assertEqual(self.mod._parse_pager_line("prompt\n"), "prompt")
 
         # Shared scroll helper
         self.assertEqual(self.mod._apply_pager_scroll("down", 3, 10), 4)
@@ -1583,18 +1598,21 @@ class TestBundle(RunBlockTestCase):
                 "START SESSION", "s1/0", 100, 30, 0,
                 sdir=sdir, out_path=bundle_path, edit_target=bundle_path, allow_copy=True,
             )
-            self.assertIn("p(art)", frame0)
+            self.assertIn("Tab: parts", frame0)
+            self.assertIn("p(rompt)", frame0)
+            self.assertNotIn("p(art)", frame0)
             frame_step, _, _ = self.mod._build_info_screen(
                 "END STEP", "s1/1", 100, 30, 0, sdir=sdir, out_path=bundle_path,
             )
-            self.assertNotIn("p(art)", frame_step)
+            self.assertNotIn("Tab: parts", frame_step)
 
             buf = io.StringIO()
-            keys = iter(["part", "next_part", "back", "back"])
+            # Tab enters cursor mode at #1 (header), down moves to #2 (injected rule), down moves to #3 (r1),
+            # Enter ("copy") opens PART, next_part moves to #4 (p1), back returns to cursor mode, tab exits cursor mode, back exits info
+            steps_to_r1 = idx["r1"] - 1
+            keys = iter(["tab", *(["down"] * steps_to_r1), "copy", "next_part", "back", "tab", "back"])
             with unittest.mock.patch.object(
                 self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys)
-            ), unittest.mock.patch.object(
-                self.mod, "_read_part_number", return_value=idx["r1"]
             ), unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 30)):
                 out = self.mod._show_info_fullscreen(
                     title_kind="START SESSION",
@@ -1608,6 +1626,8 @@ class TestBundle(RunBlockTestCase):
                 )
             self.assertEqual(out["action"], "back")
             shown = buf.getvalue()
+            self.assertIn("Enter: open part", shown)
+            self.assertIn("Tab/Esc: exit parts", shown)
             self.assertIn(f"PART {idx['r1']}/{total}", shown)
             self.assertIn("line a", shown)
             self.assertIn(f"PART {idx['p1']}/{total}", shown)
@@ -1629,15 +1649,15 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("===== Rules =====\n## Terminal blocks (`", full_empty)
         self.assertIn("\n\n===== Prompt =====\nFirst prompt\n\nSecond prompt\n", full_empty)
         plan_empty = res_empty["bundle_plan"]
-        self.assertEqual([p["kind"] for p in plan_empty["parts"]], ["rules", "prompt"])
-        self.assertEqual(plan_empty["parts"][1]["name"], "Prompt")
-        _, part2_txt = self.mod.extract_bundle_part(plan_empty, full_empty, 2)
+        self.assertEqual([p["kind"] for p in plan_empty["parts"]], ["header", "rules", "prompt"])
+        self.assertEqual(plan_empty["parts"][2]["name"], "Prompt")
+        _, part2_txt = self.mod.extract_bundle_part(plan_empty, full_empty, 3)
         self.assertEqual(part2_txt, "===== Prompt =====\nFirst prompt\n\nSecond prompt\n")
 
         # Whitespace-only prompts are ignored completely
         res_ws = self.mod.format_start_bundle("s1", stdin_body="", work_dir=proj, prompt=["", "   "])
         self.assertNotIn("===== Prompt =====", str(res_ws["full"]))
-        self.assertEqual(len(res_ws["bundle_plan"]["parts"]), 1)
+        self.assertEqual(len(res_ws["bundle_plan"]["parts"]), 2)
 
         # 2. Unlabeled plain stdin wrapped as ===== Prompt ===== by F66: appends \n\n<prompt> without duplicate header
         res_plain = self.mod.format_start_bundle(
@@ -1649,7 +1669,7 @@ class TestBundle(RunBlockTestCase):
         full_plain = str(res_plain["full"])
         self.assertEqual(full_plain.count("===== Prompt ====="), 1)
         self.assertIn("===== Prompt =====\nUnlabeled base request\n\nExtra instruction\n", full_plain)
-        self.assertEqual([p["kind"] for p in res_plain["bundle_plan"]["parts"]], ["rules", "prompt"])
+        self.assertEqual([p["kind"] for p in res_plain["bundle_plan"]["parts"]], ["header", "rules", "prompt"])
 
         # 3. Trailing ===== Prompt ===== section (plain and boundary-marked): appends inside trailing section
         res_trail_plain = self.mod.format_start_bundle(
@@ -1685,8 +1705,8 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn(f"bundle:{nonce}", full_trail_bnd)
         self.assertIn(f"Piped bundle prompt\n\nCLI extra prompt\n<!-- bundle:{nonce}:end -->", raw_trail_bnd)
         plan_trail_bnd = res_trail_bnd["bundle_plan"]
-        self.assertEqual([p["kind"] for p in plan_trail_bnd["parts"]], ["rule", "rule", "prompt"])
-        _, bnd_prompt_chunk = self.mod.extract_bundle_part(plan_trail_bnd, full_trail_bnd, 3)
+        self.assertEqual([p["kind"] for p in plan_trail_bnd["parts"]], ["header", "rule", "rule", "prompt"])
+        _, bnd_prompt_chunk = self.mod.extract_bundle_part(plan_trail_bnd, full_trail_bnd, 4)
         self.assertEqual(bnd_prompt_chunk, "===== Prompt =====\nPiped bundle prompt\n\nCLI extra prompt\n")
 
         # 4. Other sections without trailing ===== Prompt ===== (with and without Bundle-Boundary)
@@ -1710,9 +1730,9 @@ class TestBundle(RunBlockTestCase):
         full_other_bnd = str(res_other_bnd["full"])
         self.assertTrue(full_other_bnd.endswith("===== Prompt =====\nAppended final prompt\n"))
         plan_other_bnd = res_other_bnd["bundle_plan"]
-        self.assertEqual([p["kind"] for p in plan_other_bnd["parts"]], ["rule", "rule", "cmd", "prompt"])
+        self.assertEqual([p["kind"] for p in plan_other_bnd["parts"]], ["header", "rule", "rule", "cmd", "prompt"])
         self.assertEqual(plan_other_bnd["parts"][-1]["name"], "Prompt")
-        _, bnd_appended_chunk = self.mod.extract_bundle_part(plan_other_bnd, full_other_bnd, 4)
+        _, bnd_appended_chunk = self.mod.extract_bundle_part(plan_other_bnd, full_other_bnd, 5)
         self.assertEqual(bnd_appended_chunk, "===== Prompt =====\nAppended final prompt\n")
 
         # 5. CLI modes (TTY and piped, bare and --start, with --session, --sandbox, --force) & incompatible rejections
@@ -1842,7 +1862,7 @@ class TestBundle(RunBlockTestCase):
         initial_stats = self.mod.stats_line(bundle_file)
         tty_out, mock_copy, refresh_calls = self._f57_offer(
             bundle_file,
-            "a\na\n\n",
+            "p\np\n\n",
             ["first note\n", "second note\n"],
             "START SESSION",
             extra_lines=[f"Bundle: {bundle_file}"],
@@ -1855,7 +1875,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(orig.read_text(encoding="utf-8"), initial_text)
         self.assertEqual(refresh_calls, [bundle_file, bundle_file])
         mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
-        self.assertIn("a(ppend)", tty_out)
+        self.assertIn("p(rompt)", tty_out)
         self.assertIn("(edited)", tty_out)
         self.assertNotEqual(self.mod.stats_line(bundle_file), initial_stats)
         self.assertEqual(tty_out.count("╭─ START SESSION "), 3)
@@ -1872,7 +1892,7 @@ class TestBundle(RunBlockTestCase):
         )
         bundle_file.write_text(initial_text, encoding="utf-8")
         self._f57_offer(
-            bundle_file, "a\n\n", ["follow-up question\n"], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
+            bundle_file, "p\n\n", ["follow-up question\n"], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
         )
         text = bundle_file.read_text(encoding="utf-8")
         self.assertEqual(text.count("===== Prompt ====="), 1)
@@ -1889,13 +1909,84 @@ class TestBundle(RunBlockTestCase):
         for blank in ("", "  \n\n\t\n"):
             with self.subTest(blank=blank):
                 tty_out, mock_copy, refresh_calls = self._f57_offer(
-                    bundle_file, "a\n\n", [blank], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
+                    bundle_file, "p\n\n", [blank], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
                 )
                 self.assertEqual(bundle_file.read_text(encoding="utf-8"), initial_text)
                 self.assertFalse((sdir / "0.orig").exists())
                 self.assertEqual(refresh_calls, [])
                 self.assertNotIn("(edited)", tty_out)
                 mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
+
+    def test_f77_in_order_parts_hierarchical_pct_and_total_rows(self):
+        nonce = "f77bnd"
+        stdin_text = (
+            f"Bundle-Boundary: {nonce}\n"
+            "Bundle-Expose: Role, Task\n"
+            "Role: work\n"
+            "Task: F77\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkgA:r1","chain":["pkgA","subB"]}} -->\n'
+            "Rule A1 body\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkgA:r2","chain":["pkgA","subB"]}} -->\n'
+            "Rule A2 body\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"cmd","name":"git status -sb","chain":[],"rc":0,"ms":5}} -->\n'
+            "## main\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"prompt","name":"Prompt","chain":[]}} -->\n'
+            "Final prompt text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res = self.mod.format_start_bundle("s77", stdin_body=stdin_text, work_dir=self.tmp, sandbox_mode="off")
+        full_txt = str(res["full"])
+        plan = res["bundle_plan"]
+        self.assertIsInstance(plan, dict)
+        parts = plan["parts"]
+        # #1 header, #2 injected block rule, #3 pkgA:r1, #4 pkgA:r2, #5 cmd, #6 prompt
+        self.assertEqual(plan["part_count"], 6)
+        self.assertEqual([p["index"] for p in parts], [1, 2, 3, 4, 5, 6])
+        self.assertEqual([p["kind"] for p in parts], ["header", "rule", "rule", "rule", "cmd", "prompt"])
+        # Part #1 is extractable and contains the session headers
+        hdr_entry, hdr_chunk = self.mod.extract_bundle_part(plan, full_txt, 1)
+        self.assertEqual(hdr_entry["kind"], "header")
+        self.assertIn("Session: s77\n", hdr_chunk)
+        self.assertIn("Task: F77\n", hdr_chunk)
+
+        table_lines = self.mod.format_bundle_parts_lines(plan, max_width=120, edited=True)
+        table_text = "\n".join(table_lines)
+        self.assertNotIn(".agents_bundle", table_text)
+        self.assertNotIn("external", table_text)
+        # Header row starts with # and %
+        self.assertRegex(table_lines[0], r"^  #\s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE$")
+        # Top and bottom [total] rows at depth=0 with blank # and (edited)
+        self.assertIn("100.0%", table_lines[1])
+        self.assertIn("[total]   6 parts (edited)", table_lines[1])
+        self.assertEqual(table_lines[1], table_lines[-1])
+        self.assertEqual(self.mod.bundle_row_heavy_level(table_lines[1]), "")
+
+        # Physical appearance order: #1 [header] -> #2 run_block -> pkgA -> subB -> #3 r1 -> #4 r2 -> #5 cmd -> #6 prompt
+        idx_hdr = next(i for i, ln in enumerate(table_lines) if "[header]" in ln)
+        idx_rb = next(i for i, ln in enumerate(table_lines) if "run_block:blocks/" in ln)
+        idx_pkga = next(i for i, ln in enumerate(table_lines) if "pkgA (2)" in ln)
+        idx_subb = next(i for i, ln in enumerate(table_lines) if "subB (2)" in ln)
+        idx_r1 = next(i for i, ln in enumerate(table_lines) if ln.endswith("r1"))
+        idx_r2 = next(i for i, ln in enumerate(table_lines) if ln.endswith("r2"))
+        idx_cmd = next(i for i, ln in enumerate(table_lines) if "git status -sb" in ln)
+        idx_prm = next(i for i, ln in enumerate(table_lines) if "[prompt]" in ln)
+        self.assertLess(idx_hdr, idx_rb)
+        self.assertLess(idx_rb, idx_pkga)
+        self.assertLess(idx_pkga, idx_subb)
+        self.assertLess(idx_subb, idx_r1)
+        self.assertLess(idx_r1, idx_r2)
+        self.assertLess(idx_r2, idx_cmd)
+        self.assertLess(idx_cmd, idx_prm)
+
+        # Hierarchical % column indentation: depth 0 vs depth 1 (subB) vs depth 2 (r1, r2)
+        pct_end_0 = table_lines[idx_pkga].index("%")
+        pct_end_1 = table_lines[idx_subb].index("%")
+        pct_end_2 = table_lines[idx_r1].index("%")
+        self.assertEqual(pct_end_1 - pct_end_0, 2)
+        self.assertEqual(pct_end_2 - pct_end_1, 2)
 
 
 if __name__ == "__main__":

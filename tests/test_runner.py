@@ -867,7 +867,7 @@ class TestRunner(RunBlockTestCase):
 
         tty_out = tty_w.getvalue()
         self.assertEqual(tty_out.count("╭─ START STEP "), 2)
-        self.assertEqual(tty_out.count("╭─ INFO · s1/1 "), 3)
+        self.assertEqual(tty_out.count("INFO · s1/1 · "), 3)
         self.assertIn("Original Plan (block.orig.sh):", tty_out)
         self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tty_out)
         self.assertIn("-> Execute this block? [y/n/i(nfo)]:", tty_out)
@@ -923,7 +923,7 @@ class TestRunner(RunBlockTestCase):
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
-            self.assertIn("-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", end_box)
+            self.assertIn("-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", end_box)
             self.assertIn("Error:  noisy stderr line", end_box)
 
         # 2. Inside END STEP i(nfo), e(dit) creates out.orig and o(utput) preserves out.orig;
@@ -967,7 +967,7 @@ class TestRunner(RunBlockTestCase):
 
         tty_out = tty_w.getvalue()
         self.assertEqual(tty_out.count("╭─ END STEP "), 2)
-        self.assertEqual(tty_out.count("╭─ INFO · s1/1 "), 3)
+        self.assertEqual(tty_out.count("INFO · s1/1 · "), 3)
         self.assertIn("Error:  noisy stderr line", tty_out)
         self.assertIn("Error:       cleaned failure reason", tty_out)
         self.assertIn("Error:  updated final error", tty_out)
@@ -1193,7 +1193,7 @@ class TestRunner(RunBlockTestCase):
                 extra_lines = [f"Output: {f}", "Error: some failure"] if extra else None
                 tty_out, mock_copy, _ = self._f57_offer(
                     f,
-                    "a\na\n\n",
+                    "p\np\n\n",
                     ["why did this fail?\n", "second question\n"],
                     kind,
                     extra_lines=extra_lines,
@@ -1205,7 +1205,7 @@ class TestRunner(RunBlockTestCase):
                 self.assertLess(text.index("why did this fail?"), text.index("second question"))
                 self.assertEqual(f.with_name("out.orig").read_text(encoding="utf-8"), initial_out)
                 mock_copy.assert_called_once_with(["pbcopy"], f)
-                self.assertIn("a(ppend)", tty_out)
+                self.assertIn("p(rompt)", tty_out)
                 self.assertIn("(edited)", tty_out)
                 self.assertEqual(tty_out.count("╭─ " + kind + " "), 3)
 
@@ -1214,7 +1214,7 @@ class TestRunner(RunBlockTestCase):
         f.parent.mkdir(parents=True, exist_ok=True)
         initial_out = "[s1/1] START\nok\n\n[s1/1] END (exit 0)\n"
         f.write_text(initial_out, encoding="utf-8")
-        tty_out, mock_copy, _ = self._f57_offer(f, "a\n\n", ["  \n"], "END STEP", rc=0, ok=True)
+        tty_out, mock_copy, _ = self._f57_offer(f, "p\n\n", ["  \n"], "END STEP", rc=0, ok=True)
         self.assertEqual(f.read_text(encoding="utf-8"), initial_out)
         self.assertFalse(f.with_name("out.orig").exists())
         self.assertNotIn("(edited)", tty_out)

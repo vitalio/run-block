@@ -65,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.27.0"
+VERSION = "0.27.1"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing a session: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block; prints an `END SESSION` summary with accumulated statistics and marks the session `[DONE]` in `--list`). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -2648,7 +2648,7 @@ class _SigwinchWatcher:
 
 
 def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
-    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'append', 'info', or 'resize'."""
+    """Wait for a single key: returns 'copy', 'skip', 'view', 'edit', 'prompt', 'info', or 'resize'."""
     if flush:
         flush_tty_input(tty_r)
     if not HAS_PTY or termios is None or tty is None:
@@ -2657,8 +2657,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "info"
         if ans in ("e", "edit"):
             return "edit"
-        if ans in ("a", "append"):
-            return "append"
+        if ans in ("p", "prompt"):
+            return "prompt"
         if ans in ("v", "view"):
             return "view"
         return "skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy"
@@ -2671,8 +2671,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
             return "info"
         if ans in ("e", "edit"):
             return "edit"
-        if ans in ("a", "append"):
-            return "append"
+        if ans in ("p", "prompt"):
+            return "prompt"
         return "view" if ans in ("v", "view") else ("skip" if ans in ("n", "no", "q", "quit", "esc", "\x1b") else "copy")
     try:
         tty.setraw(fd, termios.TCSANOW)
@@ -2695,8 +2695,8 @@ def read_clipboard_key(tty_r, *, flush: bool = True) -> str:
                     return "info"
                 if ch in (b"e", b"E"):
                     return "edit"
-                if ch in (b"a", b"A"):
-                    return "append"
+                if ch in (b"p", b"P"):
+                    return "prompt"
                 if ch in (b"v", b"V"):
                     return "view"
                 if ch in (b"\r", b"\n", b"y", b"Y"):
@@ -3890,6 +3890,7 @@ _TAG_COLORS = {
     "python": "\x1b[1;32m",
 }
 _BUNDLE_TAG_COLORS = {
+    "total": "\x1b[1;97m",
     "header": "\x1b[2m",
     "bundle": "\x1b[1;34m",
     "ruleset": "\x1b[1;36m",
@@ -4073,19 +4074,14 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
         return lines
     out: list[str] = []
     tree_re = re.compile(r"^((?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))(.*)$")
-    tab_re = re.compile(r"^(\s*\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
-    hdr_re = re.compile(r"^(\s*)(%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
-    label_re = re.compile(r"^(\s*)((?:──|--) .+ (?:──|--))$")
+    tab_re = re.compile(r"^(\s*(?:\d+\s+)?\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
+    hdr_re = re.compile(r"^(\s*)(#\s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
     heavy_colors = {"warn": _WARN_COLOR, "accent": _HIGHLIGHT_COLOR}
     fn_heavy = globals().get("bundle_row_heavy_level")
     for line in lines:
         m_hdr = hdr_re.match(line)
         if m_hdr:
             out.append(f"{m_hdr.group(1)}\x1b[7m{m_hdr.group(2)}{_ANSI_RESET}")
-            continue
-        m_lbl = label_re.match(line)
-        if m_lbl:
-            out.append(f"{m_lbl.group(1)}{_KEY_COLOR}{m_lbl.group(2)}{_ANSI_RESET}")
             continue
         m_tab = tab_re.match(line)
         if m_tab:
@@ -4669,7 +4665,9 @@ def _build_start_bundle_parts(
     max_width: int | None = None,
     plan: dict[str, object] | None = None,
     include_part_count: bool = True,
+    edited: bool = False,
 ) -> tuple[list[str], list[str]]:
+    _ = include_part_count
     if plan is None:
         fn_load = globals().get("load_session_bundle_plan")
         if callable(fn_load):
@@ -4681,13 +4679,9 @@ def _build_start_bundle_parts(
     max_row_len = max_width if max_width is not None else max(24, _hr_width() - 2)
     breakdown: list[str] = []
     if details:
-        part_cnt = int(plan.get("part_count") or 0)
-        count_suffix = f" ({part_cnt} part{'s' if part_cnt != 1 else ''})" if include_part_count else ""
         fn_parts = globals().get("format_bundle_parts_lines")
-        part_lines = fn_parts(plan, max_width=max_row_len) if callable(fn_parts) else []
+        part_lines = fn_parts(plan, max_width=max_row_len, edited=edited) if callable(fn_parts) else []
         if part_lines:
-            hdr = f"Parts{count_suffix}:"
-            breakdown.append(f"{_KEY_COLOR}{hdr}{_ANSI_RESET}" if _use_color() else hdr)
             breakdown.extend(_colorize_bundle_lines(part_lines))
     warnings_sec: list[str] = []
     fn_warns = globals().get("format_bundle_warning_items")
@@ -4796,6 +4790,7 @@ def build_box_body_lines(
             max_width=max_width,
             plan=bundle_plan_obj,
             include_part_count=not has_stats_count,
+            edited=is_edited,
         )
         out_lines = list(base_lines)
         if b_breakdown:
@@ -4812,7 +4807,7 @@ def build_box_body_lines(
 
 def _clipboard_prompt_line(title_kind: str) -> str:
     _ = title_kind
-    return "-> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"
+    return "-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:"
 
 
 def format_clipboard_box(
@@ -4910,11 +4905,34 @@ def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
     return above
 
 
+def _shorten_home_path(path: Path | str | None) -> str:
+    if path is None:
+        return ""
+    s = str(path)
+    if not s:
+        return ""
+    try:
+        home = str(Path.home())
+    except Exception:
+        home = os.path.expanduser("~")
+    if home and home != "~":
+        norm_home = home.rstrip("/\\")
+        if s == norm_home:
+            return "~"
+        if s.startswith(norm_home + "/") or s.startswith(norm_home + "\\"):
+            return "~" + s[len(norm_home) :]
+    return s
+
+
 def _parse_pager_line(line: str) -> str:
+    if line.startswith("\t"):
+        return "tab"
     raw = line.strip()
     if raw == "O":
         return "overwrite"
     ans = raw.lower()
+    if ans in ("tab", "parts"):
+        return "tab"
     if ans in ("j", "down"):
         return "down"
     if ans in ("k", "up"):
@@ -4929,6 +4947,8 @@ def _parse_pager_line(line: str) -> str:
         return "bottom"
     if ans in ("e", "edit"):
         return "edit"
+    if ans in ("p", "prompt"):
+        return "prompt"
     if ans in ("s", "script"):
         return "script"
     if ans in ("o", "output"):
@@ -4937,8 +4957,14 @@ def _parse_pager_line(line: str) -> str:
         return "overwrite"
     if ans in ("v", "view"):
         return "view"
+    if ans == "n":
+        return "next_part"
+    if raw == "N":
+        return "prev_part"
     if ans in ("", "y", "yes", "enter", "copy"):
         return "copy"
+    if ans in ("esc", "\x1b"):
+        return "esc"
     return "back"
 
 
@@ -4969,6 +4995,8 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
                 ch = os.read(fd, 1)
                 if not ch:
                     return "back"
+                if ch == b"\t":
+                    return "tab"
                 if ch in (b"j", b"J", b"\x0e"):
                     return "down"
                 if ch in (b"k", b"K", b"\x10"):
@@ -4989,6 +5017,8 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
                     return "copy"
                 if ch in (b"e", b"E"):
                     return "edit"
+                if ch in (b"p", b"P"):
+                    return "prompt"
                 if ch in (b"s", b"S"):
                     return "script"
                 if ch == b"o":
@@ -4997,8 +5027,6 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
                     return "overwrite"
                 if ch in (b"v", b"V"):
                     return "view"
-                if ch in (b"p", b"P"):
-                    return "part"
                 if ch == b"n":
                     return "next_part"
                 if ch == b"N":
@@ -5008,7 +5036,7 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
                 if ch == b"\x1b":
                     rlist, _, _ = select.select([fd], [], [], 0.05)
                     if not rlist:
-                        return "back"
+                        return "esc"
                     seq = os.read(fd, 32)
                     if seq in (b"[A", b"OA"):
                         return "up"
@@ -5052,28 +5080,26 @@ def _apply_pager_scroll(key: str, scroll_top: int, viewport_rows: int) -> int | 
 def _compose_pager_frame(
     header_rows: list[str],
     all_items: list[str],
-    bottom_rule: str,
     cols: int,
     rows: int,
     scroll_top: int,
     footer_tail: list[str],
     *,
-    border_col: str,
+    scroll_hint: str = "Up/Down j/k PgUp/PgDn: scroll",
 ) -> tuple[str, int, int]:
-    viewport_rows = max(1, rows - len(header_rows) - 2)
+    viewport_rows = max(1, rows - len(header_rows) - 1)
     max_scroll = max(0, len(all_items) - viewport_rows)
     clamped_scroll = max(0, min(scroll_top, max_scroll))
-    visible = all_items[clamped_scroll : clamped_scroll + viewport_rows]
-    empty_row = _prefix_block_line("", border_color=border_col)
+    visible = list(all_items[clamped_scroll : clamped_scroll + viewport_rows])
     while len(visible) < viewport_rows:
-        visible.append(empty_row)
+        visible.append("")
 
     total_items = len(all_items)
     start_idx = clamped_scroll + 1 if total_items > 0 else 0
     end_idx = min(total_items, clamped_scroll + viewport_rows)
     pos_txt = f"Lines {start_idx}-{end_idx}/{total_items}" if total_items > 0 else "0 lines"
 
-    footer_parts: list[str] = [pos_txt, "Up/Down j/k PgUp/PgDn: scroll", *footer_tail]
+    footer_parts: list[str] = [pos_txt, scroll_hint, *footer_tail]
     footer_raw = " " + " · ".join(footer_parts)
     footer_txt = _truncate_display_width(footer_raw, cols) if display_width(footer_raw) > cols else footer_raw
     if _use_color():
@@ -5081,7 +5107,7 @@ def _compose_pager_frame(
     else:
         footer_bar = footer_txt
 
-    frame_lines = [*header_rows, *visible, bottom_rule, footer_bar]
+    frame_lines = [*header_rows, *visible, footer_bar]
     frame = "\033[H" + "\r\n".join(f"{ln}\033[K" for ln in frame_lines)
     return frame, clamped_scroll, viewport_rows
 
@@ -5096,68 +5122,31 @@ def _info_part_total(sdir: Path | None, bundle_path: Path | None) -> int:
     return len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
 
 
-def _parse_part_number(raw: str, total: int) -> int | None:
-    raw = raw.strip()
-    if not re.fullmatch(r"[0-9]{1,6}", raw):
-        return None
-    number = int(raw)
-    return number if 1 <= number <= total else None
+_PART_ROW_NUM_RE = re.compile(r"^\s*(\d+)\s+\d+(?:\.\d+)?%\s+\S+\s+\d+\s+~\S+\s+\[[a-z0-9_-]+\]")
 
 
-def _read_raw_char(tty_r) -> str | None:
-    fd = tty_r.fileno()
-    old_attrs = termios.tcgetattr(fd)
-    try:
-        tty.setraw(fd, termios.TCSANOW)
-        ch = os.read(fd, 1)
-        if not ch:
-            return None
-        if ch == b"\x1b":
-            rlist, _, _ = select.select([fd], [], [], 0.05)
-            if not rlist:
-                return "\x1b"
-            os.read(fd, 32)
-            return ""
-        return ch.decode("latin-1")
-    finally:
-        try:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
-        except Exception:
-            pass
+def _find_selectable_part_rows(items: list[str]) -> list[tuple[int, int]]:
+    found: list[tuple[int, int]] = []
+    seen_parts: set[int] = set()
+    for row_idx, raw_line in enumerate(items):
+        plain = ANSI_RE.sub("", raw_line)
+        m = _PART_ROW_NUM_RE.match(plain)
+        if m:
+            pno = int(m.group(1))
+            if pno not in seen_parts:
+                seen_parts.add(pno)
+                found.append((pno, row_idx))
+    return found
 
 
-def _read_part_number(tty_r, tty_w, total: int) -> int | None:
-    if not HAS_PTY or termios is None or tty is None:
-        return _parse_part_number(tty_r.readline(), total)
-    try:
-        termios.tcgetattr(tty_r.fileno())
-    except Exception:
-        return _parse_part_number(tty_r.readline(), total)
-    buf = ""
-    hint = ""
-    while True:
-        cols, rows = _term_size()
-        txt = f" Part number (1-{total}): {buf}_{hint}"
-        txt = _truncate_display_width(txt, cols) if display_width(txt) > cols else txt
-        bar = f"\x1b[7m{txt.ljust(cols)}\x1b[0m" if _use_color() else txt
-        tty_w.write(f"\033[{rows};1H\033[2K{bar}")
-        tty_w.flush()
-        ch = _read_raw_char(tty_r)
-        if ch is None or ch in ("\x1b", "\x03"):
-            return None
-        if ch in ("\r", "\n"):
-            if not buf:
-                return None
-            number = _parse_part_number(buf, total)
-            if number is not None:
-                return number
-            hint = f"  (enter 1-{total})"
-        elif ch in ("\x7f", "\x08"):
-            buf = buf[:-1]
-            hint = ""
-        elif ch.isdigit() and len(buf) < 6:
-            buf += ch
-            hint = ""
+def _highlight_selected_part_row(line: str, cols: int) -> str:
+    plain = ANSI_RE.sub("", line)
+    if _use_color():
+        padded = _truncate_display_width(plain, cols) if display_width(plain) > cols else plain.ljust(cols)
+        return f"\x1b[7m{padded}\x1b[0m"
+    if plain.startswith("  "):
+        return "> " + plain[2:]
+    return ">" + plain
 
 
 def _build_part_screen(
@@ -5175,35 +5164,32 @@ def _build_part_screen(
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
     panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
-    width = max(min(cols, 48), display_width(panel_title) + 8)
-    max_content_w = max(1, cols - 2)
-    top_rule = _format_top_rule(panel_title, width, title_color=title_col, border_color=border_col)
-    bottom_rule = _format_bottom_rule(width, border_color=border_col)
+    max_content_w = max(1, cols)
+    title_line = f"{title_col}{panel_title}{_ANSI_RESET}" if _use_color() else panel_title
 
     hdr_kv: list[str] = []
     if entry is not None:
         hdr_kv.append(f"Source: {_part_label(entry)} ({entry.get('kind') or 'part'})")
         hdr_kv.append(f"Range: lines {entry.get('line_start')}-{entry.get('line_end')} of {label}")
-    header_rows: list[str] = [top_rule]
+    header_rows: list[str] = [title_line]
     for hline in hdr_kv:
         colored = _colorize_kv_line(_expand_tabs(hline), bright_stats=True)
         for wline in _wrap_box_line(colored, max_content_w):
-            header_rows.append(_prefix_block_line(wline, border_color=border_col))
+            header_rows.append(wline)
     div_char = "─" if _supports_utf8() else "-"
-    header_rows.append(_prefix_block_line(div_char * max(8, width - 3), border_color=border_col))
+    div_line = div_char * max(8, max_content_w)
+    header_rows.append(f"{border_col}{div_line}{_ANSI_RESET}" if _use_color() else div_line)
 
     all_items: list[str] = []
     for bline in ([error] if error else body_lines):
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
-            all_items.append(_prefix_block_line(wline, border_color=border_col))
+            all_items.append(wline)
 
     footer_tail = ["n/N: next/prev part"]
     if can_edit:
         footer_tail.append("e(dit) bundle")
     footer_tail.append("Esc/q/i: back")
-    return _compose_pager_frame(
-        header_rows, all_items, bottom_rule, cols, rows, scroll_top, footer_tail, border_col=border_col
-    )
+    return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, footer_tail)
 
 
 def _resolve_info_step_script(
@@ -5435,26 +5421,13 @@ def _collect_info_report(
         bpath = out_path if out_path is not None else (resolved_sdir / "0" if resolved_sdir is not None else None)
         if bpath is not None:
             orig_b = _orig_file_backup_path(bpath)
-            b_edited = _is_file_edited(bpath, orig_b) if edited is None else edited
-            meta_kv.append(f"Bundle: {bpath}")
-            if orig_b.is_file():
-                meta_kv.append(f"Original: {orig_b}")
-            st = stats_line(bpath)
+            b_edited = _is_file_edited(bpath, orig_b) if edited is None else bool(edited)
             plan_obj = None
             fn_load = globals().get("load_session_bundle_plan")
             if callable(fn_load):
                 loaded = fn_load(resolved_sdir, bpath)
                 if isinstance(loaded, dict):
                     plan_obj = loaded
-            if st:
-                st_txt = st
-                if isinstance(plan_obj, dict):
-                    p_cnt = int(plan_obj.get("part_count") or 0)
-                    if p_cnt > 0:
-                        st_txt += f" ({p_cnt} part{'s' if p_cnt != 1 else ''})"
-                meta_kv.append(f"Stats: {st_txt} (edited)" if b_edited else f"Stats: {st_txt}")
-            elif b_edited:
-                meta_kv.append("Stats: (edited)")
             body_sections: list[str] = []
             breakdown, warnings_sec = _build_start_bundle_parts(
                 resolved_sdir,
@@ -5463,6 +5436,7 @@ def _collect_info_report(
                 max_width=max_content_w,
                 plan=plan_obj,
                 include_part_count=True,
+                edited=b_edited,
             )
             if breakdown:
                 body_sections.extend(breakdown)
@@ -5643,14 +5617,30 @@ def _build_info_screen(
     edited: bool | None = None,
     allow_copy: bool = False,
     allow_overwrite: bool = False,
+    part_cursor: int | None = None,
 ) -> tuple[str, int, int]:
     kind = title_kind.strip()
     title_col, border_col = _block_colors(kind, has_exit=(rc is not None and rc != 0))
-    panel_title = f"INFO · {label}" if label else f"INFO · {kind}"
-    width = max(min(cols, 48), display_width(panel_title) + 8)
-    max_content_w = max(1, cols - 2)
-    top_rule = _format_top_rule(panel_title, width, title_color=title_col, border_color=border_col)
-    bottom_rule = _format_bottom_rule(width, border_color=border_col)
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path or edit_target)
+    resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+    if kind == "START SESSION":
+        primary_path = out_path if out_path is not None else (edit_target if edit_target is not None else (resolved_sdir / "0" if resolved_sdir is not None else None))
+        is_edited = _is_file_edited(primary_path, _orig_file_backup_path(primary_path)) if (edited is None and primary_path is not None) else bool(edited)
+    else:
+        primary_path = out_path if (out_path is not None and out_path.exists()) else (edit_target if (edit_target is not None and edit_target.exists()) else resolved_script)
+        if primary_path is None and resolved_sdir is not None and (resolved_sdir / "0").is_file():
+            primary_path = resolved_sdir / "0"
+        orig_sc = _orig_backup_path(resolved_script) if resolved_script is not None else None
+        orig_o = _orig_file_backup_path(out_path) if out_path is not None else None
+        is_edited = bool(edited if edited is not None else (_is_file_edited(out_path, orig_o) or _is_file_edited(resolved_script, orig_sc)))
+
+    base_title = f"INFO · {label}" if label else f"INFO · {kind}"
+    short_path = _shorten_home_path(primary_path) if primary_path is not None else ""
+    panel_title = f"{base_title} · {short_path}" if short_path else base_title
+    if is_edited:
+        panel_title += " (edited)"
+    max_content_w = max(1, cols)
+    title_line = f"{title_col}{panel_title}{_ANSI_RESET}" if _use_color() else panel_title
 
     hdr_kv, raw_body = _collect_info_report(
         title_kind=kind,
@@ -5668,44 +5658,70 @@ def _build_info_screen(
         note=note,
         sandbox_mode=sandbox_mode,
         extra_lines=extra_lines,
-        edited=edited,
+        edited=is_edited,
     )
-    header_rows: list[str] = [top_rule]
+    header_rows: list[str] = [title_line]
     for hline in hdr_kv:
         colored = _colorize_kv_line(_expand_tabs(hline), bright_stats=True)
         for wline in _wrap_box_line(colored, max_content_w):
-            header_rows.append(_prefix_block_line(wline, border_color=border_col))
+            header_rows.append(wline)
     div_char = "─" if _supports_utf8() else "-"
-    header_rows.append(_prefix_block_line(div_char * max(8, width - 3), border_color=border_col))
+    div_line = div_char * max(8, max_content_w)
+    header_rows.append(f"{border_col}{div_line}{_ANSI_RESET}" if _use_color() else div_line)
 
     all_items: list[str] = []
     for bline in raw_body:
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
-            all_items.append(_prefix_block_line(wline, border_color=border_col))
+            all_items.append(wline)
 
-    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path)
-    resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+    selectable = _find_selectable_part_rows(all_items) if kind == "START SESSION" else []
+    selected_row_idx: int | None = None
+    if part_cursor is not None and selectable:
+        for pno, r_idx in selectable:
+            if pno == part_cursor:
+                selected_row_idx = r_idx
+                break
+        if selected_row_idx is None:
+            selected_row_idx = selectable[0][1]
+        all_items[selected_row_idx] = _highlight_selected_part_row(all_items[selected_row_idx], max_content_w)
+
     has_script = resolved_script is not None and resolved_script.is_file()
     has_output = kind != "START SESSION" and out_path is not None and out_path.is_file()
     has_edit = edit_target is not None and edit_target.is_file()
 
     footer_tail: list[str] = []
-    if has_edit:
-        footer_tail.append("e(dit)")
-    if has_script and kind != "START STEP":
-        footer_tail.append("s(cript)")
-    if has_output:
-        footer_tail.append("o(utput)")
-    if allow_overwrite:
-        footer_tail.append("O(verwrite)" if has_output else "o(verwrite)")
-    footer_tail.append("v(iew)")
-    if kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0:
-        footer_tail.append("p(art)")
-    if allow_copy:
-        footer_tail.append("Enter: copy")
-    footer_tail.append("Esc/q/i: back")
+    if selected_row_idx is not None:
+        scroll_hint = "Up/Down j/k: select part"
+        footer_tail.append("Enter: open part")
+        footer_tail.append("Tab/Esc: exit parts")
+    else:
+        scroll_hint = "Up/Down j/k PgUp/PgDn: scroll"
+        if has_edit:
+            footer_tail.append("e(dit)")
+        if allow_copy and has_edit:
+            footer_tail.append("p(rompt)")
+        if has_script and kind != "START STEP":
+            footer_tail.append("s(cript)")
+        if has_output:
+            footer_tail.append("o(utput)")
+        if allow_overwrite:
+            footer_tail.append("O(verwrite)" if has_output else "o(verwrite)")
+        footer_tail.append("v(iew)")
+        if kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0:
+            footer_tail.append("Tab: parts")
+        if allow_copy:
+            footer_tail.append("Enter: copy")
+        footer_tail.append("Esc/q/i: back")
+
+    viewport_rows = max(1, rows - len(header_rows) - 1)
+    if selected_row_idx is not None:
+        if selected_row_idx < scroll_top:
+            scroll_top = selected_row_idx
+        elif selected_row_idx >= scroll_top + viewport_rows:
+            scroll_top = selected_row_idx - viewport_rows + 1
+
     return _compose_pager_frame(
-        header_rows, all_items, bottom_rule, cols, rows, scroll_top, footer_tail, border_col=border_col
+        header_rows, all_items, cols, rows, scroll_top, footer_tail, scroll_hint=scroll_hint
     )
 
 
@@ -5780,10 +5796,33 @@ def _show_info_fullscreen(
     cur_findings = findings
     cur_note = note
     cur_edited = edited
-    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path)
+    part_cursor: int | None = None
+    resolved_sdir = sdir if sdir is not None else _resolve_session_dir(label, out_path or script_path or edit_target)
+
+    def _apply_edit_callbacks(target: Path) -> dict[str, object] | None:
+        nonlocal any_edited, cur_summary, cur_findings, cur_note, cur_edited
+        any_edited = True
+        cur_edited = True
+        if callable(on_edit_callback):
+            cb_res = on_edit_callback(target)
+            if isinstance(cb_res, dict):
+                if "summary" in cb_res:
+                    cur_summary = cb_res["summary"]
+                if "findings" in cb_res:
+                    cur_findings = cb_res["findings"]
+                if "note" in cb_res:
+                    cur_note = str(cb_res["note"] or "")
+                if "edited" in cb_res:
+                    cur_edited = bool(cb_res["edited"])
+                if cb_res.get("reject_msg"):
+                    return cb_res
+        elif kind == "START SESSION":
+            fn_refresh = globals().get("refresh_bundle_meta")
+            if callable(fn_refresh):
+                fn_refresh(target)
+        return None
 
     def _edit_artifact(target: Path) -> dict[str, object] | None:
-        nonlocal any_edited, cur_summary, cur_findings, cur_note, cur_edited
         if not target.is_file():
             return None
         try:
@@ -5807,34 +5846,33 @@ def _show_info_fullscreen(
             after_bytes = None
         if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
             _write_orig_backup_once(orig_p, before_bytes)
-            any_edited = True
-            if callable(on_edit_callback):
-                cb_res = on_edit_callback(target)
-                if isinstance(cb_res, dict):
-                    if "summary" in cb_res:
-                        cur_summary = cb_res["summary"]
-                    if "findings" in cb_res:
-                        cur_findings = cb_res["findings"]
-                    if "note" in cb_res:
-                        cur_note = str(cb_res["note"] or "")
-                    if "edited" in cb_res:
-                        cur_edited = bool(cb_res["edited"])
-                    if cb_res.get("reject_msg"):
-                        return cb_res
+            return _apply_edit_callbacks(target)
         return None
 
-    def _browse_parts() -> dict[str, object] | None:
+    def _prompt_artifact(target: Path) -> dict[str, object] | None:
+        if not target.is_file():
+            return None
+        tty_w.write("\033[?25h\033[?1049l")
+        tty_w.flush()
+        try:
+            note_txt = _prompt_append_text(tty_r, tty_w)
+        finally:
+            tty_w.write("\033[?1049h\033[?25l")
+            tty_w.flush()
+        if append_note_to_file(target, note_txt, as_prompt=(kind == "START SESSION")):
+            return _apply_edit_callbacks(target)
+        return None
+
+    def _open_part_viewer(initial_part_no: int) -> tuple[int, dict[str, object] | None]:
         fn_load = globals().get("load_session_bundle_plan")
         fn_extract = globals().get("extract_bundle_part")
         if not callable(fn_load) or not callable(fn_extract) or resolved_sdir is None or out_path is None:
-            return None
+            return initial_part_no, None
         plan = fn_load(resolved_sdir, out_path)
         total = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)]) if isinstance(plan, dict) else 0
         if total < 1:
-            return None
-        part_no = _read_part_number(tty_r, tty_w, total)
-        if part_no is None:
-            return None
+            return initial_part_no, None
+        part_no = max(1, min(total, initial_part_no))
         part_scroll = 0
         while True:
             entry: dict[str, object] | None = None
@@ -5873,9 +5911,9 @@ def _show_info_fullscreen(
                 part_no = max(1, part_no - 1)
                 part_scroll = 0
             elif key == "edit" and edit_target is not None and edit_target.is_file():
-                return _edit_artifact(edit_target)
-            elif key == "back":
-                return None
+                return part_no, _edit_artifact(edit_target)
+            elif key in ("back", "esc", "tab"):
+                return part_no, None
 
     tty_w.write("\033[?1049h\033[?25l")
     tty_w.flush()
@@ -5886,6 +5924,12 @@ def _show_info_fullscreen(
             resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
             has_script = resolved_script is not None and resolved_script.is_file()
             has_output = kind != "START SESSION" and out_path is not None and out_path.is_file()
+            part_total = _info_part_total(resolved_sdir, out_path) if kind == "START SESSION" else 0
+            if part_cursor is not None:
+                if part_total < 1:
+                    part_cursor = None
+                else:
+                    part_cursor = max(1, min(part_total, part_cursor))
             frame, scroll_top, viewport_rows = _build_info_screen(
                 kind,
                 label,
@@ -5908,6 +5952,7 @@ def _show_info_fullscreen(
                 edited=cur_edited,
                 allow_copy=allow_copy,
                 allow_overwrite=allow_overwrite,
+                part_cursor=part_cursor,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -5915,11 +5960,39 @@ def _show_info_fullscreen(
             first_read = False
             if key == "resize":
                 continue
+            if part_cursor is not None:
+                if key in ("tab", "esc"):
+                    part_cursor = None
+                    continue
+                if key == "down":
+                    part_cursor = min(part_total, part_cursor + 1)
+                    continue
+                if key == "up":
+                    part_cursor = max(1, part_cursor - 1)
+                    continue
+                if key == "top":
+                    part_cursor = 1
+                    continue
+                if key == "bottom":
+                    part_cursor = part_total
+                    continue
+                if key == "copy":
+                    part_cursor, cb = _open_part_viewer(part_cursor)
+                    if cb and cb.get("reject_msg"):
+                        return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
+                    continue
+            if key == "tab" and kind == "START SESSION" and part_total > 0:
+                part_cursor = 1
+                continue
             new_scroll = _apply_pager_scroll(key, scroll_top, viewport_rows)
             if new_scroll is not None:
                 scroll_top = new_scroll
             elif key == "edit" and edit_target is not None and edit_target.is_file():
                 cb = _edit_artifact(edit_target)
+                if cb and cb.get("reject_msg"):
+                    return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
+            elif key == "prompt" and allow_copy and edit_target is not None and edit_target.is_file():
+                cb = _prompt_artifact(edit_target)
                 if cb and cb.get("reject_msg"):
                     return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
             elif key == "script" and has_script and resolved_script is not None:
@@ -5937,7 +6010,7 @@ def _show_info_fullscreen(
                 report_txt = _build_plain_info_report(
                     title_kind=kind,
                     label=label,
-                    max_content_w=max(80, cols - 2),
+                    max_content_w=max(80, cols),
                     sdir=resolved_sdir,
                     out_path=out_path,
                     script_path=resolved_script,
@@ -5959,13 +6032,9 @@ def _show_info_fullscreen(
                 finally:
                     tty_w.write("\033[?1049h\033[?25l")
                     tty_w.flush()
-            elif key == "part" and kind == "START SESSION":
-                cb = _browse_parts()
-                if cb and cb.get("reject_msg"):
-                    return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
             elif key == "copy" and allow_copy:
                 return {"action": "copy", "edited": any_edited}
-            elif key == "back":
+            elif key in ("back", "esc"):
                 return {"action": "back", "edited": any_edited}
     finally:
         tty_w.write("\033[?25h\033[?1049l")
@@ -6220,7 +6289,7 @@ def offer_clipboard_copy(
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
                         continue
-                if action == "append":
+                if action == "prompt":
                     note = _prompt_append_text(tty_r, tty_w)
                     if append_note_to_file(edit_target, note, as_prompt=is_start_bundle):
                         _on_clip_edit(edit_target)
@@ -6758,7 +6827,6 @@ def _child_rel_label(prefix: str, name: str) -> str:
 
 def _recompute_share_pct(plan: dict[str, object]) -> None:
     parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    hdr = plan.get("header") if isinstance(plan.get("header"), dict) else None
     total_chars = int(plan.get("chars") if plan.get("chars") is not None else (plan.get("bytes") or 0))
     total_bytes = int(plan.get("bytes") or 0)
     denom = total_chars if total_chars > 0 else total_bytes
@@ -6766,9 +6834,6 @@ def _recompute_share_pct(plan: dict[str, object]) -> None:
     for entry in parts:
         val = _part_chars(entry) if use_chars else int(entry.get("bytes") or 0)
         entry["share_pct"] = round(val * 100.0 / denom, 1) if denom > 0 else 0.0
-    if hdr is not None:
-        hval = _part_chars(hdr) if use_chars else int(hdr.get("bytes") or 0)
-        hdr["share_pct"] = round(hval * 100.0 / denom, 1) if denom > 0 else 0.0
 
 
 def _collapse_blank_runs(lines: list[str]) -> list[str]:
@@ -6830,7 +6895,7 @@ def _shift_part_ranges(plan: dict[str, object], offset: int) -> dict[str, object
     shifted: list[dict[str, object]] = []
     for p in out.get("parts") or []:
         q = dict(p)
-        if isinstance(q.get("line_start"), int) and isinstance(q.get("line_end"), int):
+        if str(q.get("kind") or "") != "header" and isinstance(q.get("line_start"), int) and isinstance(q.get("line_end"), int):
             q["line_start"] += delta
             q["line_end"] += delta
         shifted.append(q)
@@ -6888,48 +6953,79 @@ def format_part_header(target: str, entry: dict[str, object], total: int) -> str
 
 def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_lines: bool = True) -> dict[str, object]:
     out = dict(plan)
-    parts = [p for p in (out.get("parts") or []) if isinstance(p, dict)]
-    out["parts"] = parts
-    sum_lines = sum(int(p.get("lines") or 0) for p in parts)
-    sum_chars = sum(_part_chars(p) for p in parts)
-    sum_bytes = sum(int(p.get("bytes") or 0) for p in parts)
-    sum_gpt = sum(int(p.get("gpt") or 0) for p in parts)
-    sum_claude = sum(int(p.get("claude") or 0) for p in parts)
+    raw_parts = [dict(p) for p in (out.get("parts") or []) if isinstance(p, dict)]
+    had_header_part = bool(raw_parts and str(raw_parts[0].get("kind") or "") == "header")
+    non_hdr_parts = raw_parts[1:] if had_header_part else raw_parts
+    sum_lines = sum(int(p.get("lines") or 0) for p in non_hdr_parts)
+    sum_chars = sum(_part_chars(p) for p in non_hdr_parts)
+    sum_bytes = sum(int(p.get("bytes") or 0) for p in non_hdr_parts)
+    sum_gpt = sum(int(p.get("gpt") or 0) for p in non_hdr_parts)
+    sum_claude = sum(int(p.get("claude") or 0) for p in non_hdr_parts)
     full_tok = count_tokens(full_text.encode("utf-8"))
     try:
-        _, body = parse_stdin_preamble(full_text)
+        preamble_headers, body = parse_stdin_preamble(full_text)
     except Exception:
-        body = full_text
+        preamble_headers, body = [], full_text
     body_pos = full_text.find(body[:200]) if body.strip() else -1
-    prefix = full_text[:body_pos] if body_pos > 0 else ""
+    prefix = full_text[:body_pos] if body_pos > 0 else (full_text if (preamble_headers and not body.strip()) else "")
     pre_tok = count_tokens(prefix.encode("utf-8")) if prefix else {}
 
     def _hdr_val(key: str, sum_val: int) -> int:
         return max(0, int(full_tok[key]) - sum_val, int(pre_tok.get(key) or 0))
 
-    hdr_lines = _hdr_val("lines", sum_lines)
-    hdr_chars = _hdr_val("chars", sum_chars)
-    hdr_bytes = _hdr_val("bytes", sum_bytes)
-    hdr_gpt = _hdr_val("gpt", sum_gpt)
-    hdr_claude = _hdr_val("claude", sum_claude)
-    if hdr_lines > 0 or hdr_chars > 0:
+    has_leading_headers = bool(preamble_headers)
+    hdr_lines = _hdr_val("lines", sum_lines) if has_leading_headers else 0
+    hdr_chars = _hdr_val("chars", sum_chars) if has_leading_headers else 0
+    hdr_bytes = _hdr_val("bytes", sum_bytes) if has_leading_headers else 0
+    hdr_gpt = _hdr_val("gpt", sum_gpt) if has_leading_headers else 0
+    hdr_claude = _hdr_val("claude", sum_claude) if has_leading_headers else 0
+    out.pop("header", None)
+    if has_leading_headers and (hdr_lines > 0 or hdr_chars > 0):
         out["lines"] = sum_lines + hdr_lines
         out["chars"] = sum_chars + hdr_chars
         out["bytes"] = sum_bytes + hdr_bytes
         out["gpt"] = sum_gpt + hdr_gpt
         out["claude"] = sum_claude + hdr_claude
         out["gpt_exact"] = bool(full_tok["gpt_exact"])
-        out["header"] = {
+        offset = _body_line_offset(full_text)
+        hdr_end = max(1, offset) if offset > 0 else max(1, len(prefix.splitlines()))
+        hdr_part: dict[str, object] = {
+            "index": 1,
             "kind": "header",
             "name": "Headers & spacing",
+            "chain": [],
             "lines": hdr_lines,
             "chars": hdr_chars,
             "bytes": hdr_bytes,
             "gpt": hdr_gpt,
             "claude": hdr_claude,
+            "line_start": 1,
+            "line_end": hdr_end,
         }
+        shifted_parts: list[dict[str, object]] = [hdr_part]
+        for idx_p, p in enumerate(non_hdr_parts, 2):
+            qp = dict(p)
+            qp["index"] = idx_p
+            shifted_parts.append(qp)
+        out["parts"] = shifted_parts
+        out["part_count"] = len(shifted_parts)
+        if not had_header_part and isinstance(out.get("warnings"), list):
+            new_warns: list[dict[str, object]] = []
+            for w in out["warnings"]:
+                if isinstance(w, dict):
+                    qw = dict(w)
+                    if isinstance(qw.get("part_index"), int):
+                        qw["part_index"] = int(qw["part_index"]) + 1
+                    new_warns.append(qw)
+            out["warnings"] = new_warns
     else:
-        out.pop("header", None)
+        renumbered: list[dict[str, object]] = []
+        for idx_p, p in enumerate(non_hdr_parts, 1):
+            qp = dict(p)
+            qp["index"] = idx_p
+            renumbered.append(qp)
+        out["parts"] = renumbered
+        out["part_count"] = len(renumbered)
         out["lines"] = sum_lines
         out["chars"] = sum_chars
         out["bytes"] = sum_bytes
@@ -7202,10 +7298,65 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
         return
     text = bundle_path.read_text(encoding="utf-8", errors="replace")
     _, body = parse_stdin_preamble(text)
+    meta = read_session_meta(sdir)
+    prev_plan = meta.get("bundle_plan") if isinstance(meta.get("bundle_plan"), dict) else None
     meta_hdrs = _parse_meta_header_items(sdir)
     boundary = get_bundle_boundary(meta_hdrs)
-    _, plan = parse_bundle_fragments(body, boundary=boundary)
-    plan = reconcile_bundle_plan(plan, text)
+    _, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
+    if (
+        isinstance(prev_plan, dict)
+        and prev_plan.get("protocol") == "boundary"
+        and parsed_plan.get("protocol") != "boundary"
+    ):
+        prev_parts = [dict(p) for p in (prev_plan.get("parts") or []) if isinstance(p, dict)]
+        non_hdr = [p for p in prev_parts if str(p.get("kind") or "") != "header"]
+        lines = text.splitlines()
+        last_non_prompt_end = 0
+        for p in non_hdr:
+            if str(p.get("kind") or "") != "prompt" and isinstance(p.get("line_end"), int):
+                last_non_prompt_end = max(last_non_prompt_end, int(p["line_end"]))
+        if non_hdr and last_non_prompt_end > 0 and last_non_prompt_end <= len(lines):
+            prefix_match = True
+            for p in non_hdr:
+                if str(p.get("kind") or "") == "prompt":
+                    continue
+                ls, le = p.get("line_start"), p.get("line_end")
+                if not isinstance(ls, int) or not isinstance(le, int) or ls < 1 or le > len(lines):
+                    prefix_match = False
+                    break
+            if prefix_match:
+                tail_start = last_non_prompt_end + 1
+                while tail_start <= len(lines) and not lines[tail_start - 1].strip():
+                    tail_start += 1
+                tail_end = len(lines)
+                while tail_end >= tail_start and not lines[tail_end - 1].strip():
+                    tail_end -= 1
+                if tail_start <= tail_end:
+                    tail_lines = lines[tail_start - 1 : tail_end]
+                    first_tail = tail_lines[0].strip()
+                    m_sec = SECTION_HEADER_RE.match(first_tail)
+                    if m_sec and m_sec.group(1).strip().lower() == "prompt":
+                        p_text = "\n".join(tail_lines) + "\n"
+                        tok = count_tokens(p_text.encode("utf-8"))
+                        if str(non_hdr[-1].get("kind") or "") == "prompt":
+                            p_entry = dict(non_hdr[-1])
+                        else:
+                            p_entry = {"kind": "prompt", "name": "Prompt", "chain": []}
+                            non_hdr.append(p_entry)
+                        p_entry["lines"] = int(tok["lines"])
+                        p_entry["chars"] = int(tok["chars"])
+                        p_entry["bytes"] = int(tok["bytes"])
+                        p_entry["gpt"] = int(tok["gpt"])
+                        p_entry["claude"] = int(tok["claude"])
+                        p_entry["line_start"] = tail_start
+                        p_entry["line_end"] = tail_end
+                        kept_plan = dict(prev_plan)
+                        kept_plan["parts"] = non_hdr
+                        kept_plan["line_offset"] = _body_line_offset(text)
+                        plan = reconcile_bundle_plan(kept_plan, text, track_lines=False)
+                        update_session_meta(sdir, bundle_plan=plan)
+                        return
+    plan = reconcile_bundle_plan(parsed_plan, text)
     update_session_meta(sdir, bundle_plan=plan)
 
 
@@ -7282,10 +7433,7 @@ HEAVY_WARN_SHARE = 25.0
 HEAVY_WARN_TOK = 10000
 HEAVY_ACCENT_SHARE = 10.0
 HEAVY_ACCENT_TOK = 3000
-GROUP_LABEL_BUNDLE = ".agents_bundle"
-GROUP_LABEL_EXTERNAL = "external (not from .agents_bundle)"
-_BUNDLE_ORIGIN_KINDS = ("rule", "cmd", "include", "file")
-_TABLE_ROW_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)%\s+\S+\s+\d+\s+(~\S+)\s+\[")
+_TABLE_ROW_RE = re.compile(r"^\s*(?:\d+\s+)?(\d+(?:\.\d+)?)%\s+\S+\s+\d+\s+(~\S+)\s+\[([a-z0-9_-]+)\]")
 _COUNT_RE = re.compile(r"(\d+(?:\.\d+)?)([kKmM]?)")
 
 
@@ -7309,18 +7457,9 @@ def bundle_row_heavy_level(line: str) -> str:
     m = _TABLE_ROW_RE.match(line)
     if not m:
         return ""
+    if m.group(3) == "total":
+        return ""
     return _heavy_level(float(m.group(1)), _parse_tok_hi(m.group(2)))
-
-
-def _is_bundle_origin(p: dict[str, object], protocol: str) -> bool:
-    if protocol != "boundary":
-        return False
-    kind = str(p.get("kind") or "")
-    if kind == "prompt":
-        return False
-    if kind in _BUNDLE_ORIGIN_KINDS:
-        return True
-    return bool(p.get("id") or p.get("via") or p.get("group") or _resolve_part_chain(p))
 
 
 def _tree_connector(ancestors_more: list[bool], is_last: bool) -> str:
@@ -7340,8 +7479,12 @@ def _make_table_row(
     claude_cnt: int,
     share_pct: float,
     tree_prefix: str = "",
+    part_num: str = "",
+    depth: int = 0,
 ) -> dict[str, object]:
     return {
+        "num_str": part_num,
+        "depth": depth,
         "pct_str": f"{share_pct:.1f}%",
         "chars_str": re.sub(r"\s*ch$", "", _human_chars(chars_cnt, short=True)),
         "lines_str": str(lines_cnt),
@@ -7362,33 +7505,45 @@ def _part_extras_suffix(p: dict[str, object], *, include_ms: bool = True) -> str
     return f" ({', '.join(extras)})" if extras else ""
 
 
-def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[dict[str, object]]:
+def _collect_hierarchy_rows(
+    plan: dict[str, object],
+    *,
+    details: bool,
+    edited: bool = False,
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    protocol = str(plan.get("protocol") or "")
-    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    framed = [p for p in parts if _is_bundle_origin(p, protocol)]
-    external = [p for p in parts if not _is_bundle_origin(p, protocol)]
+    parts = [dict(p) for p in (plan.get("parts") or []) if isinstance(p, dict)]
+    hdr = plan.get("header")
+    if isinstance(hdr, dict) and (_part_chars(hdr) > 0 or int(hdr.get("lines") or 0) > 0):
+        if not (parts and str(parts[0].get("kind") or "") == "header"):
+            hdr_part = dict(hdr)
+            hdr_part.setdefault("index", 1)
+            hdr_part.setdefault("kind", "header")
+            hdr_part.setdefault("name", "Headers & spacing")
+            hdr_part.setdefault("chain", [])
+            shifted: list[dict[str, object]] = [hdr_part]
+            for idx_p, ep in enumerate(parts, 2):
+                qp = dict(ep)
+                qp["index"] = idx_p
+                shifted.append(qp)
+            parts = shifted
 
-    def _emit_header() -> None:
-        hdr = plan.get("header")
-        if isinstance(hdr, dict) and (_part_chars(hdr) > 0 or int(hdr.get("lines") or 0) > 0):
-            rows.append(
-                _make_table_row(
-                    kind="header",
-                    desc=str(hdr.get("name") or "Headers & spacing"),
-                    lines_cnt=int(hdr.get("lines") or 0),
-                    chars_cnt=_part_chars(hdr),
-                    gpt_cnt=int(hdr.get("gpt") or 0),
-                    claude_cnt=int(hdr.get("claude") or 0),
-                    share_pct=float(hdr.get("share_pct") or 0.0),
-                )
-            )
+    if not parts:
+        return []
 
-    def _emit_part(p: dict[str, object], parent_name: str, ancestors_more: list[bool], is_last: bool | None) -> None:
+    def _emit_part(
+        p: dict[str, object],
+        parent_name: str,
+        ancestors_more: list[bool],
+        is_last: bool | None,
+        depth: int,
+    ) -> None:
         t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
         raw_lbl = _part_label(p)
         lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
         lbl += _part_extras_suffix(p, include_ms=details)
+        idx_val = p.get("index")
+        num_str = str(idx_val) if isinstance(idx_val, int) and idx_val > 0 else ""
         rows.append(
             _make_table_row(
                 kind=str(p.get("kind") or "part"),
@@ -7399,10 +7554,17 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
                 claude_cnt=int(p.get("claude") or 0),
                 share_pct=float(p.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
+                part_num=num_str,
+                depth=depth,
             )
         )
 
-    def _emit_node(node: dict[str, object], ancestors_more: list[bool], is_last: bool | None) -> None:
+    def _emit_node(
+        node: dict[str, object],
+        ancestors_more: list[bool],
+        is_last: bool | None,
+        depth: int,
+    ) -> None:
         t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
         has_children = bool(node.get("children_by_name"))
         direct_parts: list[dict[str, object]] = list(node.get("direct_parts") or [])  # type: ignore[arg-type]
@@ -7412,6 +7574,8 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
             if p_kind == "rule":
                 p_kind = "bundle"
             lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
+            idx_val = p.get("index")
+            num_str = str(idx_val) if isinstance(idx_val, int) and idx_val > 0 else ""
             rows.append(
                 _make_table_row(
                     kind=p_kind,
@@ -7422,6 +7586,8 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
                     claude_cnt=int(p.get("claude") or 0),
                     share_pct=float(p.get("share_pct") or 0.0),
                     tree_prefix=t_pfx,
+                    part_num=num_str,
+                    depth=depth,
                 )
             )
             return
@@ -7438,6 +7604,8 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
                 claude_cnt=int(node.get("claude") or 0),
                 share_pct=float(node.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
+                part_num="",
+                depth=depth,
             )
         )
         if details or has_children:
@@ -7446,57 +7614,61 @@ def _collect_hierarchy_rows(plan: dict[str, object], *, details: bool) -> list[d
             for c_idx, (c_type, c_obj) in enumerate(child_items):
                 c_last = c_idx == len(child_items) - 1
                 if c_type == "node":
-                    _emit_node(c_obj, next_anc, c_last)
+                    _emit_node(c_obj, next_anc, c_last, depth + 1)
                 else:
-                    _emit_part(c_obj, str(node["name"]), next_anc, c_last)
+                    _emit_part(c_obj, str(node["name"]), next_anc, c_last, depth + 1)
 
-    def _emit_tree(subset: list[dict[str, object]]) -> None:
-        for it_type, it_obj in _build_bundle_tree(subset):
-            if it_type == "node":
-                _emit_node(it_obj, [], None)
-            else:
-                _emit_part(it_obj, "", [], None)
+    for it_type, it_obj in _build_bundle_tree(parts):
+        if it_type == "node":
+            _emit_node(it_obj, [], None, 0)
+        else:
+            _emit_part(it_obj, "", [], None, 0)
 
-    if framed:
-        rows.append({"label": GROUP_LABEL_BUNDLE})
-        _emit_tree(framed)
-        ext_start = len(rows)
-        _emit_header()
-        _emit_tree(external)
-        if len(rows) > ext_start:
-            rows.insert(ext_start, {"label": GROUP_LABEL_EXTERNAL})
-    else:
-        _emit_header()
-        _emit_tree(parts)
-    return rows
-
-
-def _group_label_line(label: str, indent: str) -> str:
-    rule = "──" if _supports_utf8() else "--"
-    return f"{indent}{rule} {label} {rule}"
+    part_cnt = len(parts)
+    tot_lines = int(plan.get("lines") if plan.get("lines") is not None else sum(int(p.get("lines") or 0) for p in parts))
+    tot_chars = int(plan.get("chars") if plan.get("chars") is not None else (plan.get("bytes") or sum(_part_chars(p) for p in parts)))
+    tot_gpt = int(plan.get("gpt") if plan.get("gpt") is not None else sum(int(p.get("gpt") or 0) for p in parts))
+    tot_claude = int(plan.get("claude") if plan.get("claude") is not None else sum(int(p.get("claude") or 0) for p in parts))
+    tot_desc = f"{part_cnt} part{'s' if part_cnt != 1 else ''}" + (" (edited)" if edited else "")
+    tot_row = _make_table_row(
+        kind="total",
+        desc=tot_desc,
+        lines_cnt=tot_lines,
+        chars_cnt=tot_chars,
+        gpt_cnt=tot_gpt,
+        claude_cnt=tot_claude,
+        share_pct=100.0,
+        part_num="",
+        depth=0,
+    )
+    return [dict(tot_row), *rows, dict(tot_row)]
 
 
 def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: str = "  ") -> list[str]:
-    data = [r for r in rows if "label" not in r]
-    if not data:
+    if not rows:
         return []
-    w_pct = max(len("%"), *(len(str(r["pct_str"])) for r in data))
-    w_ch = max(len("CHARS"), *(len(str(r["chars_str"])) for r in data))
-    w_ln = max(len("LINES"), *(len(str(r["lines_str"])) for r in data))
-    w_tok = max(len("~TOK"), *(len(str(r["tok_str"])) for r in data))
-    w_kind = max(len("KIND"), *(len(f"[{r['kind']}]") for r in data))
+    w_num = max(len("#"), *(len(str(r.get("num_str") or "")) for r in rows))
+    w_pct_val = max(len("%"), *(len(str(r["pct_str"])) for r in rows))
+    max_depth = max((int(r.get("depth") or 0) for r in rows), default=0)
+    w_pct_col = w_pct_val + max_depth * 2
+    w_ch = max(len("CHARS"), *(len(str(r["chars_str"])) for r in rows))
+    w_ln = max(len("LINES"), *(len(str(r["lines_str"])) for r in rows))
+    w_tok = max(len("~TOK"), *(len(str(r["tok_str"])) for r in rows))
+    w_kind = max(len("KIND"), *(len(f"[{r['kind']}]") for r in rows))
 
+    pct_hdr = "%".rjust(w_pct_val).ljust(w_pct_col)
     out: list[str] = [
-        f"{indent}{'%'.rjust(w_pct)} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
+        f"{indent}{'#'.rjust(w_num)} {pct_hdr} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
         f"{'~TOK'.rjust(w_tok)}  {'KIND'.ljust(w_kind)}  SOURCE"
     ]
     for r in rows:
-        if "label" in r:
-            out.append(_group_label_line(str(r["label"]), indent))
-            continue
+        num_col = str(r.get("num_str") or "").rjust(w_num)
+        depth = int(r.get("depth") or 0)
+        pct_col = ((" " * (depth * 2)) + str(r["pct_str"]).rjust(w_pct_val)).ljust(w_pct_col)
         kind_col = f"[{r['kind']}]".ljust(w_kind)
         cols_prefix = (
-            f"{indent}{str(r['pct_str']).rjust(w_pct)} "
+            f"{indent}{num_col} "
+            f"{pct_col} "
             f"{str(r['chars_str']).rjust(w_ch)} "
             f"{str(r['lines_str']).rjust(w_ln)} "
             f"{str(r['tok_str']).rjust(w_tok)}  "
@@ -7513,12 +7685,12 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
     return out
 
 
-def format_bundle_summary_lines(plan: dict[str, object], max_width: int = 120) -> list[str]:
-    return _render_bundle_table(_collect_hierarchy_rows(plan, details=False), max_width=max_width)
+def format_bundle_summary_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
+    return _render_bundle_table(_collect_hierarchy_rows(plan, details=False, edited=edited), max_width=max_width)
 
 
-def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120) -> list[str]:
-    return _render_bundle_table(_collect_hierarchy_rows(plan, details=True), max_width=max_width)
+def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
+    return _render_bundle_table(_collect_hierarchy_rows(plan, details=True, edited=edited), max_width=max_width)
 
 
 def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
@@ -7596,7 +7768,8 @@ def _enrich_bundle_plan(plan: dict[str, object], full_text: str | None = None) -
     out["parts"] = parts
     if out.get("chars") is None:
         out["chars"] = int(out.get("bytes") or sum(_part_chars(p) for p in parts))
-    if full_text is not None and "header" not in out:
+    has_hdr_part = bool(parts and str(parts[0].get("kind") or "") == "header")
+    if full_text is not None and not has_hdr_part:
         out = reconcile_bundle_plan(out, full_text)
     if "warnings" not in out:
         out["warnings"] = analyze_bundle_warnings(parts, total_gpt=int(out.get("gpt") or 0))

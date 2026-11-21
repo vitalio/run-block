@@ -31,7 +31,7 @@ class TestUi(RunBlockTestCase):
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((84, 24))):
             box, c_w, c_off = self.mod.format_clipboard_box("s2/1", f, stats=s)
         self.assertEqual(c_w, 48)
-        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:"))
+        self.assertEqual(c_off, len("│ -> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:"))
         self.assertIn("╭─ END STEP ────", box)
         self.assertIn("│ Step:    s2/1", box)
         self.assertIn("│ Workdir: ", box)
@@ -39,12 +39,12 @@ class TestUi(RunBlockTestCase):
         self.assertNotIn("END STEP (", box)
         self.assertIn(f"│ Output: {f}", box)
         self.assertIn("│ Stats:  1 line · 6 chars · ~2 tokens", box)
-        self.assertIn("│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:", box)
+        self.assertIn("│ -> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", box)
         lines = box.splitlines()
         self.assertEqual(len(lines), 9)
         self.assertEqual(len(lines[0]), 48)
         self.assertTrue(lines[0].startswith("╭─ END STEP ────"))
-        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/a(ppend)/i(nfo)]:")
+        self.assertEqual(lines[-2], "│ -> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:")
         self.assertEqual(lines[-1], "╰" + "─" * 47)
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
@@ -171,7 +171,7 @@ class TestUi(RunBlockTestCase):
             mock_copy.assert_called_once_with(["true"], s_out)
             out_c_text = tty_w_c.getvalue()
             self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/i(nfo)]:", out_c_text)
-            self.assertIn("╭─ INFO · STEP ALREADY EXISTS ", out_c_text)
+            self.assertIn("INFO · STEP ALREADY EXISTS · ", out_c_text)
             self.assertIn(f"✓ Copied {s_out} to clipboard.", out_c_text)
 
             # Pressing Esc on STEP ALREADY EXISTS exits without copying or overwriting
@@ -1678,13 +1678,16 @@ class TestUi(RunBlockTestCase):
             finally:
                 if saved_nc is not None:
                     os.environ["NO_COLOR"] = saved_nc
+            self.assertIn("INFO · s54/0 · ", frame0)
+            self.assertNotIn("╭─ INFO", frame0)
+            self.assertNotIn("│ Session:", frame0)
+            self.assertNotIn("Bundle:", frame0)
+            self.assertNotIn("Stats:", frame0)
             self.assertIn("Sandbox:", frame0)
             self.assertIn("off", frame0)
             self.assertIn("Bundle-Command:", frame0)
             self.assertIn("agents_bundle role=work task=F54", frame0)
-            self.assertIn("Original:", frame0)
-            self.assertIn("0.orig", frame0)
-            self.assertIn("\x1b[97m", frame0)
+            self.assertIn("[total]", frame0)
             self.assertIn("\x1b[2mStats:", compact_box)
             self.assertNotIn("\x1b[97m", compact_box)
 
@@ -1788,11 +1791,105 @@ class TestUi(RunBlockTestCase):
             self.assertFalse(res_comp)
             comp_out = tw_comp.getvalue()
             self.assertIn("-> Reopen completed session s54? [y/N/i(nfo)]:", comp_out)
-            self.assertIn("╭─ INFO · s54 ", comp_out)
+            self.assertIn("INFO · s54 · ", comp_out)
             self.assertIn("Completed:       2026-11-19T20:00:00Z", comp_out)
             self.assertIn("Completed-Note:  done", comp_out)
         finally:
             self.mod.BASE_DIR = old_base
+
+    def test_f77_borderless_info_home_shortened_title_prompt_and_tab_cursor(self):
+        # 1. read_clipboard_key supports p/P in raw TTY and p/prompt in line mode
+        for line_in in ("p\n", "P\n", "prompt\n", "PROMPT\n"):
+            with self.subTest(line_in=line_in):
+                self.assertEqual(self.mod.read_clipboard_key(io.StringIO(line_in)), "prompt")
+
+        # 2. Home-shortened title bar (~path) and (edited) suffix in borderless _build_info_screen
+        home_dir = Path.home()
+        fake_in_home = home_dir / ".local/state/run_block/s77/0"
+        self.assertEqual(self.mod._shorten_home_path(fake_in_home), "~/.local/state/run_block/s77/0")
+
+        sdir = self.tmp / "s77"
+        sdir.mkdir(parents=True)
+        b0 = sdir / "0"
+        nonce = "bnd77"
+        stdin_text = (
+            f"Bundle-Boundary: {nonce}\n"
+            "Bundle-Expose: Role\n"
+            "Role: work\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r1","chain":["pkg","sub"]}} -->\n'
+            "Rule 1 line\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r2","chain":["pkg","sub"]}} -->\n'
+            "Rule 2 line\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"prompt","name":"Prompt"}} -->\n'
+            "===== Prompt =====\nInitial prompt\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res = self.mod.format_start_bundle("s77", stdin_body=stdin_text, work_dir=self.tmp, sandbox_mode="off")
+        b0.write_text(str(res["full"]), encoding="utf-8")
+        self.mod.write_session_meta(sdir, list(res["stdin_headers"]), bundle_plan=res["bundle_plan"])
+
+        with unittest.mock.patch.object(self.mod.Path, "home", return_value=self.tmp):
+            frame, _, vp_rows = self.mod._build_info_screen(
+                "START SESSION",
+                "s77/0",
+                100,
+                28,
+                0,
+                sdir=sdir,
+                out_path=b0,
+                edit_target=b0,
+                edited=False,
+                allow_copy=True,
+            )
+        plain_frame = self.mod.ANSI_RE.sub("", frame)
+        self.assertIn("INFO · s77/0 · ~/s77/0", plain_frame)
+        self.assertNotIn("(edited)", plain_frame)
+        self.assertNotIn("╭─", plain_frame)
+        self.assertNotIn("╰─", plain_frame)
+        self.assertNotIn("│ Session:", plain_frame)
+        self.assertNotIn("Bundle:", plain_frame)
+        self.assertNotIn("Stats:", plain_frame)
+
+        # 3. p(rompt) inside fullscreen i(nfo) appends prompt, creates 0.orig, refreshes bundle_plan and [total] (edited)
+        class _KeepOpenStringIO(io.StringIO):
+            def close(self) -> None:
+                pass
+
+        def stub_prompt_editor(p: Path, _r, _w) -> None:
+            p.write_text("Appended from info screen\n", encoding="utf-8")
+
+        tty_w = _KeepOpenStringIO()
+        # p -> append prompt, then tab -> enter cursor mode, down -> move cursor, Enter -> open part, q -> back to cursor, Esc -> exit cursor, q -> exit info
+        keys = iter(["prompt", "tab", "down", "copy", "back", "esc", "back"])
+        cb_paths: list[Path] = []
+
+        def on_edit(p: Path) -> dict[str, object]:
+            cb_paths.append(p)
+            self.mod.refresh_bundle_meta(p)
+            return {"edited": True}
+
+        with unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=stub_prompt_editor),              unittest.mock.patch.object(self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys)),              unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 28)),              unittest.mock.patch.object(self.mod.Path, "home", return_value=self.tmp):
+            info_res = self.mod._show_info_fullscreen(
+                title_kind="START SESSION",
+                label="s77/0",
+                tty_r=io.StringIO(),
+                tty_w=tty_w,
+                sdir=sdir,
+                out_path=b0,
+                edit_target=b0,
+                allow_copy=True,
+                on_edit_callback=on_edit,
+            )
+        self.assertTrue(info_res["edited"])
+        self.assertEqual(cb_paths, [b0])
+        self.assertTrue((sdir / "0.orig").is_file())
+        self.assertIn("Appended from info screen", b0.read_text(encoding="utf-8"))
+        out_txt = self.mod.ANSI_RE.sub("", tty_w.getvalue())
+        self.assertIn("INFO · s77/0 · ~/s77/0 (edited)", out_txt)
+        self.assertIn("5 parts (edited)", out_txt)
+        self.assertIn("PART 2/5 · s77/0", out_txt)
 
 
 if __name__ == "__main__":
