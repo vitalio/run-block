@@ -1,3 +1,11 @@
+# ✅ [DONE] F82: Support Bundle-Protocol: 1, task/context fragment kinds, and RUN_BLOCK_STEP_STDOUT_INO — *2026-11-21*
+
+- Implement the Runner side of `context-bundle-protocol` v1 per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
+  - Move `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` to `agents/blocks/bash.md` and `agents/blocks/pwsh.md` (updating `build.py` and `get_embedded_block_rule()` in `src/bundle_plan.py`) so all tool rule files reside under the canonical root `agents/` directory.
+  - In `src/bundle_plan.py`, support `Bundle-Protocol: 1` in transport headers and handle `"task"` and `"context"` fragment `kind` values across `parse_bundle_fragments()`, `inject_embedded_prompt()` (appending CLI `-p` prompts cleanly after upstream `"task"`/`"context"` fragments in `===== Prompt =====`), `_collect_hierarchy_rows()`, and `analyze_bundle_warnings()`.
+  - In `src/runner.py`, export `RUN_BLOCK_STEP_STDOUT_INO` (`f"{st.st_dev}:{st.st_ino}"` of the step capture stdout pipe) in the child step environment so upstream producers (`todo_md`) distinguish direct step console output (`todo_md <ID>`) from a shell pipeline inside a step (`todo_md <ID> | agents_bundle | run_block`).
+  - Target files: `src/bundle_plan.py`, `src/runner.py`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `build.py`, `AGENTS.md`, `README.md`, `tests/test_bundle.py`, `tests/test_runner.py`.
+
 # ✅ [DONE] F83: Implement session lifecycle states, step outcome labels, and run_block -l display — *2026-11-21, Implemented session lifecycle states, structured step outcomes, and next/last display in run_block -l*
 
 - Depends on: D1

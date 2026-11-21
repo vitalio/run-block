@@ -530,9 +530,33 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(self.mod.read_step_meta(s154 / "12").get("renumbered_from"), "s154/14")
 
         # 7. Embedded rules instruct agents to continue from renumbered step
-        for rule_rel in ("src/rules/blocks/bash.md", "src/rules/blocks/pwsh.md"):
+        for rule_rel in ("agents/blocks/bash.md", "agents/blocks/pwsh.md"):
             rule_txt = (ROOT / rule_rel).read_text(encoding="utf-8")
             self.assertIn("Note: renumbered from <session>/<old> to <session>/<new>", rule_txt)
+
+    def test_step_stdout_identity_exported_to_child(self):
+        import os
+        import re
+        import shlex
+        import sys
+
+        key = "RUN_BLOCK_STEP_STDOUT_INO"
+        os.environ[key] = "stale:0"
+        self.addCleanup(os.environ.pop, key, None)
+        probe = "import os; st = os.fstat(1); print(f'{st.st_dev}:{st.st_ino}')"
+        script = (
+            f"{shlex.quote(sys.executable)} -c {shlex.quote(probe)}\n"
+            'echo "env=${RUN_BLOCK_STEP_STDOUT_INO}"\n'
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = self.mod.cmd_normal("s1/1", script)
+        self.assertEqual(rc, 0)
+        out = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
+        m_env = re.search(r"^env=(\d+:\d+)$", out, re.M)
+        m_fd = re.search(r"^(\d+:\d+)$", out, re.M)
+        self.assertIsNotNone(m_env, msg=out)
+        self.assertIsNotNone(m_fd, msg=out)
+        self.assertEqual(m_env.group(1), m_fd.group(1), msg=out)
 
     def test_fix_ast_validation_and_bundle_tamper_revert(self):
         with contextlib.redirect_stdout(io.StringIO()):

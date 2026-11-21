@@ -1,11 +1,3 @@
-# 🎯 [NEXT] F82: Support Bundle-Protocol: 1, task/context fragment kinds, and RUN_BLOCK_STEP_STDOUT_INO
-
-- Implement the Runner side of `context-bundle-protocol` v1 per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
-  - Move `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` to `agents/blocks/bash.md` and `agents/blocks/pwsh.md` (updating `build.py` and `get_embedded_block_rule()` in `src/bundle_plan.py`) so all tool rule files reside under the canonical root `agents/` directory.
-  - In `src/bundle_plan.py`, support `Bundle-Protocol: 1` in transport headers and handle `"task"` and `"context"` fragment `kind` values across `parse_bundle_fragments()`, `inject_embedded_prompt()` (appending CLI `-p` prompts cleanly after upstream `"task"`/`"context"` fragments in `===== Prompt =====`), `_collect_hierarchy_rows()`, and `analyze_bundle_warnings()`.
-  - In `src/runner.py`, export `RUN_BLOCK_STEP_STDOUT_INO` (`f"{st.st_dev}:{st.st_ino}"` of the step capture stdout pipe) in the child step environment so upstream producers (`todo_md`) distinguish direct step console output (`todo_md <ID>`) from a shell pipeline inside a step (`todo_md <ID> | agents_bundle | run_block`).
-  - Target files: `src/bundle_plan.py`, `src/runner.py`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `build.py`, `AGENTS.md`, `README.md`, `tests/test_bundle.py`, `tests/test_runner.py`.
-
 # 🎯 [NEXT] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture
 
 - Depends on: B12, F80
@@ -62,7 +54,7 @@
 # ⚪ [NEW] F72: Rename project to run-block and CLI utility to rxb
 
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `rxb` (updating embedded block rules, protocol markers, and env vars/compatibility aliases per the ecosystem rename design).
-- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
+- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
 - Acceptance criteria: `build.py` outputs `rxb`, `install.sh`/`install.ps1` install `rxb` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `rxb`, and `python3 -m unittest discover -s tests` passes.
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
@@ -74,7 +66,7 @@
 
 - Depends on: D4
 - Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
-- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
+- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`agents/blocks/bash.md`, `agents/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # ⚪ [NEW] D6: Design session execution policies and post-step revert guards
 

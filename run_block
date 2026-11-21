@@ -65,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.28.7"
+VERSION = "0.29.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -4043,6 +4043,8 @@ _BUNDLE_TAG_COLORS = {
     "file": "\x1b[1;94m",
     "include": "\x1b[1;94m",
     "prompt": "\x1b[1;33m",
+    "task": "\x1b[1;33m",
+    "context": "\x1b[1;94m",
     "section": "\x1b[1;32m",
     "text": "\x1b[1;32m",
     "body": "\x1b[1;32m",
@@ -6706,6 +6708,9 @@ def offer_clipboard_copy(
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
 BUNDLE_EXPOSE_HEADER = "bundle-expose"
 BUNDLE_HIDE_HEADER = "bundle-hide"
+BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
+SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
+TASK_CONTEXT_KINDS = ("task", "context")
 DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 
@@ -6727,8 +6732,8 @@ def get_embedded_block_rule(shell_bin: str | None = None) -> tuple[str, str]:
     raw = EMBEDDED_RULE_PWSH if is_ps else EMBEDDED_RULE_BASH
     placeholder = "__EMBEDDED_RULE_PWSH__" if is_ps else "__EMBEDDED_RULE_BASH__"
     if raw == placeholder:
-        rel = Path("rules/blocks/pwsh.md" if is_ps else "rules/blocks/bash.md")
-        src_path = Path(__file__).resolve().parent / rel
+        rel = Path("agents/blocks/pwsh.md" if is_ps else "agents/blocks/bash.md")
+        src_path = Path(__file__).resolve().parent.parent / rel
         if src_path.is_file():
             raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
         else:
@@ -7017,6 +7022,12 @@ def get_bundle_boundary(headers: list[tuple[str, str]]) -> str | None:
     return val or None
 
 
+def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
+    transport = extract_bundle_transport_headers(headers)
+    val = transport.get(BUNDLE_PROTOCOL_HEADER, "").strip()
+    return val or None
+
+
 def filter_exposed_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     transport = extract_bundle_transport_headers(headers)
     raw_expose = transport.get(BUNDLE_EXPOSE_HEADER, "")
@@ -7132,6 +7143,17 @@ def analyze_bundle_warnings(
                         "part_index": idx,
                         "part_name": label,
                         "message": f"command {label!r} produced empty output",
+                    }
+                )
+        if kind in TASK_CONTEXT_KINDS and part_lines_list is not None and idx_0 < len(part_lines_list):
+            if not any(ln.strip() for ln in part_lines_list[idx_0]):
+                warnings.append(
+                    {
+                        "code": "fragment_empty",
+                        "severity": "warn",
+                        "part_index": idx,
+                        "part_name": label,
+                        "message": f"{kind} fragment {label!r} is empty",
                     }
                 )
         if frag_limit > 0 and gpt_cnt > frag_limit:
@@ -8989,6 +9011,19 @@ def _prepare_progress_script(
         return None
 
 
+STEP_STDOUT_INO_ENV = "RUN_BLOCK_STEP_STDOUT_INO"
+
+
+def _export_step_stdout_ino(env: dict[str, str], fd: int) -> None:
+    """Record the device:inode identity of the step stdout descriptor in env."""
+    env.pop(STEP_STDOUT_INO_ENV, None)
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return
+    env[STEP_STDOUT_INO_ENV] = f"{st.st_dev}:{st.st_ino}"
+
+
 def _iter_child_streams(out_fd, err_fd):
     """Yield (is_err, text) chunks read from two child descriptors."""
     if os.name != "nt":
@@ -9328,6 +9363,7 @@ def run_script(
             and err_slave_fd is not None
         ):
             try:
+                _export_step_stdout_ino(child_env, slave_fd)
                 proc = subprocess.Popen(
                     exec_cmd,
                     cwd=work_dir,
@@ -9356,18 +9392,28 @@ def run_script(
                 if tty_in is not None:
                     tty_in.close()
         else:
-            proc = subprocess.Popen(
-                exec_cmd,
-                cwd=work_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=child_env,
-            )
-            assert proc.stdout is not None and proc.stderr is not None
-            for is_err, text in _iter_child_streams(proc.stdout.fileno(), proc.stderr.fileno()):
-                _emit(text, is_err)
-            proc.stdout.close()
+            out_r, out_w = os.pipe()
+            try:
+                _export_step_stdout_ino(child_env, out_w)
+                proc = subprocess.Popen(
+                    exec_cmd,
+                    cwd=work_dir,
+                    stdin=subprocess.DEVNULL,
+                    stdout=out_w,
+                    stderr=subprocess.PIPE,
+                    env=child_env,
+                )
+            except BaseException:
+                os.close(out_r)
+                raise
+            finally:
+                os.close(out_w)
+            assert proc.stderr is not None
+            try:
+                for is_err, text in _iter_child_streams(out_r, proc.stderr.fileno()):
+                    _emit(text, is_err)
+            finally:
+                os.close(out_r)
             proc.stderr.close()
             rc = proc.wait()
         duration_s = max(0.0, time.monotonic() - exec_started)
@@ -10606,6 +10652,12 @@ def format_start_bundle(
 ) -> dict[str, object]:
     stdin_headers, raw_body = parse_stdin_preamble(stdin_body)
     boundary = get_bundle_boundary(stdin_headers)
+    protocol = get_bundle_protocol(stdin_headers)
+    if protocol is not None and protocol not in SUPPORTED_BUNDLE_PROTOCOLS:
+        sys.stderr.write(
+            f"{prog_name()}: unsupported Bundle-Protocol: {protocol} "
+            f"(supported: {', '.join(SUPPORTED_BUNDLE_PROTOCOLS)})\n"
+        )
     raw_body = inject_embedded_block_rule(raw_body, boundary=boundary)
     raw_body = inject_embedded_prompt(raw_body, prompt=prompt, boundary=boundary)
     clean_body, bundle_plan = parse_bundle_fragments(raw_body, boundary=boundary)

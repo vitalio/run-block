@@ -12,9 +12,9 @@ rules are loaded via `.agents_bundle`.
   `VISUAL`/`EDITOR`), non-interactive child pager variable tuple
   (`CHILD_PAGER_ENV_VARS` controlled by `RUN_BLOCK_PAGER`, default `cat`), and
   working directory resolution.
-- `src/rules/blocks/*.md` — internal embedded terminal block execution rule
+- `agents/blocks/*.md` — internal embedded terminal block execution rule
   sources injected by `build.py` into `src/header.py`. Keep
-  `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` in sync in the same
+  `agents/blocks/bash.md` and `agents/blocks/pwsh.md` in sync in the same
   commit whenever CLI flags, step numbering, `--fix` constraints, or session
   rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
@@ -30,7 +30,10 @@ rules are loaded via `.agents_bundle`.
   pager defaults (`CHILD_PAGER_ENV_VARS` set to `get_setting("pager")[0]`,
   default `cat`, unless disabled via `RUN_BLOCK_PAGER=inherit|off|0|false`) in
   the child execution environment while keeping PTY `stdin` connected for
-  intentional interactive prompts.
+  intentional interactive prompts. Exports `RUN_BLOCK_STEP_STDOUT_INO`
+  (`<st_dev>:<st_ino>` of the step capture stdout descriptor: the PTY slave or
+  the capture pipe write end) in the child environment so upstream producers
+  can tell direct step console output from a shell pipeline inside a step.
 - `src/bundle_plan.py` — Bundle Input Protocol header filtering, boundary/section
   fragment parser, embedded terminal block rule injection/deduplication, and
   per-part token/size accounting persisted to `meta.json`.
@@ -99,7 +102,8 @@ rules are loaded via `.agents_bundle`.
 ## Bundle Input Protocol
 
 - Header contract: Treat `Bundle-*` preamble headers (`Bundle-Command`,
-  `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) as transport metadata for
+  `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) as
+  transport metadata for
   `<session>/meta.json` only, never forwarding them into `<session>/0`. Forward
   `stdin` headers into `<session>/0` according to `Bundle-Expose` /
   `Bundle-Hide` (without overriding `Session`, `Next-Block`, `Workdir`,
@@ -111,6 +115,12 @@ rules are loaded via `.agents_bundle`.
   `<session>/0`, and persist structured `bundle_plan` metadata in
   `<session>/meta.json`. Fall back to `===== ... =====` section splitting when
   no boundary is declared.
+- Protocol version and fragment kinds: `get_bundle_protocol()` reads
+  `Bundle-Protocol`; `format_start_bundle()` warns on `stderr` for versions
+  outside `SUPPORTED_BUNDLE_PROTOCOLS` without rejecting the bundle. Fragment
+  kinds `task` and `context` (`TASK_CONTEXT_KINDS`) are ordinary parts; the CLI
+  `-p` prompt always lands in a trailing `prompt` part after them, and
+  `analyze_bundle_warnings()` flags empty ones (`fragment_empty`).
 - Part line ranges: each part entry records 1-based `line_start` / `line_end`
   into the cleaned `<session>/0` (body-relative for `stdin`; `line_offset`
   tracks the header shift applied by `reconcile_bundle_plan`, which keeps the

@@ -687,6 +687,52 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(meta_after["bundle_plan"]["part_count"], 2)
         self.assertEqual(dict(meta_after["headers"]).get("Bundle-Boundary"), nonce)
 
+    def test_bundle_protocol_header_and_task_context_fragments(self) -> None:
+        nonce = "tcnonce77"
+        hdrs = [("Bundle-Protocol", "1"), ("Bundle-Boundary", nonce), ("Role", "work")]
+        self.assertEqual(self.mod.get_bundle_protocol(hdrs), "1")
+        self.assertIsNone(self.mod.get_bundle_protocol([("Role", "work")]))
+        self.assertEqual(self.mod.get_bundle_boundary(hdrs), nonce)
+        self.assertEqual(self.mod.filter_exposed_headers(hdrs), [])
+
+        # 1. Supported protocol is silent; unsupported protocol warns on stderr
+        err_ok = io.StringIO()
+        with contextlib.redirect_stderr(err_ok):
+            self.mod.format_start_bundle("s1", stdin_body="Bundle-Protocol: 1\n\nbody\n", work_dir=self.tmp)
+        self.assertEqual(err_ok.getvalue(), "")
+        err_bad = io.StringIO()
+        with contextlib.redirect_stderr(err_bad):
+            self.mod.format_start_bundle("s1", stdin_body="Bundle-Protocol: 9\n\nbody\n", work_dir=self.tmp)
+        self.assertIn("unsupported Bundle-Protocol: 9", err_bad.getvalue())
+
+        # 2. task/context kinds parse, and CLI prompt lands after them in a Prompt part
+        body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"context\", \"name\": \"repo state\"}} -->\n"
+            "context line\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"task\", \"name\": \"F1\"}} -->\n"
+            "task line\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        merged = self.mod.inject_embedded_prompt(body, prompt="cli note", boundary=nonce)
+        clean, plan = self.mod.parse_bundle_fragments(merged, boundary=nonce)
+        self.assertEqual([p["kind"] for p in plan["parts"]], ["context", "task", "prompt"])
+        self.assertLess(clean.index("task line"), clean.index("===== Prompt ====="))
+        self.assertLess(clean.index("===== Prompt ====="), clean.index("cli note"))
+        self.assertEqual(
+            [k for k, _ in self.mod.format_bundle_part_items(plan)],
+            ["context", "task", "prompt"],
+        )
+        self.assertEqual(plan["warnings"], [])
+
+        # 3. Empty task/context fragments are flagged
+        empty_body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"task\", \"name\": \"F2\"}} -->\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        _, empty_plan = self.mod.parse_bundle_fragments(empty_body, boundary=nonce)
+        self.assertEqual([w["code"] for w in empty_plan["warnings"]], ["fragment_empty"])
+
     def test_f68_top_style_table_kinds_groups_heavy_and_header(self) -> None:
         def _part(idx, kind, name, chain, chars, share):
             return {
@@ -975,8 +1021,8 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_help.returncode, 0, r_help.stderr)
         self.assertIn("--bundle-plan", r_help.stdout)
         self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("--bundle-plan", (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8"))
-        self.assertIn("--bundle-plan", (ROOT / "src/rules/blocks/pwsh.md").read_text(encoding="utf-8"))
+        self.assertIn("--bundle-plan", (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8"))
+        self.assertIn("--bundle-plan", (ROOT / "agents/blocks/pwsh.md").read_text(encoding="utf-8"))
 
     def test_f55_hide_bundle_transport_headers_and_clamp_long_title(self):
         proj = self.tmp / "f55_proj"
@@ -1556,8 +1602,8 @@ class TestBundle(RunBlockTestCase):
             self.assertEqual(r_help.returncode, 0)
             self.assertIn("--part N", r_help.stdout)
         self.assertIn("--part N", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("--part N", (ROOT / "src/rules/blocks/bash.md").read_text(encoding="utf-8"))
-        self.assertIn("--part N", (ROOT / "src/rules/blocks/pwsh.md").read_text(encoding="utf-8"))
+        self.assertIn("--part N", (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8"))
+        self.assertIn("--part N", (ROOT / "agents/blocks/pwsh.md").read_text(encoding="utf-8"))
 
     def test_info_part_viewer_and_part_prompt(self):
         nonce = "abc"

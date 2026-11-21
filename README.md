@@ -166,7 +166,8 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   lines on `stdin` (before the first blank line) are stored in
   `<session>/meta.json`. Exposed headers (such as `Role`, `Task`, `Title`) appear
   in TUI headers and `<session>/0`, while `Bundle-*` transport headers
-  (`Bundle-Command`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) remain
+  (`Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`,
+  `Bundle-Hide`) remain
   in `<session>/meta.json` only. When `RUN_BLOCK_CWD=auto`, an existing piped
   `Workdir` directory is preferred over the current directory or Git root.
 - **Rule injection & deduplication**: `run_block` injects embedded `bash` or
@@ -185,6 +186,13 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   bottom `100.0%` `[total]` rows, with sequential dim row numbers `1..M`,
   `chain`-indented `[bundle]` / `[rule]` tree shares, and automatic highlights
   for large parts (>=10% or ~3k tokens accented; >=25% or ~10k tokens warning).
+- **Bundle protocol version & fragment kinds**: `Bundle-Protocol: 1` declares
+  `context-bundle-protocol` v1; an unsupported version prints a warning on
+  `stderr` while the bundle is still ingested. Besides `rule`, `cmd`, `file`,
+  `include`, and `prompt`, fragments may have kind `task` or `context`; repeatable
+  `-p`/`--prompt` text is appended to `===== Prompt =====` after the upstream
+  `task`/`context` fragments, and an empty `task`/`context` fragment raises a
+  `fragment_empty` warning in `--bundle-plan` and `START SESSION`.
 - **Inspecting individual parts (`--bundle-plan` & `--part N`)**: Each part in
   `bundle_plan` records 1-based `line_start` / `line_end` offsets into cleaned
   `<session>/0`. Inspect the full table or slice a single 1-based part index `N`
@@ -265,6 +273,16 @@ standard environment variables:
 | `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e(dit)`/`s(cript)`/`o(utput)`/`v(iew)` inside `i(nfo)` |
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |
+
+### Variables Exported to Step Processes
+
+Every block runs with these variables in its environment:
+
+| Environment Variable | Description |
+| :--- | :--- |
+| `IN_RUN_BLOCK` | Always `1` inside a running step |
+| `RUN_BLOCK_PARENT_SESSION` / `RUN_BLOCK_PARENT_STEP` | Session name and step directory of the running block |
+| `RUN_BLOCK_STEP_STDOUT_INO` | `<st_dev>:<st_ino>` of the step capture stdout (PTY slave or pipe write end); a producer compares it with `fstat(1)` to tell direct step console output from a shell pipeline inside the step |
 
 ## License
 

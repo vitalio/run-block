@@ -1363,6 +1363,8 @@ _BUNDLE_TAG_COLORS = {
     "file": "\x1b[1;94m",
     "include": "\x1b[1;94m",
     "prompt": "\x1b[1;33m",
+    "task": "\x1b[1;33m",
+    "context": "\x1b[1;94m",
     "section": "\x1b[1;32m",
     "text": "\x1b[1;32m",
     "body": "\x1b[1;32m",

@@ -652,6 +652,19 @@ def _prepare_progress_script(
         return None
 
 
+STEP_STDOUT_INO_ENV = "RUN_BLOCK_STEP_STDOUT_INO"
+
+
+def _export_step_stdout_ino(env: dict[str, str], fd: int) -> None:
+    """Record the device:inode identity of the step stdout descriptor in env."""
+    env.pop(STEP_STDOUT_INO_ENV, None)
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        return
+    env[STEP_STDOUT_INO_ENV] = f"{st.st_dev}:{st.st_ino}"
+
+
 def _iter_child_streams(out_fd, err_fd):
     """Yield (is_err, text) chunks read from two child descriptors."""
     if os.name != "nt":
@@ -991,6 +1004,7 @@ def run_script(
             and err_slave_fd is not None
         ):
             try:
+                _export_step_stdout_ino(child_env, slave_fd)
                 proc = subprocess.Popen(
                     exec_cmd,
                     cwd=work_dir,
@@ -1019,18 +1033,28 @@ def run_script(
                 if tty_in is not None:
                     tty_in.close()
         else:
-            proc = subprocess.Popen(
-                exec_cmd,
-                cwd=work_dir,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=child_env,
-            )
-            assert proc.stdout is not None and proc.stderr is not None
-            for is_err, text in _iter_child_streams(proc.stdout.fileno(), proc.stderr.fileno()):
-                _emit(text, is_err)
-            proc.stdout.close()
+            out_r, out_w = os.pipe()
+            try:
+                _export_step_stdout_ino(child_env, out_w)
+                proc = subprocess.Popen(
+                    exec_cmd,
+                    cwd=work_dir,
+                    stdin=subprocess.DEVNULL,
+                    stdout=out_w,
+                    stderr=subprocess.PIPE,
+                    env=child_env,
+                )
+            except BaseException:
+                os.close(out_r)
+                raise
+            finally:
+                os.close(out_w)
+            assert proc.stderr is not None
+            try:
+                for is_err, text in _iter_child_streams(out_r, proc.stderr.fileno()):
+                    _emit(text, is_err)
+            finally:
+                os.close(out_r)
             proc.stderr.close()
             rc = proc.wait()
         duration_s = max(0.0, time.monotonic() - exec_started)

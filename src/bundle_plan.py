@@ -1,6 +1,9 @@
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
 BUNDLE_EXPOSE_HEADER = "bundle-expose"
 BUNDLE_HIDE_HEADER = "bundle-hide"
+BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
+SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
+TASK_CONTEXT_KINDS = ("task", "context")
 DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 
@@ -22,8 +25,8 @@ def get_embedded_block_rule(shell_bin: str | None = None) -> tuple[str, str]:
     raw = EMBEDDED_RULE_PWSH if is_ps else EMBEDDED_RULE_BASH
     placeholder = "__EMBEDDED_RULE_PWSH__" if is_ps else "__EMBEDDED_RULE_BASH__"
     if raw == placeholder:
-        rel = Path("rules/blocks/pwsh.md" if is_ps else "rules/blocks/bash.md")
-        src_path = Path(__file__).resolve().parent / rel
+        rel = Path("agents/blocks/pwsh.md" if is_ps else "agents/blocks/bash.md")
+        src_path = Path(__file__).resolve().parent.parent / rel
         if src_path.is_file():
             raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
         else:
@@ -312,6 +315,12 @@ def get_bundle_boundary(headers: list[tuple[str, str]]) -> str | None:
     return val or None
 
 
+def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
+    transport = extract_bundle_transport_headers(headers)
+    val = transport.get(BUNDLE_PROTOCOL_HEADER, "").strip()
+    return val or None
+
+
 def filter_exposed_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     transport = extract_bundle_transport_headers(headers)
     raw_expose = transport.get(BUNDLE_EXPOSE_HEADER, "")
@@ -427,6 +436,17 @@ def analyze_bundle_warnings(
                         "part_index": idx,
                         "part_name": label,
                         "message": f"command {label!r} produced empty output",
+                    }
+                )
+        if kind in TASK_CONTEXT_KINDS and part_lines_list is not None and idx_0 < len(part_lines_list):
+            if not any(ln.strip() for ln in part_lines_list[idx_0]):
+                warnings.append(
+                    {
+                        "code": "fragment_empty",
+                        "severity": "warn",
+                        "part_index": idx,
+                        "part_name": label,
+                        "message": f"{kind} fragment {label!r} is empty",
                     }
                 )
         if frag_limit > 0 and gpt_cnt > frag_limit:

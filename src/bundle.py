@@ -19,6 +19,12 @@ def format_start_bundle(
 ) -> dict[str, object]:
     stdin_headers, raw_body = parse_stdin_preamble(stdin_body)
     boundary = get_bundle_boundary(stdin_headers)
+    protocol = get_bundle_protocol(stdin_headers)
+    if protocol is not None and protocol not in SUPPORTED_BUNDLE_PROTOCOLS:
+        sys.stderr.write(
+            f"{prog_name()}: unsupported Bundle-Protocol: {protocol} "
+            f"(supported: {', '.join(SUPPORTED_BUNDLE_PROTOCOLS)})\n"
+        )
     raw_body = inject_embedded_block_rule(raw_body, boundary=boundary)
     raw_body = inject_embedded_prompt(raw_body, prompt=prompt, boundary=boundary)
     clean_body, bundle_plan = parse_bundle_fragments(raw_body, boundary=boundary)
