@@ -1,3 +1,12 @@
+# ✅ [DONE] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture — *2026-11-22*
+
+- Depends on: B12, F80
+- Since separate `stderr` capture was introduced, `_iter_child_streams()` in `src/runner.py` reads `stdout` and `stderr` from two separate descriptors, so lines in `<session>/<step>/out` can follow descriptor read timing rather than exact write order when fast interleaved output occurs.
+- Reproduce with a deterministic unit test in `tests/test_runner.py` that interleaves `stdout` and `stderr` lines alongside `__RB_STEP__` markers in `_prepare_progress_script()` and `run_script()` (`src/runner.py`).
+- Preserve write-order interleaving in `<session>/<step>/out` while still capturing `<session>/<step>/err` for root-cause `Error:` extraction in `END STEP` (`run_script()` in `src/runner.py`).
+- Document `<session>/<step>/out`, `err`, `error`, `aborted`, and `meta.json` ordering and artifact guarantees in `README.md` and `AGENTS.md`.
+- Target files: `src/runner.py`, `README.md`, `AGENTS.md`, `tests/test_runner.py`.
+
 # ✅ [DONE] F82: Support Bundle-Protocol: 1, task/context fragment kinds, and RUN_BLOCK_STEP_STDOUT_INO — *2026-11-21*
 
 - Implement the Runner side of `context-bundle-protocol` v1 per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:

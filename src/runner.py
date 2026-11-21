@@ -414,10 +414,6 @@ class _ProgressLineFilter:
         self.step_durations: dict[int, float] = {}
         self.step_order: list[int] = []
 
-    def mark_output(self) -> None:
-        if self.active_step is not None:
-            self._active_has_output = True
-
     @staticmethod
     def _truncate_width(text: str, max_w: int) -> str:
         if display_width(text) <= max_w:
@@ -665,64 +661,16 @@ def _export_step_stdout_ino(env: dict[str, str], fd: int) -> None:
     env[STEP_STDOUT_INO_ENV] = f"{st.st_dev}:{st.st_ino}"
 
 
-def _iter_child_streams(out_fd, err_fd):
-    """Yield (is_err, text) chunks read from two child descriptors."""
-    if os.name != "nt":
-        fds = [out_fd, err_fd]
-        while fds:
-            try:
-                rlist, _, _ = select.select(fds, [], [])
-            except OSError:
-                break
-            if out_fd in fds and out_fd not in rlist:
-                try:
-                    r_out, _, _ = select.select([out_fd], [], [], 0.001)
-                except OSError:
-                    r_out = []
-                if r_out:
-                    rlist = [out_fd] + list(rlist)
-            for fd in list(fds):
-                if fd not in rlist:
-                    continue
-                try:
-                    chunk = os.read(fd, 4096)
-                except OSError:
-                    chunk = b""
-                if not chunk:
-                    fds.remove(fd)
-                    continue
-                yield (fd == err_fd), chunk.decode("utf-8", "replace")
-                break
-        return
-
-    q: queue.Queue = queue.Queue()
-
-    def _reader(fd, is_err):
-        while True:
-            try:
-                chunk = os.read(fd, 4096)
-            except OSError:
-                chunk = b""
-            if not chunk:
-                break
-            q.put((is_err, chunk))
-        q.put((is_err, None))
-
-    threads = [
-        threading.Thread(target=_reader, args=(fd, flag), daemon=True)
-        for fd, flag in ((out_fd, False), (err_fd, True))
-    ]
-    for th in threads:
-        th.start()
-    pending = len(threads)
-    while pending:
-        is_err, chunk = q.get()
-        if chunk is None:
-            pending -= 1
-            continue
-        yield is_err, chunk.decode("utf-8", "replace")
-    for th in threads:
-        th.join()
+def _iter_child_output(fd):
+    """Yield decoded chunks read from the single merged child stdout/stderr descriptor."""
+    while True:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        yield chunk.decode("utf-8", "replace")
 
 
 def _validate_step_script_syntax(
@@ -897,17 +845,8 @@ def run_script(
     log_chunks: list[str] = [start_line]
     if renumbered_from:
         log_chunks.append(f"[{label}] Note: renumbered from {renumbered_from} to {label}; continue from {label}.\n")
-    err_chunks: list[str] = []
 
-    def _emit(text: str, is_err: bool) -> None:
-        if is_err:
-            err_chunks.append(text)
-            log_chunks.append(text)
-            if progress_filter is not None and text:
-                progress_filter.mark_output()
-            sys.stdout.write(text)
-            sys.stdout.flush()
-            return
+    def _emit(text: str) -> None:
         if progress_filter is not None:
             events = progress_filter.feed_events(text)
             for kind, chunk in events:
@@ -932,8 +871,6 @@ def run_script(
     tty_in = None
     master_fd = None
     slave_fd = None
-    err_master_fd = None
-    err_slave_fd = None
     if HAS_PTY and sys.stdout.isatty() and not no_clipboard() and not headless:
         try:
             tty_in = open("/dev/tty", "rb", buffering=0)
@@ -941,8 +878,6 @@ def run_script(
             attrs = termios.tcgetattr(slave_fd)
             attrs[1] &= ~termios.ONLCR
             termios.tcsetattr(slave_fd, termios.TCSANOW, attrs)
-            err_master_fd, err_slave_fd = pty.openpty()
-            termios.tcsetattr(err_slave_fd, termios.TCSANOW, attrs)
         except OSError:
             if tty_in is not None:
                 tty_in.close()
@@ -953,12 +888,6 @@ def run_script(
             if slave_fd is not None:
                 os.close(slave_fd)
                 slave_fd = None
-            if err_master_fd is not None:
-                os.close(err_master_fd)
-                err_master_fd = None
-            if err_slave_fd is not None:
-                os.close(err_slave_fd)
-                err_slave_fd = None
 
     step_lines = list(summary_obj.get("operation_steps") or [])
     use_progress = (
@@ -997,12 +926,7 @@ def run_script(
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
     exec_started = time.monotonic()
     try:
-        if (
-            master_fd is not None
-            and slave_fd is not None
-            and err_master_fd is not None
-            and err_slave_fd is not None
-        ):
+        if master_fd is not None and slave_fd is not None:
             try:
                 _export_step_stdout_ino(child_env, slave_fd)
                 proc = subprocess.Popen(
@@ -1010,26 +934,20 @@ def run_script(
                     cwd=work_dir,
                     stdin=tty_in if tty_in is not None else slave_fd,
                     stdout=slave_fd,
-                    stderr=err_slave_fd,
+                    stderr=slave_fd,
                     env=child_env,
                     close_fds=True,
                 )
                 os.close(slave_fd)
                 slave_fd = None
-                os.close(err_slave_fd)
-                err_slave_fd = None
-                for is_err, text in _iter_child_streams(master_fd, err_master_fd):
-                    _emit(text, is_err)
+                for text in _iter_child_output(master_fd):
+                    _emit(text)
                 rc = proc.wait()
             finally:
                 if slave_fd is not None:
                     os.close(slave_fd)
-                if err_slave_fd is not None:
-                    os.close(err_slave_fd)
                 if master_fd is not None:
                     os.close(master_fd)
-                if err_master_fd is not None:
-                    os.close(err_master_fd)
                 if tty_in is not None:
                     tty_in.close()
         else:
@@ -1041,7 +959,7 @@ def run_script(
                     cwd=work_dir,
                     stdin=subprocess.DEVNULL,
                     stdout=out_w,
-                    stderr=subprocess.PIPE,
+                    stderr=out_w,
                     env=child_env,
                 )
             except BaseException:
@@ -1049,13 +967,11 @@ def run_script(
                 raise
             finally:
                 os.close(out_w)
-            assert proc.stderr is not None
             try:
-                for is_err, text in _iter_child_streams(out_r, proc.stderr.fileno()):
-                    _emit(text, is_err)
+                for text in _iter_child_output(out_r):
+                    _emit(text)
             finally:
                 os.close(out_r)
-            proc.stderr.close()
             rc = proc.wait()
         duration_s = max(0.0, time.monotonic() - exec_started)
         if progress_filter is not None:
@@ -1112,12 +1028,6 @@ def run_script(
     log_chunks.append(end_line)
     full_output = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(log_chunks))).replace("\r\n", "\n")
     write_private(out_path, full_output)
-    err_path = step_dir / "err"
-    err_text = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(err_chunks))).replace("\r\n", "\n")
-    if err_text.strip():
-        write_private(err_path, err_text, overwrite=True)
-    else:
-        err_path.unlink(missing_ok=True)
     try:
         update_session_stats(
             sdir,
@@ -1473,7 +1383,6 @@ def cmd_normal(
                 out_path.unlink(missing_ok=True)
                 (step_dir / "meta.json").unlink(missing_ok=True)
                 (step_dir / "error").unlink(missing_ok=True)
-                (step_dir / "err").unlink(missing_ok=True)
                 aborted_marker.unlink(missing_ok=True)
                 for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
                     orig_p.unlink(missing_ok=True)

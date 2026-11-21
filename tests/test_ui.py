@@ -1084,8 +1084,7 @@ class TestUi(RunBlockTestCase):
         narrow_step = self.tmp / "s58_err" / "1"
         narrow_step.mkdir(parents=True)
         long_err = "ValueError: " + ("x" * 120)
-        (narrow_step / "out").write_text("[s58_err/1] START\n", encoding="utf-8")
-        (narrow_step / "err").write_text(long_err + "\n", encoding="utf-8")
+        (narrow_step / "out").write_text("[s58_err/1] START\n" + long_err + "\n", encoding="utf-8")
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((44, 24))):
             clamped_err = self.mod._extract_last_error_line(narrow_step / "out", label="s58_err/1")
         self.assertTrue(clamped_err.endswith("..."))
@@ -1099,11 +1098,13 @@ class TestUi(RunBlockTestCase):
         step1 = sdir / "1"
         step1.mkdir(parents=True)
         out_p = step1 / "out"
-        err_p = step1 / "err"
         scr_p = step1 / "block.sh"
         scr_p.write_text("cat " + "/".join(["segment"] * 8) + "/file.txt\nrm -rf /tmp/f58_warn_target\n", encoding="utf-8")
-        out_p.write_text("line one\nline two\n", encoding="utf-8")
-        err_p.write_text("AssertionError: expected narrow terminal wrapping to preserve border alignment\n", encoding="utf-8")
+        out_p.write_text(
+            "line one\nline two\n"
+            "AssertionError: expected narrow terminal wrapping to preserve border alignment\n",
+            encoding="utf-8",
+        )
         bundle_p = sdir / "0"
         bundle_p.write_text(
             "Session: s58\n"

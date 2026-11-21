@@ -24,9 +24,10 @@ rules are loaded via `.agents_bundle`.
   statistics, and clipboard integration.
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
   `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
-  headless mode. Child `stdout` and `stderr` are read via separate
-  descriptors and merged into `out`; `stderr` is also saved to `err`, which
-  the `END STEP` box prefers for its `Error:` line. Exports non-interactive
+  headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
+  slave or the capture pipe write end), so `out` keeps exact write order and
+  the `END STEP` box takes its `Error:` line from the last meaningful line of
+  `out`; there is no separate `err` artifact. Exports non-interactive
   pager defaults (`CHILD_PAGER_ENV_VARS` set to `get_setting("pager")[0]`,
   default `cat`, unless disabled via `RUN_BLOCK_PAGER=inherit|off|0|false`) in
   the child execution environment while keeping PTY `stdin` connected for
@@ -85,6 +86,13 @@ rules are loaded via `.agents_bundle`.
     by `_step_sort_key` (including `not-run` `--fix` attempts that failed before
     emitting `block.sh`), while `_iter_session_scripts(sdir)` returns runnable
     script paths.
+  - Step artifacts in `<session>/<step>/`: `out` holds the START line, optional
+    headers, child output in exact write order (`stdout` and `stderr` share one
+    descriptor), diagnostics, and the END line, written once after the child
+    exits; `error` holds a pre-execution failure message shown by `--show`;
+    `aborted` marks a declined or rejected block and is removed when the block
+    runs; `meta.json` records the structured outcome. Legacy `err` files are
+    ignored.
   - `run_block -l` / `--list [session]` displays session lifecycle state,
     `last: <ref> (<step_status>)`, and `next: <session>/<next_free_step>` for
     open sessions (`active` / `bundle-only`) or `[DONE]` without `next:` for

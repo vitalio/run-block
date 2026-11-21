@@ -80,6 +80,14 @@ warnings. During execution, live `[N/M]` progress markers and per-operation
 timings stream to the terminal, and `END STEP` offers one-keystroke clipboard
 copy of the combined step header, output, and token stats.
 
+Child `stdout` and `stderr` share one descriptor, so `<session>/<step>/out`
+keeps the exact write order of interleaved output. `out` is written once the
+block finishes and ends with the `[<session>/<step>] END` line; `END STEP` takes
+its `Error:` line from the last meaningful line of `out`. There is no separate
+`stderr` file. `aborted` marks a block that was declined or rejected, `error`
+holds a pre-execution failure message, and `meta.json` stores the structured
+outcome, exit code, and duration.
+
 ### 3. Patch a failed block (`--fix`)
 
 ```bash

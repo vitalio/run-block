@@ -2093,10 +2093,6 @@ def _extract_last_error_line(out_path: Path, label: str | None = None, max_width
         )
     content_w = max_width if max_width is not None else max(24, _hr_width() - 2)
     max_len = max(24, content_w - 6)
-    if out_path.name == "out" and not _is_file_edited(out_path):
-        err_line = _last_nonempty_line(out_path.with_name("err"), skip_prefixes, max_len)
-        if err_line:
-            return err_line
     return _last_nonempty_line(out_path, skip_prefixes, max_len)
 
 
@@ -3073,9 +3069,6 @@ def _collect_info_report(
         if orig_out is not None and orig_out.is_file():
             meta_kv.append(f"Output-Orig: {orig_out}")
     if step_dir is not None:
-        err_file = step_dir / "err"
-        if err_file.is_file():
-            meta_kv.append(f"Stderr: {err_file}")
         smeta_file = step_dir / "meta.json"
         if smeta_file.is_file():
             meta_kv.append(f"Meta: {smeta_file}")

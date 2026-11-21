@@ -38,7 +38,6 @@ import difflib
 import json
 import math
 import os
-import queue
 import re
 import select
 import shlex
@@ -48,7 +47,6 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import threading
 import time
 import unicodedata
 from datetime import datetime, timezone

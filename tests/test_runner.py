@@ -863,8 +863,9 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("RUN_BLOCK_PROGRESS", r_help.stdout)
         self.assertIn("RUN_BLOCK_PROGRESS", (ROOT / "README.md").read_text(encoding="utf-8"))
 
-    def test_b7_separate_stderr_capture_and_error_line(self):
-        # stderr diagnostic printed mid-run followed by more stdout must win in END Error:
+    def test_merged_stderr_capture_and_error_line(self):
+        # stdout and stderr share one descriptor: out keeps write order and
+        # END Error: comes from the last meaningful line of out
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             rc = self.mod.cmd_normal(
@@ -872,36 +873,71 @@ class TestRunner(RunBlockTestCase):
             )
         self.assertEqual(rc, 3)
         out_txt = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
-        for needle in ("out_before", "err_diag", "out_after"):
-            with self.subTest(needle=needle):
-                self.assertIn(needle, out_txt)
-        self.assertEqual((self.tmp / "s1/1/err").read_text(encoding="utf-8"), "err_diag\n")
-        self.assertIn("Error:  err_diag", buf.getvalue())
-        self.assertNotIn("Error:  out_after", buf.getvalue())
+        self.assertLess(out_txt.index("out_before"), out_txt.index("err_diag"))
+        self.assertLess(out_txt.index("err_diag"), out_txt.index("out_after"))
+        self.assertFalse((self.tmp / "s1/1/err").exists())
+        self.assertIn("Error:  out_after", buf.getvalue())
 
-        # Without stderr output: no err file, Error: falls back to the last line of out
-        buf2 = io.StringIO()
-        with contextlib.redirect_stdout(buf2):
-            rc2 = self.mod.cmd_normal("s1/2", "echo only_out\nexit 4\n")
-        self.assertEqual(rc2, 4)
-        self.assertFalse((self.tmp / "s1/2/err").exists())
-        self.assertIn("Error:  only_out", buf2.getvalue())
-
-        # Retry of a step that no longer writes to stderr removes the stale err file
-        (self.tmp / "s1/2/err").write_text("stale\n", encoding="utf-8")
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(self.mod.cmd_retry("s1/2", auto_yes=True), 4)
-        self.assertFalse((self.tmp / "s1/2/err").exists())
-
-        # Direct helper: prefers err, ignores blank trailing lines, falls back to out
+        # Direct helper: ignores blank trailing lines and any legacy err file
         step = self.tmp / "s7/1"
         step.mkdir(parents=True)
         (step / "out").write_text("[s7/1] START\n\nlast_out\n\n[s7/1] END (exit 1)\n", encoding="utf-8")
+        (step / "err").write_text("legacy_err\n", encoding="utf-8")
         self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_out")
-        (step / "err").write_text("first_err\nlast_err\n\n", encoding="utf-8")
-        self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_err")
-        (step / "err").write_text("\n  \n", encoding="utf-8")
-        self.assertEqual(self.mod._extract_last_error_line(step / "out", label="s7/1"), "last_out")
+
+    def test_stdout_stderr_interleave_order_exact(self):
+        script = "\n".join([
+            "i=0",
+            'while [ "$i" -lt 200 ]; do',
+            'echo "out$i"',
+            'echo "err$i" >&2',
+            "i=$((i+1))",
+            "done",
+        ]) + "\n"
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = self.mod.cmd_normal("s1/1", script)
+        self.assertEqual(rc, 0)
+        out_txt = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
+        got = [ln for ln in out_txt.splitlines() if re.fullmatch(r"(out|err)\d+", ln)]
+        expected = [x for i in range(200) for x in ("out%d" % i, "err%d" % i)]
+        self.assertEqual(got, expected)
+        self.assertFalse((self.tmp / "s1/1/err").exists())
+
+    def test_progress_markers_keep_stdout_stderr_order(self):
+        script_text = "\n".join([
+            "python3 -c \"print('before')\"",
+            "python3 -c \"import sys; [(sys.stdout.write('out%d\\n' % i), sys.stdout.flush(), sys.stderr.write('err%d\\n' % i), sys.stderr.flush()) for i in range(200)]\"",
+            "python3 -c \"import sys; print('after', file=sys.stderr)\"",
+        ]) + "\n"
+        step_dir = self.tmp / "s9" / "1"
+        step_dir.mkdir(parents=True)
+        script_path = step_dir / "block.sh"
+        script_path.write_text(script_text, encoding="utf-8")
+        out_path = step_dir / "out"
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
+        prepared = []
+        real_prepare = self.mod._prepare_progress_script
+
+        def spy_prepare(*args, **kwargs):
+            res = real_prepare(*args, **kwargs)
+            prepared.append(res)
+            return res
+
+        with unittest.mock.patch.object(self.mod, "HAS_PTY", False), \
+             unittest.mock.patch.object(self.mod, "in_run_block", return_value=False), \
+             unittest.mock.patch.object(self.mod, "no_clipboard", return_value=True), \
+             unittest.mock.patch.object(self.mod, "confirm_execution", return_value=(True, None)), \
+             unittest.mock.patch.object(self.mod, "_prepare_progress_script", side_effect=spy_prepare), \
+             unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
+            rc = self.mod.run_script("s9/1", script_path, out_path)
+        self.assertEqual(rc, 0)
+        self.assertTrue(prepared and prepared[0] is not None, "progress instrumentation was not used")
+        out_txt = out_path.read_text(encoding="utf-8")
+        self.assertNotIn("__RB_STEP__", out_txt)
+        got = [ln for ln in out_txt.splitlines() if re.fullmatch(r"(before|after|out\d+|err\d+)", ln)]
+        expected = ["before"] + [x for i in range(200) for x in ("out%d" % i, "err%d" % i)] + ["after"]
+        self.assertEqual(got, expected)
 
     def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
         # 1. START STEP prompt shows i(nfo), keeps d(etails) as alias
@@ -1014,8 +1050,6 @@ class TestRunner(RunBlockTestCase):
         f.parent.mkdir(parents=True, exist_ok=True)
         initial_out = "[s1/1] START\nnoisy stderr line\n\n[s1/1] END (exit 2)\n"
         f.write_text(initial_out, encoding="utf-8")
-        err_f = f.with_name("err")
-        err_f.write_text("noisy stderr line\n", encoding="utf-8")
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
             end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
@@ -1023,7 +1057,7 @@ class TestRunner(RunBlockTestCase):
             self.assertIn("Error:  noisy stderr line", end_box)
 
         # 2. Inside END STEP i(nfo), e(dit) creates out.orig and o(utput) preserves out.orig;
-        #    recomputes stats_line(), re-extracts Error: from edited out (not stale err),
+        #    recomputes stats_line(), re-extracts Error: from edited out,
         #    refreshes resolve_clipboard_target(), and redraws END STEP with (edited)
         attach_file = self.tmp / "attached_report.txt"
         attach_file.write_text("attached report body\nline 2\n", encoding="utf-8")
