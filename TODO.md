@@ -1,4 +1,4 @@
-# 🎯 [NEXT] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture
+# 🔵 [WIP] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture
 
 - Depends on: B12, F80
 - Since separate `stderr` capture was introduced, `_iter_child_streams()` in `src/runner.py` reads `stdout` and `stderr` from two separate descriptors, so lines in `<session>/<step>/out` can follow descriptor read timing rather than exact write order when fast interleaved output occurs.
@@ -6,6 +6,16 @@
 - Preserve write-order interleaving in `<session>/<step>/out` while still capturing `<session>/<step>/err` for root-cause `Error:` extraction in `END STEP` (`run_script()` in `src/runner.py`).
 - Document `<session>/<step>/out`, `err`, `error`, `aborted`, and `meta.json` ordering and artifact guarantees in `README.md` and `AGENTS.md`.
 - Target files: `src/runner.py`, `README.md`, `AGENTS.md`, `tests/test_runner.py`.
+
+# 🎯 [NEXT] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
+
+- Depends on: F83, F82
+- Extend `--list` / `-l` in `src/cli.py` and `cmd_list()` in `src/runner.py:1757-1900` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
+- Add `--info [session]` (and `--show <session>` without step number) in `src/cli.py` and `src/runner.py:1900-2010` to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.
+- Enhance `cmd_show()` in `src/runner.py:1903-1970` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
+- Enhance `cmd_retry()` in `src/runner.py:1969-2010` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and tests.
+- Note: `HIDDEN_SESSION_HEADER_KEYS` filtering (`src/config.py`, `src/bundle_plan.py`, `src/ui.py`) is already implemented; remaining scope covers `--list` filtering/columns, `--info [session]`, `--show --script/--out`, and `--retry <session>`.
+- Target files: `src/header.py`, `src/cli.py`, `src/runner.py:1757-2014`, `README.md`, `tests/test_cli.py:1-260`, `tests/test_runner.py:1150-1404`.
 
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
@@ -39,17 +49,6 @@
   - Automatic session & step resolution: resolve target `<session>` from the explicit CLI `[session]` argument, the extracted block header, or `_find_latest_session()` for the current `Workdir`, and automatically derive the next sequential step number via `next_free_step(sdir)` (auto-renumbering stale or mismatched step numbers without manual editing).
   - Model reasoning display & persistence: extract the model's prose commentary preceding the block, persist it in `<session>/<step>/meta.json` (or `plan.md`), and render a compact commentary/reasoning section at the top of the `START STEP` (`BLOCK PLAN`) card in `src/ui.py` so the same reply-ingestion pipeline serves both web-chat (`-r`) and built-in API transport (`todo_flow:D5`).
 - Target files: `src/cli.py`, `src/header.py`, `src/runner.py`, `src/ui.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_ui.py`.
-
-# ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
-
-- Depends on: F83
-- Hide `Bundle-Command` from TUI box headers in `src/ui.py` (`HIDDEN_SESSION_HEADER_KEYS`) to avoid noisy or multi-line `-p` headers in `START SESSION` / `START STEP` / `END STEP`, while preserving it in `meta.json` for `--info`.
-- Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
-- Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.
-- Enhance `--show` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
-- Enhance `--retry` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and `tests/test_runner.py` and `tests/test_cli.py`.
-
-- Note: `HIDDEN_SESSION_HEADER_KEYS` filtering (`src/config.py`, `src/bundle_plan.py`, `src/ui.py`) is already implemented; remaining scope covers `--list` filtering/columns, `--info [session]`, `--show` `--script`/`--out`, and `--retry <session>`.
 
 # ⚪ [NEW] F72: Rename project to run-block and CLI utility to rxb
 
