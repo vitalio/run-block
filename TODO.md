@@ -30,12 +30,20 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
   3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
 - Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
 
-# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
+# 🎯 [NEXT] F77: Unify p(rompt) across inline cards and i(nfo), and select Parts with Tab cursor in START SESSION i(nfo)
 
 - Depends on: F57
+- Rename the clipboard-card action `a(ppend)` to `p(rompt)` across all clipboard prompts (`START SESSION`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`) in `_clipboard_prompt_line` (`-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:`) and `read_clipboard_key` (`p`/`P` in raw TTY mode and `p`/`prompt` in line-input mode in `src/ui.py`).
+- Support `p(rompt)` (`p`/`P`) uniformly inside fullscreen `i(nfo)` (`_build_info_screen`, `_show_info_fullscreen`, `_read_pager_key`, `_parse_pager_line` in `src/ui.py`) whenever `allow_copy=True` and `edit_target` is present: display `p(rompt)` in the `i(nfo)` footer, open `_prompt_append_text` outside the alternate screen, apply `append_note_to_file(edit_target, note, as_prompt=(kind == "START SESSION"))`, invoke `on_edit_callback` so bundle metadata (`refresh_bundle_meta`) and `Stats:`/`Parts` refresh in place, and mark `any_edited = True`.
+- Replace `p(art)` numeric entry (`_read_part_number`) in the `START SESSION` `i(nfo)` viewer with a `Tab` cursor mode (`Tab: parts` in the footer): pressing `Tab` (`\t`) enters/exits cursor selection over the `Parts` table rows in `_build_info_screen` / `_show_info_fullscreen`, `Up`/`Down` (`j`/`k`) move the highlighted row across selectable parts (carrying the part `index` on row dicts built by `_make_table_row` / `_collect_hierarchy_rows` in `src/bundle_plan.py` and `src/ui.py`, skipping non-part group headers or opening the first child part of a bundle group), `Enter` opens the selected part in `_build_part_screen` (keeping `PART N/M` in the viewer title and `n`/`N` browsing), and `Esc`/`Tab` returns to normal `i(nfo)` scrolling.
+- Update `README.md` (`[Y/n/p(rompt)/i(nfo)]:`, `p(rompt)`, and `Tab: parts` in `i(nfo)`), update and add offline unit tests in `tests/test_ui.py`, `tests/test_bundle.py`, and `tests/test_runner.py`, and rebuild `run_block` via `build.py`. Release as `PATCH`.
+
+# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
+
+- Depends on: F77
 - Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
 - When `e(dit)` is triggered on `START SESSION` (`BUNDLE` before `F71`, inline or via `i(nfo)` in `F54`, `src/ui.py`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`.
-- Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `START SESSION` exits (`Y`/`Enter`, `n`/`Esc`, or non-interactive mode), keeping `0.orig` backup and `F57` `a(ppend)` compatibility intact.
+- Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `START SESSION` exits (`Y`/`Enter`, `n`/`Esc`, or non-interactive mode), keeping `0.orig` backup and `F57`/`F77` `p(rompt)` compatibility intact.
 - Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_bundle.py` verify the roundtrip.
 
 - Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
@@ -50,14 +58,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Add code-context snippets (`+-2` lines) and escaping hints on `SyntaxError` / `IndentationError` in `--fix` (`cmd_fix()`) and shell/heredoc syntax failures (`_validate_step_script_syntax()` in `src/runner.py`, `src/safety.py`), including truncated heredoc or accidental fence/delimiter breakages.
 - Coordinate prompt keys and box titles with `F71` (`START STEP` / `END STEP` and `[Y/n/...]` conventions) and `F54` (`i(nfo)` unified viewer).
 - Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `README.md`, `tests/test_runner.py`, `tests/test_ui.py`.
-
-# 🎯 [NEXT] F77: Select a part with the cursor in the START SESSION i(nfo) Parts list instead of typing its number
-
-- Depends on: F69
-- Context: `p(art)` in the `START SESSION` `i(nfo)` viewer asks for a part number (`_read_part_number`, `_browse_parts` in `src/ui.py`), but the `Parts` tree shows no numbers and its order (bundle/external groups, chain nesting from `_collect_hierarchy_rows` in `src/bundle_plan.py`) differs from the plan `index` order, so users cannot tell which number to type.
-- Add a cursor mode to the `Parts` list in `_build_info_screen` / `_show_info_fullscreen`: `p(art)` enters the mode, `Up`/`Down` (`j`/`k`) move a highlighted row, `Enter` opens that part in the existing part viewer (`_build_part_screen`), `Esc` returns to plain scrolling. Group/bundle node rows with several children are skipped or open their first part.
-- Carry the part `index` on the table row dicts built by `_make_table_row` so a highlighted row maps to `extract_bundle_part`, without adding numeric prefixes to the tree; keep `PART N/M` in the viewer title and `n`/`N` browsing.
-- Keep the numeric prompt only if it stays cheap (fallback for narrow terminals); update `README.md` `i(nfo)` description and unit tests in `tests/test_ui.py` and `tests/test_bundle.py`, rebuild `run_block` via `build.py`. Release as `PATCH`.
 
 # ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
 
