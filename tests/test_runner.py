@@ -384,6 +384,76 @@ class TestRunner(RunBlockTestCase):
         self._assert_ok(r_fix)
         self.assertRegex(r_fix.stdout, r"s1/1_1\s+not-run\s+Reason: STOP --fix: guard; --fix s1/1")
 
+    def test_list_filter_and_session_context_columns(self):
+        for name, task in (("s1", "F20"), ("s2", "F21")):
+            self._assert_ok(
+                self._run(["--start", "--session", name], input=f"Role: work\nTask: {task}\n\nbody\n")
+            )
+        r_all = self._run(["--list"])
+        self._assert_ok(r_all)
+        self.assertRegex(r_all.stdout, r"Workdir: .*  Role: work  Task: F20")
+        self.assertRegex(r_all.stdout, r"\d{4}-\d\d-\d\d \d\d:\d\d UTC")
+        r_task = self._run(["--list", "--filter", "f21"])
+        self._assert_ok(r_task)
+        self.assertIn("Task: F21", r_task.stdout)
+        self.assertNotIn("Task: F20", r_task.stdout)
+        workdir = self.mod.parse_bundle_headers(self.tmp / "s1").get("workdir", "")
+        self.assertTrue(workdir)
+        r_wd = self._run(["--list", "--filter", workdir])
+        self._assert_ok(r_wd)
+        self.assertIn("Task: F20", r_wd.stdout)
+        r_none = self._run(["--list", "--filter", "no-such-text"])
+        self._assert_ok(r_none)
+        self.assertIn("No sessions matching 'no-such-text'", r_none.stdout)
+        for argv in (["--list", "--filter"], ["--list", "s1", "--filter", "x"], ["--list", "s1", "s2"]):
+            with self.subTest(argv=argv):
+                self.assertNotEqual(self._run(argv).returncode, 0)
+
+    def test_info_show_session_forms_and_retry_session(self):
+        self._assert_ok(
+            self._run(["--start", "--session", "s1"], input="Role: work\nTask: F20\n\nbody\n")
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", "echo first_step\n"), 0)
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo second_step\n"), 0)
+        r_info = self._run(["--info", "s1"])
+        self._assert_ok(r_info)
+        for needle in (
+            "Session: s1", f"Path: {self.tmp / 's1'}", "State: active", "Next: s1/3",
+            "Task: F20", "Role: work", "s1/0", "s1/1", "s1/2",
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, r_info.stdout)
+        r_latest = self._run(["--info"])
+        self._assert_ok(r_latest)
+        self.assertEqual(r_latest.stdout, r_info.stdout)
+        r_show = self._run(["--show", "s1"])
+        self._assert_ok(r_show)
+        self.assertEqual(r_show.stdout, r_info.stdout)
+
+        r_script = self._run(["--show", "s1/2", "--script"])
+        self._assert_ok(r_script)
+        self.assertIn("echo second_step", r_script.stdout)
+        self.assertNotIn("=== [", r_script.stdout)
+        r_out = self._run(["--show", "s1/2", "--out"])
+        self._assert_ok(r_out)
+        self.assertIn("second_step", r_out.stdout)
+        self.assertIn("[s1/2] END", r_out.stdout)
+        self.assertNotIn("=== [s1/2] Script", r_out.stdout)
+        r_sess_out = self._run(["--show", "s1", "--out"])
+        self._assert_ok(r_sess_out)
+        self.assertIn("second_step", r_sess_out.stdout)
+        for argv in (["--show", "s1/0", "--script"], ["--show", "s1/2", "--script", "--out"],
+                     ["--show", "s1/2", "--out", "--part", "1"], ["--info", "s1", "s2"]):
+            with self.subTest(argv=argv):
+                self.assertNotEqual(self._run(argv).returncode, 0)
+
+        r_retry = self._run(["--retry", "s1"])
+        self._assert_ok(r_retry)
+        self.assertIn("second_step", r_retry.stdout)
+        self.assertNotIn("first_step", r_retry.stdout)
+        self.assertNotEqual(self._run(["--retry", "no-such-session"]).returncode, 0)
+
     def test_f61_step_collision_interactive_renumbering(self):
         # 1. next_free_step and first_missing_step scan existing step & fix directories cleanly
         s_scan = self.tmp / "s_scan"

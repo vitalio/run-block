@@ -1752,7 +1752,35 @@ def _step_row_desc(sdir: Path, stem: str) -> str:
     return _clip_list_desc("; ".join(parts))
 
 
-def cmd_list(session: str | None = None) -> int:
+def _fmt_utc(ts: float) -> str:
+    return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _session_context_text(sdir: Path) -> str:
+    headers = parse_bundle_headers(sdir)
+    pairs = (("workdir", "Workdir"), ("role", "Role"), ("task", "Task"))
+    return "  ".join(f"{label}: {headers[key]}" for key, label in pairs if headers.get(key))
+
+
+def _session_matches(sdir: Path, query: str) -> bool:
+    needle = query.lower()
+    values = [sdir.name] + [v for _k, v in parse_bundle_header_items(sdir, include_transport=False)]
+    return any(needle in v.lower() for v in values)
+
+
+def _write_block_rows(sdir: Path, limit: int | None = None) -> None:
+    session = sdir.name
+    if (sdir / "0").is_file():
+        ref0 = f"{session}/0"
+        sys.stdout.write(f"  {ref0:<10}  {'bundle':<24}  {_bundle_row_desc(sdir)}\n")
+    steps = _iter_session_steps(sdir)
+    for step_d in steps if limit is None else steps[-limit:]:
+        stem = step_d.name
+        ref = f"{session}/{stem}"
+        sys.stdout.write(f"  {ref:<10}  {_step_status(sdir, stem):<24}  {_step_row_desc(sdir, stem)}\n")
+
+
+def cmd_list(session: str | None = None, query: str | None = None) -> int:
     base = ensure_base()
     _warn_if_state_oversized(base)
     if not session:
@@ -1760,7 +1788,14 @@ def cmd_list(session: str | None = None) -> int:
         if not sdirs:
             sys.stdout.write(f"No sessions in {base} (0 B)\n")
             return 0
-        sys.stdout.write(f"Sessions in {base}:\n")
+        if query is not None:
+            sdirs = [s for s in sdirs if _session_matches(s, query)]
+            if not sdirs:
+                sys.stdout.write(f"No sessions matching {query!r} in {base}\n")
+                return 0
+            sys.stdout.write(f"Sessions in {base} matching {query!r}:\n")
+        else:
+            sys.stdout.write(f"Sessions in {base}:\n")
         total_bytes = 0
         for sdir in sdirs:
             steps = [d.name for d in _iter_session_steps(sdir)]
@@ -1773,8 +1808,12 @@ def cmd_list(session: str | None = None) -> int:
             else:
                 last = "empty"
             sys.stdout.write(
-                f"  {sdir.name:<8}  {len(steps):>3} block(s)  {_human_size(sz):>9}   last: {last}{_session_tail(sdir)}\n"
+                f"  {sdir.name:<8}  {len(steps):>3} block(s)  {_human_size(sz):>9}  "
+                f"{_fmt_utc(_session_mtime(sdir))}   last: {last}{_session_tail(sdir)}\n"
             )
+            ctx = _session_context_text(sdir)
+            if ctx:
+                sys.stdout.write(f"    {ctx}\n")
         sys.stdout.write(f"Total storage: {_human_size(total_bytes)} ({len(sdirs)} session(s))\n")
         session = sdirs[-1].name
         sys.stdout.write(f"\nRecent blocks in {session}:\n")
@@ -1786,14 +1825,42 @@ def cmd_list(session: str | None = None) -> int:
         hint = _session_open_hint(sdir)
         detail = f"{size}, {hint}" if hint else size
         sys.stdout.write(f"Blocks in {session} ({detail}){_done_badge(sdir)}:\n")
+    _write_block_rows(base / session, limit=15)
+    return 0
+
+
+def cmd_info(session: str | None = None) -> int:
+    base = ensure_base()
+    if session is None:
+        session = _find_latest_session()
     sdir = base / session
-    if (sdir / "0").is_file():
-        ref0 = f"{session}/0"
-        sys.stdout.write(f"  {ref0:<10}  {'bundle':<24}  {_bundle_row_desc(sdir)}\n")
-    for step_d in _iter_session_steps(sdir)[-15:]:
-        stem = step_d.name
-        ref = f"{session}/{stem}"
-        sys.stdout.write(f"  {ref:<10}  {_step_status(sdir, stem):<24}  {_step_row_desc(sdir, stem)}\n")
+    if not sdir.is_dir():
+        raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
+    meta = read_session_meta(sdir)
+    lines = [
+        f"Session: {session}",
+        f"Path: {sdir}",
+        f"State: {get_session_state(sdir)}",
+        f"Size: {_human_size(_dir_size_bytes(sdir))}",
+        f"Updated: {_fmt_utc(_session_mtime(sdir))}",
+    ]
+    hint = _session_open_hint(sdir)
+    if hint:
+        lines.append(f"Next: {hint.removeprefix('next: ')}")
+    if meta.get("completed"):
+        lines.append(f"Completed: {meta.get('completed_at')}")
+        if meta.get("completed_note"):
+            lines.append(f"Note: {meta['completed_note']}")
+    lines.extend(_session_stats_lines(meta))
+    lines.append("Headers:")
+    items = parse_bundle_header_items(sdir)
+    if items:
+        lines.extend(f"  {k}: {v}" for k, v in items)
+    else:
+        lines.append("  (none)")
+    lines.append("Blocks:")
+    sys.stdout.write("".join(f"{ln}\n" for ln in lines))
+    _write_block_rows(sdir)
     return 0
 
 
@@ -1836,15 +1903,27 @@ def _show_bundle_part(ref: str | None, part: int) -> int:
     return 0
 
 
-def cmd_show(ref: str | None = None, part: int | None = None) -> int:
+def _read_step_artifact(path: Path, label: str, what: str) -> str:
+    if not path.is_file():
+        raise SystemExit(f"{prog_name()}: {what} of {label} not found ({path})")
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def cmd_show(ref: str | None = None, part: int | None = None, only: str | None = None) -> int:
     if part is not None:
         return _show_bundle_part(ref, part)
-    if ref:
+    if ref and "/" not in ref:
+        if only is None:
+            return cmd_info(ref)
+        session, step = _find_latest_step(ref)
+    elif ref:
         session, step = parse_ref(ref, allow_fix_step=True)
     else:
         session, step = _find_latest_step()
     sdir = ensure_base() / session
     if step == "0":
+        if only is not None:
+            raise SystemExit(f"{prog_name()}: --{only} applies only to blocks, not to {session}/0")
         bundle_path = sdir / "0"
         if bundle_path.is_file():
             orig_bundle = _orig_file_backup_path(bundle_path)
@@ -1859,6 +1938,12 @@ def cmd_show(ref: str | None = None, part: int | None = None) -> int:
     err_path = step_dir / "error"
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
+    if only == "script":
+        sys.stdout.write(_read_step_artifact(script_path, f"{session}/{step}", "script"))
+        return 0
+    if only == "out":
+        sys.stdout.write(_read_step_artifact(out_path, f"{session}/{step}", "output"))
+        return 0
     orig_path = _orig_backup_path(script_path)
     status_str = _step_status(sdir, step)
     script_edited = f" (edited) (original: {orig_path})" if orig_path.is_file() else ""
@@ -1881,7 +1966,9 @@ def cmd_retry(
     if in_run_block():
         target = f"--retry {ref}" if ref else "--retry"
         return _reject_nested_step_execution(target)
-    if ref:
+    if ref and "/" not in ref:
+        session, step = _find_latest_step(ref)
+    elif ref:
         session, step = parse_ref(ref, allow_fix_step=True)
     else:
         session, step = _find_latest_step()

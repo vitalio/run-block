@@ -57,6 +57,13 @@ class TestCli(RunBlockTestCase):
         r_lazy = subprocess.run([sys.executable, "-c", lazy_check], capture_output=True, text=True, check=False)
         self.assertEqual(r_lazy.returncode, 0, msg=f"stdout:\n{r_lazy.stdout}\nstderr:\n{r_lazy.stderr}")
 
+    def test_help_lists_session_inspection_flags(self):
+        r = self._run_subprocess([str(SCRIPT), "-h"])
+        self._assert_ok(r)
+        for flag in ("--info", "--filter", "--script", "--out"):
+            with self.subTest(flag=flag):
+                self.assertIn(flag, r.stdout)
+
     def test_f42_done_cli_flags_and_help(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
         self._assert_ok(r)

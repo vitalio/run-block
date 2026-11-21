@@ -1,13 +1,3 @@
-# 🎯 [NEXT] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
-
-- Depends on: F83, F82
-- Extend `--list` / `-l` in `src/cli.py` and `cmd_list()` in `src/runner.py:1757-1900` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
-- Add `--info [session]` (and `--show <session>` without step number) in `src/cli.py` and `src/runner.py:1900-2010` to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.
-- Enhance `cmd_show()` in `src/runner.py:1903-1970` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
-- Enhance `cmd_retry()` in `src/runner.py:1969-2010` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and tests.
-- Note: `HIDDEN_SESSION_HEADER_KEYS` filtering (`src/config.py`, `src/bundle_plan.py`, `src/ui.py`) is already implemented; remaining scope covers `--list` filtering/columns, `--info [session]`, `--show --script/--out`, and `--retry <session>`.
-- Target files: `src/header.py`, `src/cli.py`, `src/runner.py:1757-2014`, `README.md`, `tests/test_cli.py:1-260`, `tests/test_runner.py:1150-1404`.
-
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3

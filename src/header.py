@@ -7,11 +7,14 @@
   {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
   {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full, --part N)
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
-  {prog} --retry [-y] [session/step] Re-run the last (or specified) block
+  {prog} --retry [-y] [session/step] Re-run the last block of a session or <session>/<step>
   {prog} --list | -l [session]       List sessions/blocks: last step, next free step ([DONE] = completed)
+  {prog} --list --filter TEXT        List only sessions whose name or headers contain TEXT
   {prog} --done [session] [-m NOTE]  Mark session completed and print END SESSION summary (later blocks ask to reopen)
   {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
   {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
+  {prog} --show <ref> --script|--out Print only a block's script or only its output
+  {prog} --info [session]            Show path, size, headers, and all blocks of a session
   {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
   {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
   {prog} -p | --prompt TEXT          Embed repeatable prompt text into the started session bundle (===== Prompt =====)

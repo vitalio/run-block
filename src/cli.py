@@ -104,6 +104,30 @@ def _reject_prompt_for(command_label: str, usage: str) -> None:
     raise SystemExit(f"{prog}: -p/--prompt cannot be used with {command_label} (usage: {usage})")
 
 
+def _parse_list_args(argv: list[str], usage: str) -> tuple[str | None, str | None]:
+    session: str | None = None
+    query: str | None = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--filter":
+            if i + 1 >= len(argv):
+                raise SystemExit(f"{prog_name()}: --filter requires an argument")
+            query = argv[i + 1]
+            i += 2
+        elif a.startswith("--filter="):
+            query = a.split("=", 1)[1]
+            i += 1
+        elif a.startswith("-") or session is not None:
+            raise SystemExit(f"{prog_name()}: usage: {usage}")
+        else:
+            session = a
+            i += 1
+    if session is not None and query is not None:
+        raise SystemExit(f"{prog_name()}: --filter cannot be combined with a session (usage: {usage})")
+    return session, query
+
+
 def main(argv: list[str] | None = None) -> int:
     raw_args = list(sys.argv[1:] if argv is None else argv)
     prog = prog_name()
@@ -198,11 +222,19 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_sandbox([sandbox_override, args[0]])
 
     if args[0] in ("--list", "-l"):
+        list_usage = f"{prog} --list [session | --filter TEXT]"
         if prompt_args:
-            _reject_prompt_for(args[0], f"{prog} --list [session]")
-        if len(args) > 2:
-            raise SystemExit(f"{prog}: usage: {prog} --list [session]")
-        return cmd_list(args[1] if len(args) == 2 else None)
+            _reject_prompt_for(args[0], list_usage)
+        list_session, list_query = _parse_list_args(args[1:], list_usage)
+        return cmd_list(list_session, query=list_query)
+
+    if args[0] == "--info":
+        info_usage = f"{prog} --info [session]"
+        if prompt_args:
+            _reject_prompt_for("--info", info_usage)
+        if len(args) > 2 or (len(args) == 2 and args[1].startswith("-")):
+            raise SystemExit(f"{prog}: usage: {info_usage}")
+        return cmd_info(args[1] if len(args) == 2 else None)
 
     if args[0] == "--done":
         done_usage = f"{prog} --done [-y] [session] [-m NOTE]"
@@ -226,19 +258,25 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_done(done_session, note=done_note, auto_yes=auto_yes)
 
     if args[0] == "--show":
-        show_usage = f"{prog} --show [session[/step]] [--part N]"
+        show_usage = f"{prog} --show [session[/step]] [--part N | --script | --out]"
         if prompt_args:
             _reject_prompt_for("--show", show_usage)
-        show_rest, show_part = parse_part_option(args[1:], show_usage)
-        if len(show_rest) > 1:
+        only_flags = [a for a in args[1:] if a in ("--script", "--out")]
+        show_args = [a for a in args[1:] if a not in ("--script", "--out")]
+        show_rest, show_part = parse_part_option(show_args, show_usage)
+        if len(show_rest) > 1 or len(set(only_flags)) > 1 or (only_flags and show_part is not None):
             raise SystemExit(f"{prog}: usage: {show_usage}")
-        return cmd_show(show_rest[0] if show_rest else None, part=show_part)
+        return cmd_show(
+            show_rest[0] if show_rest else None,
+            part=show_part,
+            only=only_flags[0][2:] if only_flags else None,
+        )
 
     if args[0] in ("--retry", "--rerun"):
         if prompt_args:
-            _reject_prompt_for(args[0], f"{prog} --retry [-y] [session/step]")
+            _reject_prompt_for(args[0], f"{prog} --retry [-y] [session[/step]]")
         if len(args) > 2:
-            raise SystemExit(f"{prog}: usage: {prog} --retry [-y] [session/step]")
+            raise SystemExit(f"{prog}: usage: {prog} --retry [-y] [session[/step]]")
         return cmd_retry(
             args[1] if len(args) == 2 else None, auto_yes=auto_yes, sandbox_override=sandbox_override
         )
