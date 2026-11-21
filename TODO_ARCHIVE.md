@@ -1,3 +1,16 @@
+# ✅ [DONE] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards — *2026-11-21, Designed nested run_block contract, subcommand guards, and post-END STEP deferred END SESSION / START SESSION cards in F79*
+
+- Depends on: F42
+- Design candidate for `role=design` (coordinates with `F42` and `D9`).
+- Problem: when a block executes `<cmd> | run_block` inside an active step (e.g., `todo_md F21 | agents_bundle role=work | run_block` inside `s53/1`), `IN_RUN_BLOCK=1` disables clipboard copy and prints the inner `START SESSION` (`BUNDLE`) box inside the outer step's `[s53/1] START ... [s53/1] END` output, leaving outer wrappers around the new bundle and lacking an explicit contract for nested `run_block` invocations.
+- Define the behavior matrix when `IN_RUN_BLOCK=1` (and optional `RUN_BLOCK_PARENT_SESSION` / `RUN_BLOCK_PARENT_STEP` env metadata):
+  1. Subcommand guards: allow read-only inspection (`--list`, `--show`, `--info`, `--bundle-plan`) and completing the current session (`--done` / `END SESSION`), while blocking recursive step execution (`<session>/<step>`, `--fix`, `--retry`) unless explicitly overridden.
+  2. Nested session initialization (`<cmd> | run_block` / `--start`): specify console framing, clipboard handoff policy (copying the spawned `<session>/0` bundle vs suppressing outer step clipboard copy), and `parent_session` / `spawned_sessions` linkage in `<session>/meta.json`.
+  3. Headless / machine-readable (`--json` in `D9`) interaction when a step spawns a child session.
+- Target files for downstream implementation: `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/cli.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py`, `tests/test_runner.py`.
+
+- Concrete reproduction scenario: running a nested session initializer inside an active step (`todo_md <ID> | agents_bundle role=execute | run_block`) prints the inner `START SESSION` (`BUNDLE`) box (`<child>/0`) inside the outer `[sN/k] START ... [sN/k] END` block output, skips copying `<child>/0` to the clipboard because `IN_RUN_BLOCK=1`, and then triggers the outer `END STEP` (`END`) box's `-> Copy to clipboard?` prompt for the outer step log (with `[sN/k]` wrappers) instead of copying the clean `<child>/0` bundle and suppressing the outer clipboard prompt.
+
 # ✅ [DONE] F77: Unify p(rompt), borderless fullscreen i(nfo) with Tab part cursor, numbered in-order parts, hierarchical %, and [total] rows — *2026-11-21, Unified p(rompt), borderless fullscreen i(nfo) with Tab part cursor, numbered in-order parts (#1 [header]), hierarchical % column, and top/bottom [total] rows*
 
 - Depends on: F57

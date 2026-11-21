@@ -6,19 +6,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Step 2: if cross-stream ordering is intentionally not guaranteed, relax the test; if it is an output defect, fix `src/runner.py` and keep the assertion.
 - Acceptance criteria: 50 consecutive isolated runs of the test pass; full offline suite passes.
 
-# 🎯 [NEXT] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards
-
-- Depends on: F42
-- Design candidate for `role=design` (coordinates with `F42` and `D9`).
-- Problem: when a block executes `<cmd> | run_block` inside an active step (e.g., `todo_md F21 | agents_bundle role=work | run_block` inside `s53/1`), `IN_RUN_BLOCK=1` disables clipboard copy and prints the inner `START SESSION` (`BUNDLE`) box inside the outer step's `[s53/1] START ... [s53/1] END` output, leaving outer wrappers around the new bundle and lacking an explicit contract for nested `run_block` invocations.
-- Define the behavior matrix when `IN_RUN_BLOCK=1` (and optional `RUN_BLOCK_PARENT_SESSION` / `RUN_BLOCK_PARENT_STEP` env metadata):
-  1. Subcommand guards: allow read-only inspection (`--list`, `--show`, `--info`, `--bundle-plan`) and completing the current session (`--done` / `END SESSION`), while blocking recursive step execution (`<session>/<step>`, `--fix`, `--retry`) unless explicitly overridden.
-  2. Nested session initialization (`<cmd> | run_block` / `--start`): specify console framing, clipboard handoff policy (copying the spawned `<session>/0` bundle vs suppressing outer step clipboard copy), and `parent_session` / `spawned_sessions` linkage in `<session>/meta.json`.
-  3. Headless / machine-readable (`--json` in `D9`) interaction when a step spawns a child session.
-- Target files for downstream implementation: `src/bundle.py`, `src/runner.py`, `src/config.py`, `src/cli.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py`, `tests/test_runner.py`.
-
-- Concrete reproduction scenario: running a nested session initializer inside an active step (`todo_md <ID> | agents_bundle role=execute | run_block`) prints the inner `START SESSION` (`BUNDLE`) box (`<child>/0`) inside the outer `[sN/k] START ... [sN/k] END` block output, skips copying `<child>/0` to the clipboard because `IN_RUN_BLOCK=1`, and then triggers the outer `END STEP` (`END`) box's `-> Copy to clipboard?` prompt for the outer step log (with `[sN/k]` wrappers) instead of copying the clean `<child>/0` bundle and suppressing the outer clipboard prompt.
-
 # 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
 
 - Depends on: F42
@@ -39,6 +26,28 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_bundle.py` verify the roundtrip.
 
 - Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
+
+# 🎯 [NEXT] F79: Defer nested END SESSION and START SESSION cards until after outer END STEP and guard nested step execution
+
+- Depends on: D2
+- Implement the nested `run_block` execution contract (`IN_RUN_BLOCK=1`) and deferred session lifecycle cards designed in `D2`:
+  1. Parent step environment & metadata linkage (`src/config.py:270-454`, `src/config.py:580-600`, `src/runner.py:915-925`):
+     - Export `IN_RUN_BLOCK=1`, `RUN_BLOCK_PARENT_SESSION=<session>`, and `RUN_BLOCK_PARENT_STEP=<step>` into `child_env` in `run_script()`.
+     - Provide helpers in `src/config.py` (`parent_run_block_ref()`, `append_deferred_card()`, `pop_deferred_cards()`) storing ordered deferred lifecycle events (`end_session`, `start_session`) in the outer step directory (`<parent_sdir>/<parent_step>/deferred.json` or `step.json`).
+     - When `cmd_start()` runs with `IN_RUN_BLOCK=1` and a valid parent session/step, record `"parent_session"` and `"parent_step"` in `<child>/meta.json` and append `<child>` to `"spawned_sessions"` in `<parent>/meta.json`.
+  2. Subcommand guards when `in_run_block()` is true (`src/cli.py:107-295`, `src/runner.py`):
+     - Allow read-only inspection (`--list`, `--show`, `--bundle-plan`, `--plan`, `--sandbox`) and deferred lifecycle transitions (`--done`, `--start` / piped bundle initialization).
+     - Reject nested step execution (`<session>/<step>`, `--fix`, `--retry`) with a clear error message on `stderr` and non-zero exit status (`2`).
+  3. Deferred `END SESSION` (`--done`) and `START SESSION` (`<cmd> | run_block` / `--start`) inside a running step (`src/runner.py:990-1080`, `src/runner.py:1162-1190`, `src/bundle.py:108-208`):
+     - When `cmd_done()` runs with `in_run_block()` and an active parent step: mark the session completed in `<session>/meta.json`, print a single plain diagnostic line `run_block: session <name> marked completed` to `stdout` (so the step `out` log records completion without embedding the `╭─ END SESSION ───` box inside the step output or clipboard), and enqueue an `end_session` deferred card on the parent step.
+     - When `cmd_start()` runs with `in_run_block()` and an active parent step: write `<child>/0` and `<child>/meta.json`, print a single plain diagnostic line `run_block: initialized session <child> (<child>/0)` to `stdout` without printing the `╭─ START SESSION ───` box inside the outer step output, and enqueue a `start_session` deferred card on the parent step.
+  4. Strict post-step card ordering and clipboard handoff in outer `run_script()` (`src/runner.py:1025-1080`):
+     - After the child process exits, write `[<label>] END (...)` to `out`, write `step.json`, and call `update_session_stats()` first (so the completing step itself is included in the session's final step count, ok/failed tallies, and duration).
+     - Pop any deferred cards queued during the step:
+       1. Render `╭─ END STEP ───` first. If any deferred `start_session` card is queued, render `END STEP` as an info box without prompting `-> Copy to clipboard?` (and without copying the outer step log over the new session bundle); otherwise run `offer_clipboard_copy()` for `END STEP` as usual.
+       2. Render each deferred `╭─ END SESSION ───` card (re-reading `<session>/meta.json` after `update_session_stats()` so the final step is counted).
+       3. Render each deferred `╭─ START SESSION ───` card, invoking `offer_clipboard_copy()` (or auto-copy / info box per TTY and clipboard settings) on the final spawned `<child>/0` bundle.
+- Update `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `AGENTS.md`, rebuild `run_block` via `python3 build.py`, and add unit tests in `tests/test_runner.py`, `tests/test_bundle.py`, and `tests/test_cli.py`.
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
@@ -112,7 +121,7 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 
 # ⚪ [NEW] D9: Design machine-readable runner contract (--json step output and plan/execute handshake)
 
-- Depends on: F42, D2
+- Depends on: F79
 - Design contract to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
 - Evaluate structured `--json` execution output for `<session>/<step>` (status: `ok`/`syntax_error`/`not_run`/`completed`, `exit_code`, safety findings, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` non-TTY handshake, and env sanitization so client LLM API keys do not leak into executed step scripts.
 - Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
