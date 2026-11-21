@@ -17,15 +17,15 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
   3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
 - Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
 
-# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit) and count clean bundle size without markers
+# 🎯 [NEXT] F69: Preserve boundary markup during bundle e(dit), count clean bundle size without markers, and omit Sandbox: off from bundle preamble
 
 - Depends on: F77
 - Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`) instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization.
 - When `e(dit)` is triggered on `START SESSION` (`BUNDLE` before `F71`, inline or via `i(nfo)` in `F54`, `src/ui.py`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`.
 - Compute `Stats:`, `bundle_plan`, and clipboard content strictly from the clean stripped text (excluding boundary marker comments), and finalize `<session>/0` without boundary markers on disk once `START SESSION` exits (`Y`/`Enter`, `n`/`Esc`, or non-interactive mode), keeping `0.orig` backup and `F57`/`F77` `p(rompt)` compatibility intact.
-- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup; offline tests in `tests/test_bundle.py` verify the roundtrip.
-
+- Omit `Sandbox: off` from `bundle_header_lines` in `format_start_bundle()` (`src/bundle.py`) so the model-facing `<session>/0` preamble and clipboard text only include `Sandbox: <header>` when a sandbox mode is active (`normalize_sandbox_mode(sb_mode) != "off"`); remove any existing `Sandbox:` preamble line in `set_session_bundle_header()` when setting `Sandbox` to `off`, and treat a missing `Sandbox:` header in an existing session bundle (` (session_dir / "0").is_file() `) as `"off"` in `get_sandbox_mode()` (`src/config.py`) so per-session `--sandbox off` overrides a global `sandbox=strict` setting while `i(nfo)` (`format_unfiltered_session_header_lines()` in `src/ui.py`) continues to display `Sandbox: off`.
 - Coordinate with `F66`: preserve `<session>/0.raw` after embedded block-rule injection (or keep re-parsing idempotent) so `e(dit)` neither drops nor duplicates `run_block:blocks/*`.
+- Acceptance criteria: editing a boundary-annotated bundle via `e(dit)` preserves full `Summary`/`Parts` fragment detail instead of collapsing to fallback sections; `Stats:` counts clean content without marker comments; final `<session>/0` contains no boundary markup and omits `Sandbox: off` while including active `Sandbox:` modes; offline tests in `tests/test_bundle.py` and `tests/test_ui.py` verify the roundtrip and header behavior.
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
