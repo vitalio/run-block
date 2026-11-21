@@ -2622,6 +2622,97 @@ def _find_selectable_part_rows(items: list[str]) -> list[tuple[int, int]]:
     return found
 
 
+_STEP_INFO_KINDS = ("START STEP", "END STEP", "SYNTAX ERROR", "NOT RUN", "STEP ALREADY EXISTS")
+_OP_ROW_NUM_RE = re.compile(r"^\s*(\d+)\.\s+\[[a-z0-9_-]+\]")
+_OP_SECTION_HEADING_RE = re.compile(r"^(?:Operations(?: \(\d+ timed\))?:|Pre-execution Plan \(.*\):)$")
+
+
+def _find_selectable_operation_rows(items: list[str]) -> list[tuple[int, int]]:
+    found: list[tuple[int, int]] = []
+    seen_ops: set[int] = set()
+    in_section = False
+    for row_idx, raw_line in enumerate(items):
+        plain = ANSI_RE.sub("", raw_line)
+        if not in_section:
+            in_section = bool(_OP_SECTION_HEADING_RE.match(plain.strip()))
+            continue
+        if not plain.strip():
+            break
+        m = _OP_ROW_NUM_RE.match(plain)
+        if m:
+            ono = int(m.group(1))
+            if ono not in seen_ops:
+                seen_ops.add(ono)
+                found.append((ono, row_idx))
+    return found
+
+
+def _info_operation_steps(
+    script_path: Path | None, sdir: Path | None, label: str | None = None
+) -> list[dict[str, object]]:
+    if script_path is None or not script_path.is_file():
+        return []
+    try:
+        text = script_path.read_text(encoding="utf-8", errors="replace")
+        plan = analyze_script(text, work_dir=get_work_dir(sdir), label=label or "", check_syntax=False)
+    except Exception:
+        return []
+    return [
+        s for s in (plan.get("operation_steps") or []) if isinstance(s, dict) and int(s.get("line") or 0) > 0
+    ]
+
+
+def _build_operation_screen(
+    label: str,
+    op_no: int,
+    total: int,
+    step: dict[str, object],
+    script_path: Path,
+    script_lines: list[str],
+    timing: dict[str, object] | None,
+    failed: bool,
+    cols: int,
+    rows: int,
+    scroll_top: int,
+    *,
+    can_edit: bool,
+) -> tuple[str, int, int]:
+    tag = str(step.get("tag") or "exec")
+    desc = str(step.get("desc") or "").strip()
+    line_no = int(step.get("line") or 0)
+    end_no = int(step.get("end_line") or line_no)
+    hdr = [f"Source: [{tag}] {desc}" if desc else f"Source: [{tag}]"]
+    if step.get("dir"):
+        hdr.append(f"Directory: {step['dir']}")
+    if timing is not None:
+        try:
+            dur_ms = max(0, int(timing.get("duration_ms") or 0))
+        except (TypeError, ValueError):
+            dur_ms = 0
+        hdr.append(f"Timing: {format_duration(dur_ms / 1000.0)}" + (" (failed)" if failed else ""))
+    elif failed:
+        hdr.append("Timing: (failed)")
+    hdr.append(f"Range: lines {line_no}-{end_no} of {_shorten_home_path(script_path)}")
+    footer = ["n/N: next/prev operation"]
+    if can_edit:
+        footer.append("e(dit) script")
+    footer.append("Esc/q/i/Tab: back")
+    return _build_part_screen(
+        label,
+        op_no,
+        total,
+        None,
+        script_lines[max(0, line_no - 1) : end_no],
+        cols,
+        rows,
+        scroll_top,
+        can_edit=can_edit,
+        title=f"PART {op_no}/{total} · {label}",
+        header_kv=hdr,
+        footer_tail=footer,
+    )
+
+
 def _highlight_selected_part_row(line: str, cols: int) -> str:
     plain = ANSI_RE.sub("", line)
     if _use_color():
@@ -2646,6 +2737,9 @@ def _build_part_screen(
     error: str = "",
     folder_row: dict[str, object] | None = None,
     folder_entries: list[dict[str, object]] | None = None,
+    title: str | None = None,
+    header_kv: list[str] | None = None,
+    footer_tail: list[str] | None = None,
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
     is_folder = folder_row is not None and folder_entries is not None and len(folder_entries) > 1
@@ -2653,11 +2747,15 @@ def _build_part_screen(
         panel_title = f"BUNDLE {part_no}/{total} · {label}" if label else f"BUNDLE {part_no}/{total}"
     else:
         panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
+    if title is not None:
+        panel_title = title
     max_content_w = max(1, cols)
     title_line = f"{title_col}{panel_title}{_ANSI_RESET}" if _use_color() else panel_title
 
     hdr_kv: list[str] = []
-    if is_folder and folder_row is not None and folder_entries:
+    if header_kv is not None:
+        hdr_kv.extend(header_kv)
+    elif is_folder and folder_row is not None and folder_entries:
         f_desc = str(folder_row.get("desc") or "bundle")
         f_kind = str(folder_row.get("kind") or "bundle")
         hdr_kv.append(f"Source: {f_desc} ({f_kind})")
@@ -2684,11 +2782,12 @@ def _build_part_screen(
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
             all_items.append(wline)
 
-    footer_tail = ["n/N: next/prev part"]
-    if can_edit:
-        footer_tail.append("e(dit) bundle")
-    footer_tail.append("Esc/q/i: back")
-    return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, footer_tail)
+    tail = list(footer_tail) if footer_tail is not None else ["n/N: next/prev part"]
+    if footer_tail is None:
+        if can_edit:
+            tail.append("e(dit) bundle")
+        tail.append("Esc/q/i: back")
+    return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, tail)
 
 
 def _resolve_info_step_script(
@@ -3173,7 +3272,12 @@ def _build_info_screen(
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
             all_items.append(wline)
 
-    selectable = _find_selectable_part_rows(all_items) if kind == "START SESSION" else []
+    if kind == "START SESSION":
+        selectable = _find_selectable_part_rows(all_items)
+    elif kind in _STEP_INFO_KINDS:
+        selectable = _find_selectable_operation_rows(all_items)
+    else:
+        selectable = []
     selected_row_idx: int | None = None
     if part_cursor is not None and selectable:
         for pno, r_idx in selectable:
@@ -3206,7 +3310,7 @@ def _build_info_screen(
         if allow_overwrite:
             footer_tail.append("O(verwrite)" if has_output else "o(verwrite)")
         footer_tail.append("v(iew)")
-        if kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0:
+        if selectable or (kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0):
             footer_tail.append("Tab: parts")
         if allow_copy:
             footer_tail.append("Enter: copy")
@@ -3456,6 +3560,65 @@ def _show_info_fullscreen(
             elif key in ("back", "esc", "tab"):
                 return row_no, None
 
+    def _open_operation_viewer(initial_no: int) -> tuple[int, dict[str, object] | None]:
+        script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+        if script is None or not script.is_file():
+            return initial_no, None
+        timings = op_timings
+        if timings is None:
+            ops_meta = read_step_meta(script.parent).get("operations")
+            timings = [x for x in ops_meta if isinstance(x, dict)] if isinstance(ops_meta, list) else []
+        timing_by_step = {int(t["step"]): t for t in timings if isinstance(t.get("step"), int)}
+        op_no = initial_no
+        op_scroll = 0
+        while True:
+            steps = _info_operation_steps(script, resolved_sdir, label)
+            if not steps:
+                return initial_no, None
+            total = len(steps)
+            op_no = max(1, min(total, op_no))
+            try:
+                script_lines = script.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                script_lines = []
+            cols, rows = _term_size()
+            is_failed = rc is not None and rc != 0 and failed_step == op_no
+            frame, op_scroll, vp_rows = _build_operation_screen(
+                label,
+                op_no,
+                total,
+                steps[op_no - 1],
+                script,
+                script_lines,
+                timing_by_step.get(op_no),
+                is_failed,
+                cols,
+                rows,
+                op_scroll,
+                can_edit=True,
+            )
+            tty_w.write(frame)
+            tty_w.flush()
+            key = _read_pager_key(tty_r)
+            if key == "resize":
+                continue
+            new_scroll = _apply_pager_scroll(key, op_scroll, vp_rows)
+            if new_scroll is not None:
+                op_scroll = new_scroll
+            elif key == "next_part":
+                op_no = min(total, op_no + 1)
+                op_scroll = 0
+            elif key == "prev_part":
+                op_no = max(1, op_no - 1)
+                op_scroll = 0
+            elif key in ("edit", "script"):
+                cb_edit = _edit_artifact(script)
+                op_scroll = 0
+                if cb_edit and cb_edit.get("reject_msg"):
+                    return op_no, cb_edit
+            elif key in ("back", "esc", "tab"):
+                return op_no, None
+
     tty_w.write("\033[?1049h\033[?25l")
     tty_w.flush()
     try:
@@ -3465,7 +3628,12 @@ def _show_info_fullscreen(
             resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
             has_script = resolved_script is not None and resolved_script.is_file()
             has_output = kind != "START SESSION" and out_path is not None and out_path.is_file()
-            part_total = _info_part_total(resolved_sdir, out_path) if kind == "START SESSION" else 0
+            if kind == "START SESSION":
+                part_total = _info_part_total(resolved_sdir, out_path)
+            elif kind in _STEP_INFO_KINDS and has_script:
+                part_total = len(_info_operation_steps(resolved_script, resolved_sdir, label))
+            else:
+                part_total = 0
             if part_cursor is not None:
                 if part_total < 1:
                     part_cursor = None
@@ -3518,11 +3686,12 @@ def _show_info_fullscreen(
                     part_cursor = part_total
                     continue
                 if key == "copy":
-                    part_cursor, cb = _open_part_viewer(part_cursor)
+                    opener = _open_part_viewer if kind == "START SESSION" else _open_operation_viewer
+                    part_cursor, cb = opener(part_cursor)
                     if cb and cb.get("reject_msg"):
                         return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
                     continue
-            if key == "tab" and kind == "START SESSION" and part_total > 0:
+            if key == "tab" and part_total > 0:
                 part_cursor = 1
                 continue
             new_scroll = _apply_pager_scroll(key, scroll_top, viewport_rows)

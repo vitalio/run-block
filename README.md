@@ -148,7 +148,9 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
 | :--- | :--- | :--- |
 | `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn` | All `i(nfo)` views | Scroll the fullscreen report vertically |
 | `Tab` (`Tab: parts`) | `START SESSION` `i(nfo)` | Toggle the row selection cursor across sequential numbered bundle rows `1..M` (`[bundle]` folders and leaf parts) |
+| `Tab` (`Tab: parts`) | Step `i(nfo)` (`START STEP`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`, `STEP ALREADY EXISTS`) | Toggle the row selection cursor across the numbered `Operations:` rows `1..N` of the step script (child tree rows are skipped) |
 | `Enter` (in `Tab` cursor) | `START SESSION` `i(nfo)` | Open `PART N/M` for a leaf part or `BUNDLE R/M` (with constituent part delimiters) for a `[bundle]` folder row |
+| `Enter` (in `Tab` cursor) | Step `i(nfo)` | Open `PART k/N` with the selected operation's script lines (`Source`, `Directory`, `Timing`, `Range: lines a-b of <script>`); `n`/`N` step across operations, `e`/`s` edit the script and refresh the operations |
 | `n` / `N` | `PART` / `BUNDLE` viewer | Step forward or backward across sequential numbered rows `1..M` |
 | `e` (`e(dit)`) | `START SESSION` / `START STEP` | Edit `<session>/0.raw` (preserving boundary markup and `0.orig`) or `block.sh`/`.ps1` (`block.orig.*`) and re-parse in place |
 | `s` (`s(cript)`) / `o` (`o(utput)`) | Step `i(nfo)` views | Edit saved block script or captured step output in `$VISUAL`/`$EDITOR` (preserving `*.orig` backups and updating stats) |

@@ -707,6 +707,28 @@ class TestSafety(RunBlockTestCase):
         self.assertEqual((clean_ok, clean_reason), (True, ""))
         self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tw_clean.getvalue())
 
+    def test_operation_steps_line_spans(self):
+        script = (
+            "git status -sb\n"
+            "python3 - <<'PY'\n"
+            "x = 1\n"
+            "print(x)\n"
+            "PY\n"
+            "ls -la \\\n"
+            "  src\n"
+            "cat > f.txt <<'EOF'\n"
+            "a\n"
+            "EOF\n"
+        )
+        summary = self.mod.summarize_script_actions(script, Path("/tmp/work"))
+        spans = [(s["line"], s["end_line"]) for s in summary["operation_steps"]]
+        self.assertEqual(spans, [(1, 1), (2, 5), (6, 7), (8, 10)])
+
+        quoted = 'todo_md add "Title" -b "Line A\n' 'Line B"\n' "git status -sb\n"
+        q_sum = self.mod.summarize_script_actions(quoted, Path("/tmp/work"))
+        q_spans = [(s["line"], s["end_line"]) for s in q_sum["operation_steps"]]
+        self.assertEqual(q_spans, [(1, 2), (3, 3)])
+
 
 if __name__ == "__main__":
     unittest.main()

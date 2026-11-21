@@ -65,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.28.5"
+VERSION = "0.28.6"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -1219,9 +1219,11 @@ def _advance_quote_state(
     return state
 
 
-def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
-    """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks."""
-    out: list[tuple[int, str]] = []
+def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
+    """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks.
+
+    Each item is (start_line, text, end_line) with 1-based inclusive physical line numbers."""
+    out: list[tuple[int, str, int]] = []
     eof_token: str | None = None
     py_quote: str | None = None
     quote_state: str | None = None
@@ -1231,12 +1233,12 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
     for idx, raw in enumerate(script_text.splitlines(), start=1):
         s = raw.strip()
         if eof_token is not None:
-            out.append((idx, raw))
+            out.append((idx, raw, idx))
             if s == eof_token:
                 eof_token = None
             continue
         if py_quote is not None:
-            out.append((idx, raw))
+            out.append((idx, raw, idx))
             if s == py_quote or (s.endswith(py_quote) and not s.endswith("\\" + py_quote)):
                 py_quote = None
             continue
@@ -1279,7 +1281,7 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
                 m_pyc_early = PY_DASH_C_START_RE.match(s)
                 if m_pyc_early:
                     q_ch, rest = m_pyc_early.group(1), m_pyc_early.group(2)
-                    out.append((idx, raw))
+                    out.append((idx, raw, idx))
                     if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
                         py_quote = q_ch
                     continue
@@ -1297,7 +1299,7 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
             logical = raw
             logical_idx = idx
 
-        out.append((logical_idx, logical))
+        out.append((logical_idx, logical, idx))
         ls = logical.strip()
         if not ls or ls.startswith("#"):
             continue
@@ -1316,7 +1318,7 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
             eof_token = m_sh.group(1)
 
     if cont_buf:
-        out.append((cont_start, " ".join(cont_buf)))
+        out.append((cont_start, " ".join(cont_buf), len(script_text.splitlines())))
     return out
 
 
@@ -1635,7 +1637,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         else:
             operation_groups[-1][1].append((tag, short_desc))
 
-    def add_op(tag: str, desc: str, line: int = 0) -> None:
+    def add_op(tag: str, desc: str, line: int = 0, end_line: int = 0) -> None:
         operations.append((tag, desc))
         g_dir, short_desc = _infer_op_dir(desc) if tag in ("read", "write", "git", "exec") else (cur_group_dir, desc)
         _append_group_item(g_dir, tag, short_desc)
@@ -1643,6 +1645,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             {
                 "step": len(operation_steps) + 1,
                 "line": line,
+                "end_line": end_line or line,
                 "tag": tag,
                 "desc": desc,
                 "dir": g_dir,
@@ -1682,7 +1685,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         rem = len(items) - max_shown
         return f"{shown} (+{rem} more, {len(items)} total)"
 
-    def _emit_py_op(buf_lines: list[str], start_line: int) -> None:
+    def _emit_py_op(buf_lines: list[str], start_line: int, end_line: int = 0) -> None:
         pw: list[str] = []
         pr: list[str] = []
         pe: list[str] = []
@@ -1711,7 +1714,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             head_desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (
                 f" — calls: {', '.join(pe)}" if pe else ""
             )
-            add_op("python", head_desc, line=start_line)
+            add_op("python", head_desc, line=start_line, end_line=end_line)
             for g_dir, bucket in dir_buckets.items():
                 for kind in ("write", "read"):
                     k_items = bucket[kind]
@@ -1731,16 +1734,16 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         if pe:
             parts.append("calls: " + ", ".join(pe))
         desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (f" — {'; '.join(parts)}" if parts else "")
-        add_op("python", desc, line=start_line)
+        add_op("python", desc, line=start_line, end_line=end_line)
     sh_cmd: str = ""
     sh_lines: int = 0
     sh_start: int = 0
 
-    for idx, raw in _iter_logical_lines(script_text):
+    for idx, raw, end_idx in _iter_logical_lines(script_text):
         s = raw.strip()
         if py_eof is not None:
             if s == py_eof:
-                _emit_py_op(py_buf, py_start)
+                _emit_py_op(py_buf, py_start, idx)
                 py_eof = None
                 py_buf = []
             else:
@@ -1750,7 +1753,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             if s == py_quote or (s.endswith(py_quote) and not s.endswith("\\" + py_quote)):
                 if s != py_quote:
                     py_buf.append(raw.rstrip()[:-1])
-                _emit_py_op(py_buf, py_start)
+                _emit_py_op(py_buf, py_start, idx)
                 py_quote = None
                 py_buf = []
             else:
@@ -1763,13 +1766,13 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
                 if m_redir:
                     target_f = m_redir.group(1).strip("'\"")
                     _add_unique(writes, target_f)
-                    add_op("write", f"{sh_cmd} ({line_lbl})", line=sh_start)
+                    add_op("write", f"{sh_cmd} ({line_lbl})", line=sh_start, end_line=idx)
                 elif re.match(r"^git\s+", sh_cmd):
                     _add_unique(git_cmds, sh_cmd)
-                    add_op("git", f"{sh_cmd} ({line_lbl})", line=sh_start)
+                    add_op("git", f"{sh_cmd} ({line_lbl})", line=sh_start, end_line=idx)
                 else:
                     _add_unique(exec_cmds, sh_cmd)
-                    add_op("exec", f"{sh_cmd} ({line_lbl})", line=sh_start)
+                    add_op("exec", f"{sh_cmd} ({line_lbl})", line=sh_start, end_line=idx)
                 sh_eof = None
                 sh_cmd = ""
                 sh_lines = 0
@@ -1791,7 +1794,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             py_blocks += 1
             q_ch, rest = m_pyc.group(1), m_pyc.group(2)
             if rest.endswith(q_ch) and not rest.endswith("\\" + q_ch):
-                _emit_py_op([rest[:-1]], idx)
+                _emit_py_op([rest[:-1]], idx, end_idx)
             else:
                 py_quote = q_ch
                 py_buf = [rest] if rest.strip() else []
@@ -1848,17 +1851,17 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             continue
         if re.match(r"^git\s+", s):
             _add_unique(git_cmds, s)
-            add_op("git", s, line=idx)
+            add_op("git", s, line=idx, end_line=end_idx)
             continue
         if re.match(r"^(?:rm|cp|mv|mkdir|chmod|touch)\s+", s):
             _add_unique(writes, s)
-            add_op("write", s, line=idx)
+            add_op("write", s, line=idx, end_line=end_idx)
             continue
         if re.match(r"^(?:cat|nl|grep|ls|head|tail|find|which|command\s+-v|wc|stat|file|sed\s+-n)\s+", s):
             _add_unique(reads, s)
-            add_op("read", s, line=idx)
+            add_op("read", s, line=idx, end_line=end_idx)
             continue
-        add_op("exec", s, line=idx)
+        add_op("exec", s, line=idx, end_line=end_idx)
         _add_unique(exec_cmds, s)
 
     rows: list[tuple[str, str]] = []
@@ -2151,7 +2154,7 @@ def scan_script_risks(script_text: str) -> list[dict[str, object]]:
     cur_cd_dir: str = ""
     cd_stack: list[str] = []
     sh_vars: dict[str, list[str]] = {}
-    for idx, raw_line in _iter_logical_lines(script_text):
+    for idx, raw_line, _end_idx in _iter_logical_lines(script_text):
         stripped = raw_line.strip()
         if py_eof_token is not None:
             if stripped == py_eof_token:
@@ -5263,6 +5266,97 @@ def _find_selectable_part_rows(items: list[str]) -> list[tuple[int, int]]:
     return found
 
 
+_STEP_INFO_KINDS = ("START STEP", "END STEP", "SYNTAX ERROR", "NOT RUN", "STEP ALREADY EXISTS")
+_OP_ROW_NUM_RE = re.compile(r"^\s*(\d+)\.\s+\[[a-z0-9_-]+\]")
+_OP_SECTION_HEADING_RE = re.compile(r"^(?:Operations(?: \(\d+ timed\))?:|Pre-execution Plan \(.*\):)$")
+
+
+def _find_selectable_operation_rows(items: list[str]) -> list[tuple[int, int]]:
+    found: list[tuple[int, int]] = []
+    seen_ops: set[int] = set()
+    in_section = False
+    for row_idx, raw_line in enumerate(items):
+        plain = ANSI_RE.sub("", raw_line)
+        if not in_section:
+            in_section = bool(_OP_SECTION_HEADING_RE.match(plain.strip()))
+            continue
+        if not plain.strip():
+            break
+        m = _OP_ROW_NUM_RE.match(plain)
+        if m:
+            ono = int(m.group(1))
+            if ono not in seen_ops:
+                seen_ops.add(ono)
+                found.append((ono, row_idx))
+    return found
+
+
+def _info_operation_steps(
+    script_path: Path | None, sdir: Path | None, label: str | None = None
+) -> list[dict[str, object]]:
+    if script_path is None or not script_path.is_file():
+        return []
+    try:
+        text = script_path.read_text(encoding="utf-8", errors="replace")
+        plan = analyze_script(text, work_dir=get_work_dir(sdir), label=label or "", check_syntax=False)
+    except Exception:
+        return []
+    return [
+        s for s in (plan.get("operation_steps") or []) if isinstance(s, dict) and int(s.get("line") or 0) > 0
+    ]
+
+
+def _build_operation_screen(
+    label: str,
+    op_no: int,
+    total: int,
+    step: dict[str, object],
+    script_path: Path,
+    script_lines: list[str],
+    timing: dict[str, object] | None,
+    failed: bool,
+    cols: int,
+    rows: int,
+    scroll_top: int,
+    *,
+    can_edit: bool,
+) -> tuple[str, int, int]:
+    tag = str(step.get("tag") or "exec")
+    desc = str(step.get("desc") or "").strip()
+    line_no = int(step.get("line") or 0)
+    end_no = int(step.get("end_line") or line_no)
+    hdr = [f"Source: [{tag}] {desc}" if desc else f"Source: [{tag}]"]
+    if step.get("dir"):
+        hdr.append(f"Directory: {step['dir']}")
+    if timing is not None:
+        try:
+            dur_ms = max(0, int(timing.get("duration_ms") or 0))
+        except (TypeError, ValueError):
+            dur_ms = 0
+        hdr.append(f"Timing: {format_duration(dur_ms / 1000.0)}" + (" (failed)" if failed else ""))
+    elif failed:
+        hdr.append("Timing: (failed)")
+    hdr.append(f"Range: lines {line_no}-{end_no} of {_shorten_home_path(script_path)}")
+    footer = ["n/N: next/prev operation"]
+    if can_edit:
+        footer.append("e(dit) script")
+    footer.append("Esc/q/i/Tab: back")
+    return _build_part_screen(
+        label,
+        op_no,
+        total,
+        None,
+        script_lines[max(0, line_no - 1) : end_no],
+        cols,
+        rows,
+        scroll_top,
+        can_edit=can_edit,
+        title=f"PART {op_no}/{total} · {label}",
+        header_kv=hdr,
+        footer_tail=footer,
+    )
+
+
 def _highlight_selected_part_row(line: str, cols: int) -> str:
     plain = ANSI_RE.sub("", line)
     if _use_color():
@@ -5287,6 +5381,9 @@ def _build_part_screen(
     error: str = "",
     folder_row: dict[str, object] | None = None,
     folder_entries: list[dict[str, object]] | None = None,
+    title: str | None = None,
+    header_kv: list[str] | None = None,
+    footer_tail: list[str] | None = None,
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
     is_folder = folder_row is not None and folder_entries is not None and len(folder_entries) > 1
@@ -5294,11 +5391,15 @@ def _build_part_screen(
         panel_title = f"BUNDLE {part_no}/{total} · {label}" if label else f"BUNDLE {part_no}/{total}"
     else:
         panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
+    if title is not None:
+        panel_title = title
     max_content_w = max(1, cols)
     title_line = f"{title_col}{panel_title}{_ANSI_RESET}" if _use_color() else panel_title
 
     hdr_kv: list[str] = []
-    if is_folder and folder_row is not None and folder_entries:
+    if header_kv is not None:
+        hdr_kv.extend(header_kv)
+    elif is_folder and folder_row is not None and folder_entries:
         f_desc = str(folder_row.get("desc") or "bundle")
         f_kind = str(folder_row.get("kind") or "bundle")
         hdr_kv.append(f"Source: {f_desc} ({f_kind})")
@@ -5325,11 +5426,12 @@ def _build_part_screen(
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
             all_items.append(wline)
 
-    footer_tail = ["n/N: next/prev part"]
-    if can_edit:
-        footer_tail.append("e(dit) bundle")
-    footer_tail.append("Esc/q/i: back")
-    return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, footer_tail)
+    tail = list(footer_tail) if footer_tail is not None else ["n/N: next/prev part"]
+    if footer_tail is None:
+        if can_edit:
+            tail.append("e(dit) bundle")
+        tail.append("Esc/q/i: back")
+    return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, tail)
 
 
 def _resolve_info_step_script(
@@ -5814,7 +5916,12 @@ def _build_info_screen(
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
             all_items.append(wline)
 
-    selectable = _find_selectable_part_rows(all_items) if kind == "START SESSION" else []
+    if kind == "START SESSION":
+        selectable = _find_selectable_part_rows(all_items)
+    elif kind in _STEP_INFO_KINDS:
+        selectable = _find_selectable_operation_rows(all_items)
+    else:
+        selectable = []
     selected_row_idx: int | None = None
     if part_cursor is not None and selectable:
         for pno, r_idx in selectable:
@@ -5847,7 +5954,7 @@ def _build_info_screen(
         if allow_overwrite:
             footer_tail.append("O(verwrite)" if has_output else "o(verwrite)")
         footer_tail.append("v(iew)")
-        if kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0:
+        if selectable or (kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0):
             footer_tail.append("Tab: parts")
         if allow_copy:
             footer_tail.append("Enter: copy")
@@ -6097,6 +6204,65 @@ def _show_info_fullscreen(
             elif key in ("back", "esc", "tab"):
                 return row_no, None
 
+    def _open_operation_viewer(initial_no: int) -> tuple[int, dict[str, object] | None]:
+        script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
+        if script is None or not script.is_file():
+            return initial_no, None
+        timings = op_timings
+        if timings is None:
+            ops_meta = read_step_meta(script.parent).get("operations")
+            timings = [x for x in ops_meta if isinstance(x, dict)] if isinstance(ops_meta, list) else []
+        timing_by_step = {int(t["step"]): t for t in timings if isinstance(t.get("step"), int)}
+        op_no = initial_no
+        op_scroll = 0
+        while True:
+            steps = _info_operation_steps(script, resolved_sdir, label)
+            if not steps:
+                return initial_no, None
+            total = len(steps)
+            op_no = max(1, min(total, op_no))
+            try:
+                script_lines = script.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                script_lines = []
+            cols, rows = _term_size()
+            is_failed = rc is not None and rc != 0 and failed_step == op_no
+            frame, op_scroll, vp_rows = _build_operation_screen(
+                label,
+                op_no,
+                total,
+                steps[op_no - 1],
+                script,
+                script_lines,
+                timing_by_step.get(op_no),
+                is_failed,
+                cols,
+                rows,
+                op_scroll,
+                can_edit=True,
+            )
+            tty_w.write(frame)
+            tty_w.flush()
+            key = _read_pager_key(tty_r)
+            if key == "resize":
+                continue
+            new_scroll = _apply_pager_scroll(key, op_scroll, vp_rows)
+            if new_scroll is not None:
+                op_scroll = new_scroll
+            elif key == "next_part":
+                op_no = min(total, op_no + 1)
+                op_scroll = 0
+            elif key == "prev_part":
+                op_no = max(1, op_no - 1)
+                op_scroll = 0
+            elif key in ("edit", "script"):
+                cb_edit = _edit_artifact(script)
+                op_scroll = 0
+                if cb_edit and cb_edit.get("reject_msg"):
+                    return op_no, cb_edit
+            elif key in ("back", "esc", "tab"):
+                return op_no, None
+
     tty_w.write("\033[?1049h\033[?25l")
     tty_w.flush()
     try:
@@ -6106,7 +6272,12 @@ def _show_info_fullscreen(
             resolved_script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
             has_script = resolved_script is not None and resolved_script.is_file()
             has_output = kind != "START SESSION" and out_path is not None and out_path.is_file()
-            part_total = _info_part_total(resolved_sdir, out_path) if kind == "START SESSION" else 0
+            if kind == "START SESSION":
+                part_total = _info_part_total(resolved_sdir, out_path)
+            elif kind in _STEP_INFO_KINDS and has_script:
+                part_total = len(_info_operation_steps(resolved_script, resolved_sdir, label))
+            else:
+                part_total = 0
             if part_cursor is not None:
                 if part_total < 1:
                     part_cursor = None
@@ -6159,11 +6330,12 @@ def _show_info_fullscreen(
                     part_cursor = part_total
                     continue
                 if key == "copy":
-                    part_cursor, cb = _open_part_viewer(part_cursor)
+                    opener = _open_part_viewer if kind == "START SESSION" else _open_operation_viewer
+                    part_cursor, cb = opener(part_cursor)
                     if cb and cb.get("reject_msg"):
                         return {"action": "reject", "edited": any_edited, "reject_msg": cb["reject_msg"]}
                     continue
-            if key == "tab" and kind == "START SESSION" and part_total > 0:
+            if key == "tab" and part_total > 0:
                 part_cursor = 1
                 continue
             new_scroll = _apply_pager_scroll(key, scroll_top, viewport_rows)

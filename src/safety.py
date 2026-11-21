@@ -446,9 +446,11 @@ def _advance_quote_state(
     return state
 
 
-def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
-    """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks."""
-    out: list[tuple[int, str]] = []
+def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
+    """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks.
+
+    Each item is (start_line, text, end_line) with 1-based inclusive physical line numbers."""
+    out: list[tuple[int, str, int]] = []
     eof_token: str | None = None
     py_quote: str | None = None
     quote_state: str | None = None
@@ -458,12 +460,12 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
     for idx, raw in enumerate(script_text.splitlines(), start=1):
         s = raw.strip()
         if eof_token is not None:
-            out.append((idx, raw))
+            out.append((idx, raw, idx))
             if s == eof_token:
                 eof_token = None
             continue
         if py_quote is not None:
-            out.append((idx, raw))
+            out.append((idx, raw, idx))
             if s == py_quote or (s.endswith(py_quote) and not s.endswith("\\" + py_quote)):
                 py_quote = None
             continue
@@ -506,7 +508,7 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
                 m_pyc_early = PY_DASH_C_START_RE.match(s)
                 if m_pyc_early:
                     q_ch, rest = m_pyc_early.group(1), m_pyc_early.group(2)
-                    out.append((idx, raw))
+                    out.append((idx, raw, idx))
                     if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
                         py_quote = q_ch
                     continue
@@ -524,7 +526,7 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
             logical = raw
             logical_idx = idx
 
-        out.append((logical_idx, logical))
+        out.append((logical_idx, logical, idx))
         ls = logical.strip()
         if not ls or ls.startswith("#"):
             continue
@@ -543,7 +545,7 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str]]:
             eof_token = m_sh.group(1)
 
     if cont_buf:
-        out.append((cont_start, " ".join(cont_buf)))
+        out.append((cont_start, " ".join(cont_buf), len(script_text.splitlines())))
     return out
 
 
@@ -862,7 +864,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         else:
             operation_groups[-1][1].append((tag, short_desc))
 
-    def add_op(tag: str, desc: str, line: int = 0) -> None:
+    def add_op(tag: str, desc: str, line: int = 0, end_line: int = 0) -> None:
         operations.append((tag, desc))
         g_dir, short_desc = _infer_op_dir(desc) if tag in ("read", "write", "git", "exec") else (cur_group_dir, desc)
         _append_group_item(g_dir, tag, short_desc)
@@ -870,6 +872,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             {
                 "step": len(operation_steps) + 1,
                 "line": line,
+                "end_line": end_line or line,
                 "tag": tag,
                 "desc": desc,
                 "dir": g_dir,
@@ -909,7 +912,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         rem = len(items) - max_shown
         return f"{shown} (+{rem} more, {len(items)} total)"
 
-    def _emit_py_op(buf_lines: list[str], start_line: int) -> None:
+    def _emit_py_op(buf_lines: list[str], start_line: int, end_line: int = 0) -> None:
         pw: list[str] = []
         pr: list[str] = []
         pe: list[str] = []
@@ -938,7 +941,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             head_desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (
                 f" — calls: {', '.join(pe)}" if pe else ""
             )
-            add_op("python", head_desc, line=start_line)
+            add_op("python", head_desc, line=start_line, end_line=end_line)
             for g_dir, bucket in dir_buckets.items():
                 for kind in ("write", "read"):
                     k_items = bucket[kind]
@@ -958,16 +961,16 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
         if pe:
             parts.append("calls: " + ", ".join(pe))
         desc = f"{n_lines} line{'s' if n_lines != 1 else ''}" + (f" — {'; '.join(parts)}" if parts else "")
-        add_op("python", desc, line=start_line)
+        add_op("python", desc, line=start_line, end_line=end_line)
     sh_cmd: str = ""
     sh_lines: int = 0
     sh_start: int = 0
 
-    for idx, raw in _iter_logical_lines(script_text):
+    for idx, raw, end_idx in _iter_logical_lines(script_text):
         s = raw.strip()
         if py_eof is not None:
             if s == py_eof:
-                _emit_py_op(py_buf, py_start)
+                _emit_py_op(py_buf, py_start, idx)
                 py_eof = None
                 py_buf = []
             else:
@@ -977,7 +980,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             if s == py_quote or (s.endswith(py_quote) and not s.endswith("\\" + py_quote)):
                 if s != py_quote:
                     py_buf.append(raw.rstrip()[:-1])
-                _emit_py_op(py_buf, py_start)
+                _emit_py_op(py_buf, py_start, idx)
                 py_quote = None
                 py_buf = []
             else:
@@ -990,13 +993,13 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
                 if m_redir:
                     target_f = m_redir.group(1).strip("'\"")
                     _add_unique(writes, target_f)
-                    add_op("write", f"{sh_cmd} ({line_lbl})", line=sh_start)
+                    add_op("write", f"{sh_cmd} ({line_lbl})", line=sh_start, end_line=idx)
                 elif re.match(r"^git\s+", sh_cmd):
                     _add_unique(git_cmds, sh_cmd)
-                    add_op("git", f"{sh_cmd} ({line_lbl})", line=sh_start)
+                    add_op("git", f"{sh_cmd} ({line_lbl})", line=sh_start, end_line=idx)
                 else:
                     _add_unique(exec_cmds, sh_cmd)
-                    add_op("exec", f"{sh_cmd} ({line_lbl})", line=sh_start)
+                    add_op("exec", f"{sh_cmd} ({line_lbl})", line=sh_start, end_line=idx)
                 sh_eof = None
                 sh_cmd = ""
                 sh_lines = 0
@@ -1018,7 +1021,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             py_blocks += 1
             q_ch, rest = m_pyc.group(1), m_pyc.group(2)
             if rest.endswith(q_ch) and not rest.endswith("\\" + q_ch):
-                _emit_py_op([rest[:-1]], idx)
+                _emit_py_op([rest[:-1]], idx, end_idx)
             else:
                 py_quote = q_ch
                 py_buf = [rest] if rest.strip() else []
@@ -1075,17 +1078,17 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
             continue
         if re.match(r"^git\s+", s):
             _add_unique(git_cmds, s)
-            add_op("git", s, line=idx)
+            add_op("git", s, line=idx, end_line=end_idx)
             continue
         if re.match(r"^(?:rm|cp|mv|mkdir|chmod|touch)\s+", s):
             _add_unique(writes, s)
-            add_op("write", s, line=idx)
+            add_op("write", s, line=idx, end_line=end_idx)
             continue
         if re.match(r"^(?:cat|nl|grep|ls|head|tail|find|which|command\s+-v|wc|stat|file|sed\s+-n)\s+", s):
             _add_unique(reads, s)
-            add_op("read", s, line=idx)
+            add_op("read", s, line=idx, end_line=end_idx)
             continue
-        add_op("exec", s, line=idx)
+        add_op("exec", s, line=idx, end_line=end_idx)
         _add_unique(exec_cmds, s)
 
     rows: list[tuple[str, str]] = []
@@ -1378,7 +1381,7 @@ def scan_script_risks(script_text: str) -> list[dict[str, object]]:
     cur_cd_dir: str = ""
     cd_stack: list[str] = []
     sh_vars: dict[str, list[str]] = {}
-    for idx, raw_line in _iter_logical_lines(script_text):
+    for idx, raw_line, _end_idx in _iter_logical_lines(script_text):
         stripped = raw_line.strip()
         if py_eof_token is not None:
             if stripped == py_eof_token:

@@ -1,17 +1,3 @@
-# 🎯 [NEXT] F81: Add Tab operation/part cursor and Enter slice viewer in block i(nfo) inspector
-
-- Depends on: F69, F80
-- Record 1-based script line spans (`line` and `end_line`) on every step entry in `operation_steps` inside `summarize_script_actions()` (`src/safety.py`):
-  - Track the start and end physical line numbers in `_iter_logical_lines()` so multiline backslash/backtick continuations, Python/shell heredocs (`PY_HEREDOC_START_RE`, `SHELL_HEREDOC_START_RE`), and inline/multiline `python3 -c` blocks record their full inclusive `line`..`end_line` range in `block.sh` / `block.ps1`.
-- Enable `Tab` cursor navigation across numbered block operations (`1..N`) in the fullscreen `i(nfo)` inspector (`_find_selectable_part_rows`, `_build_info_screen`, `_show_info_fullscreen` in `src/ui.py`) for step cards (`START STEP`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`, `STEP ALREADY EXISTS`):
-  - Match numbered operation rows (`1. [tag] ...`, `2. [tag] ...`) in the active `Operations:` / `Operations (N timed):` section, moving the reverse-video selection top-to-bottom and bottom-to-top with `Up`/`Down` (`j`/`k`, `g`/`G`) while skipping unnumbered child tree rows (`├─`, `└─`) and directory subheaders.
-  - Display `Tab: parts` in the `i(nfo)` footer whenever the inspected step script has selectable operations (`1..N`), and exit cursor mode on `Tab`/`Esc`.
-- Open the selected block operation slice in the fullscreen part viewer on `Enter` and step across operations `1..N` with `n`/`N` (`_open_part_viewer`, `_build_part_screen` in `src/ui.py`):
-  - Render `PART <k>/<N> · <label>` with header metadata (`Source: [<tag>] <desc>`, optional directory/timing/failure status from `op_timings`, and `Range: lines <line>-<end_line> of <~script_path>`) followed by the extracted script lines `line..end_line` from `block.sh` / `block.ps1`.
-  - Support vertical scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G`), `n`/`N` next/prev operation navigation, `e(dit)` / `s(cript)` to edit the block script in place and refresh the analyzed operations on return, and `Esc`/`q`/`i`/`Tab` to return to `i(nfo)` at the active operation cursor.
-- Update `README.md`, rebuild `run_block` via `python3 build.py`, and add offline unit tests in `tests/test_safety.py` and `tests/test_ui.py`.
-- Target files: `src/safety.py`, `src/ui.py`, `README.md`, `tests/test_safety.py`, `tests/test_ui.py`.
-
 # 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
 
 - Depends on: F42

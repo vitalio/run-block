@@ -1965,6 +1965,62 @@ class TestUi(RunBlockTestCase):
         self.assertEqual(after_plan["protocol"], "boundary")
         self.assertEqual(after_plan["part_count"], 5)
 
+    def test_step_info_operation_cursor_and_slice_viewer(self):
+        items = [
+            "Operations (2 timed):",
+            "  1. [git]  10ms (50.0%)  git status -sb",
+            "      ├─ [read]  child row",
+            "  2. [exec]  5ms (25.0%)  ls",
+            "",
+            "Pre-execution Plan (block.sh):",
+            "  1. [git]  git status -sb",
+        ]
+        self.assertEqual(self.mod._find_selectable_operation_rows(items), [(1, 1), (2, 3)])
+        self.assertEqual(self.mod._find_selectable_operation_rows(["Safety warnings (1):", "  1. [x] y"]), [])
+
+        sdir = self.tmp / "s9"
+        step_dir = sdir / "1"
+        step_dir.mkdir(parents=True)
+        script = step_dir / "block.sh"
+        script.write_text("git status -sb\npython3 - <<'PY'\nprint(1)\nPY\nls -la\n", encoding="utf-8")
+        out = step_dir / "out"
+        out.write_text("ok\n", encoding="utf-8")
+        timings = [
+            {"step": 1, "tag": "git", "desc": "git status -sb", "duration_ms": 10},
+            {"step": 2, "tag": "python", "desc": "1 line", "duration_ms": 20},
+            {"step": 3, "tag": "read", "desc": "ls -la", "duration_ms": 5},
+        ]
+        common = dict(sdir=sdir, out_path=out, script_path=script, rc=0, op_timings=timings, allow_copy=True)
+
+        frame, _, _ = self.mod._build_info_screen("END STEP", "s9/1", 100, 30, 0, **common)
+        self.assertIn("Tab: parts", self.mod.ANSI_RE.sub("", frame))
+        frame_cur, _, _ = self.mod._build_info_screen("END STEP", "s9/1", 100, 30, 0, part_cursor=2, **common)
+        plain_cur = self.mod.ANSI_RE.sub("", frame_cur)
+        self.assertIn("Enter: open part", plain_cur)
+        self.assertIn("Tab/Esc: exit parts", plain_cur)
+
+        buf = io.StringIO()
+        # tab -> cursor on op 1, down -> op 2, Enter -> open PART 2/3, n -> PART 3/3, back -> cursor,
+        # esc -> exit cursor, back -> exit info
+        keys = iter(["tab", "down", "copy", "next_part", "back", "esc", "back"])
+        with unittest.mock.patch.object(
+            self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys)
+        ), unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 30)):
+            res = self.mod._show_info_fullscreen(
+                title_kind="END STEP",
+                label="s9/1",
+                tty_r=io.StringIO(),
+                tty_w=buf,
+                **common,
+            )
+        self.assertEqual(res["action"], "back")
+        shown = self.mod.ANSI_RE.sub("", buf.getvalue())
+        self.assertIn("PART 2/3 · s9/1", shown)
+        self.assertIn("Range: lines 2-4 of", shown)
+        self.assertIn("print(1)", shown)
+        self.assertIn("PART 3/3 · s9/1", shown)
+        self.assertIn("Range: lines 5-5 of", shown)
+
 
 if __name__ == "__main__":
     unittest.main()
