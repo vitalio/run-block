@@ -1,3 +1,26 @@
+# 🎯 [NEXT] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys
+
+- Depends on: F81, B8
+- Bump: `MINOR`
+- Replace generic `INFO · <label> · <~path>` fullscreen title bar in `_build_info_screen()` (`src/ui.py:3190-3324`) with the card title (`<CARD TITLE> · <label> · <~path>`, e.g. `END STEP · s229/2 · ~/.local/state/run_block/s229/2/out`, `START SESSION · s229/0 · ~/.local/state/run_block/s229/0`, `START STEP · s229/2 · ~/.local/state/run_block/s229/2/block.sh`, with `(edited)` suffix when modified).
+- Unify fullscreen header keys and bright styling across `START SESSION`, `START STEP`, `END STEP`, and other cards (`_format_info_header_lines()`, `_collect_info_report()`, `_colorize_kv_line()` in `src/ui.py:1443-1465`, `src/ui.py:2813-3180`):
+  - Keep `Session`/`Next-Block` or `Step`, `Workdir`, `Sandbox` (including `Sandbox: off` in fullscreen), `Date`, exposed session headers (`Task`, `Title`, `Role`, etc.), and `Bundle-Command`, while omitting internal transport/meta headers (`Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`, `Bundle-Protocol`, `Chat-Lang`) from the fullscreen header block (they remain inspectable via `m(eta)`).
+  - Show artifact file paths uniformly in both `START SESSION` (`Bundle: <path>`, optional `Bundle-Orig:`, `Meta: <sdir>/meta.json`) and step cards (`Exit:`/`Error:`/`Fix:` when `rc != 0`, `Script: <path>`, optional `Script-Orig:`, `Output: <path>`, optional `Output-Orig:`, `Meta: <step_dir>/meta.json`).
+  - Remove `Stats:` and `Script-Stats:` from the fullscreen header block (statistics live in the breakdown table and its top/bottom `[total]` rows).
+  - Render all fullscreen header lines in uniform readable brightness without dimming (`\x1b[2m`) `Workdir:`, `Sandbox:`, `Output:`, `Fix:`, or header keys.
+- Track per-operation output line ranges and token/size metrics in `_ProgressLineFilter` and `run_script()` (`src/runner.py:389-602`, `src/runner.py:850-1035`):
+  - Record 1-based `out_line_start` and `out_line_end` into the cleaned `<session>/<step>/out` file (plus `lines`, `chars`, `bytes`, `gpt`, `claude`, `share_pct`) for each executed operation in `<session>/<step>/meta.json` (`operations` list), alongside `step`, `tag`, `desc`, `duration_ms`, and script `line`..`end_line`.
+- Render a unified tabular breakdown with top/bottom `[total]` rows in fullscreen `END STEP` and `START STEP` (`_collect_info_report()`, `_format_info_operation_timings()`, `_format_info_plan_section()` in `src/ui.py:2868-3180` and table helpers in `src/bundle_plan.py:1187-1438`):
+  - In `END STEP`, replace the old `Operations (N timed):` list and duplicate `Pre-execution Plan (block.sh):` section with a unified output breakdown table (`#  %  CHARS  LINES  ~TOK  TIME  KIND  SOURCE`) showing each operation's share of `<step>/out`, character/line/token counts, execution duration, `[tag]`, and command description (with `(failed)` marker on the failing operation and heavy-row highlighting), bracketed by top and bottom `100.0%` `[total]` rows (including total step output stats, total duration, operation count, and `(edited)` suffix when modified).
+  - In `START STEP`, render the pre-execution operation breakdown table (`#  %  CHARS  LINES  ~TOK  KIND  SOURCE`) with top and bottom `[total]` rows and optional `Safety warnings`.
+- Open the selected operation's captured step output from `<step>/out` on `Tab` -> `Enter` in `END STEP` (`_open_operation_viewer()`, `_build_operation_screen()` in `src/ui.py:2623-2712`, `src/ui.py:3558-3616`):
+  - In `END STEP` (when `<step>/out` and recorded output line ranges exist), pressing `Enter` on a selected operation opens `PART <k>/<N> · <label> · <~out_path>` showing header metadata (`Command: [<tag>] <desc>`, `Timing: <duration>`, `Script-Range: lines <line>-<end_line> of <~script_path>`, and `Range: lines <out_line_start>-<out_line_end> of <~out_path>` or `(no output)`) followed by the extracted output lines from `<step>/out` (falling back to script lines in `START STEP` or when no output file exists).
+  - Support `n`/`N` next/prev operation navigation, `e(dit)`/`o(utput)` to edit `<step>/out` (preserving `out.orig` and refreshing table metrics), `s(cript)` to edit `block.sh` (preserving `block.orig.sh`), `m(eta)` to open `meta.json`, and `Esc` (`q`/`i`/`Tab`) to return to the table at the active cursor row.
+- Add `m(eta)` hotkey and clean up fullscreen footer hints (`_parse_pager_line()`, `_read_pager_key()`, `_compose_pager_frame()`, `_build_info_screen()`, `_show_info_fullscreen()` in `src/ui.py:2400-2585`, `src/ui.py:3286-3324`, `src/ui.py:3663-3746`):
+  - Support `m(eta)` (`m`/`M` in raw TTY mode and `m`/`meta` in line mode) across all fullscreen views to open `<session>/meta.json` (in `START SESSION`) or `<session>/<step>/meta.json` (in step cards), while keeping `e(dit)` and `o(utput)` as synonyms for editing `<step>/out` in `END STEP` and `s(cript)` for `block.sh`.
+  - Omit `Lines 1-N/N` and `Up/Down j/k PgUp/PgDn: scroll` from the footer bar when all body rows fit within a single viewport (`total_items <= viewport_rows`), show scroll position only when `total_items > viewport_rows`, show `Part <k>/<N>` in `Tab` cursor mode, and shorten the footer back hint to `Esc: back` (while keeping `Esc`, `q`, and `i` active as back keys).
+- Target files: `src/runner.py:389-602`, `src/runner.py:850-1035`, `src/bundle_plan.py:1187-1438`, `src/ui.py:1443-1572`, `src/ui.py:2400-3770`, `README.md`, `tests/test_ui.py:1800-2027`, `tests/test_runner.py:1350-1508`.
+
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3
@@ -10,7 +33,7 @@
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
-- Depends on: F57, B8, F81
+- Depends on: F57, B8, F81, F86
 - Harden `_reassemble_split_payload()`, `cmd_normal()`, and `cmd_fix()` in `src/runner.py` against broken or duplicated blocks:
   - Stop at the first matching closing heredoc terminator (`RUN_BLOCK` or `RUN_FIX`) rather than scanning backward from the end so two blocks pasted together are never merged with intermediate prose into a corrupt script.
   - Automatically deduplicate identical repeated blocks, strip accidental nested `run_block <s/n> <<'RUN_BLOCK' ... RUN_BLOCK` wrappers or trailing/indented fence debris, recover missing closing terminators before a final closing fence, and detect when a `--fix` payload contains a fresh shell script instead of a Python `text` patch (offering to run it as the next sequential step `<session>/<next_step>`).
