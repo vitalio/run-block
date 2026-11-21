@@ -151,19 +151,43 @@ def _orig_file_backup_path(target_path: Path) -> Path:
     return target_path.with_name(f"{target_path.name}.orig")
 
 
-def _iter_session_scripts(sdir: Path) -> list[Path]:
-    by_step: dict[str, Path] = {}
+_STEP_DIR_RE = re.compile(r"\d+(?:_\d+)?")
+_STEP_ARTIFACTS = ("block.sh", "block.ps1", "fix.py", "out", "error", "aborted", "meta.json")
+STEP_OUTCOMES = ("ok", "failed", "syntax-error", "not-run", "aborted", "saved")
+
+
+def _iter_session_steps(sdir: Path) -> list[Path]:
     if not sdir.is_dir():
         return []
-    for d in sdir.iterdir():
-        if not d.is_dir() or not re.fullmatch(r"\d+(?:_\d+)?", d.name):
-            continue
+    steps = [
+        d
+        for d in sdir.iterdir()
+        if d.is_dir()
+        and _STEP_DIR_RE.fullmatch(d.name)
+        and any((d / name).exists() for name in _STEP_ARTIFACTS)
+    ]
+    return sorted(steps, key=lambda d: _step_sort_key(d.name))
+
+
+def _iter_session_scripts(sdir: Path) -> list[Path]:
+    scripts: list[Path] = []
+    for d in _iter_session_steps(sdir):
         for ext in (".sh", ".ps1"):
             p = d / f"block{ext}"
             if p.is_file():
-                by_step.setdefault(d.name, p)
+                scripts.append(p)
                 break
-    return [by_step[k] for k in sorted(by_step.keys(), key=_step_sort_key)]
+    return scripts
+
+
+def get_session_state(sdir: Path) -> str:
+    if is_session_completed(sdir):
+        return "done"
+    if _iter_session_steps(sdir):
+        return "active"
+    if (sdir / "0").is_file():
+        return "bundle-only"
+    return "empty"
 
 
 def default_base_dir(prog: str | None = None) -> Path:
@@ -441,12 +465,24 @@ def write_step_meta(
     operations: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
     renumbered_from: str | None = None,
+    outcome: str | None = None,
+    reason: str | None = None,
+    fix_target: str | None = None,
 ) -> Path:
+    if outcome is None:
+        outcome = "ok" if exit_code == 0 else "failed"
+    if outcome not in STEP_OUTCOMES:
+        raise ValueError(f"unknown step outcome: {outcome!r}")
     meta_file = step_dir / "meta.json"
     data: dict[str, object] = {
+        "outcome": outcome,
         "duration_ms": max(0, int(duration_ms)),
         "exit_code": int(exit_code),
     }
+    if reason:
+        data["reason"] = str(reason)
+    if fix_target:
+        data["fix_target"] = str(fix_target)
     if operations:
         data["operations"] = list(operations)
     if failed_step is not None and exit_code != 0:

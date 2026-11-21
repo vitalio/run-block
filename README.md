@@ -230,7 +230,7 @@ run_block --bundle-plan s1 --part 2
 | `run_block --bundle-plan [<session>] [--json] [--full] [--part N]` | Summarize bundle parts and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
 | `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
 | `run_block --retry [-y] [session/step]` | Re-run the last (or specified) block |
-| `run_block --list`, `-l [session]` | List sessions and blocks with their status and summary (`[DONE]` marks completed sessions) |
+| `run_block --list`, `-l [session]` | List sessions and blocks with the last step outcome (`ok (<duration>)`, `exit <rc> (<duration>)`, `syntax-error (exit <rc>)`, `not-run`, `aborted`, `saved`) and `next: <session>/<step>` for open sessions (`[DONE]` marks completed sessions without `next:`) |
 | `run_block --done [-y] [session] [-m NOTE]` | Mark a session (default: latest) as completed and print the `END SESSION` summary with accumulated statistics |
 | `run_block --show [session/step]` | Show saved script and output of a block (or `<session>/0` bundle) |
 | `run_block --show [<session>[/0]] --part N` | Print only part `N` (1-based part `index` from `--bundle-plan --json`) of `<session>/0` (latest session when omitted); exits non-zero for non-zero steps or out-of-range parts |

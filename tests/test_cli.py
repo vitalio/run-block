@@ -62,6 +62,7 @@ class TestCli(RunBlockTestCase):
         self._assert_ok(r)
         self.assertIn("--done [session] [-m NOTE]", r.stdout)
         self.assertIn("[DONE]", r.stdout)
+        self.assertIn("next free step", r.stdout)
 
         self.mod.start_session("s1")
         bad_cases = (
@@ -77,6 +78,9 @@ class TestCli(RunBlockTestCase):
                 self.assertEqual(rb.returncode, 1, msg=rb.stdout + rb.stderr)
                 self.assertIn(needle, rb.stderr)
 
+        r_open = self._run([str(SCRIPT), "--list"])
+        self._assert_ok(r_open)
+        self.assertRegex(r_open.stdout, r"s1 .*last: s1/0 \(bundle\)\s+next: s1/1")
         r_done = self._run([str(SCRIPT), "--done", "-y", "s1", "-m", "wrap"])
         self._assert_ok(r_done)
         self.assertIn("[s1] END SESSION", r_done.stdout)

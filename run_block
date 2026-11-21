@@ -8,7 +8,7 @@
   {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full, --part N)
   {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
   {prog} --retry [-y] [session/step] Re-run the last (or specified) block
-  {prog} --list | -l [session]       List sessions or blocks in a session ([DONE] marks completed sessions)
+  {prog} --list | -l [session]       List sessions/blocks: last step, next free step ([DONE] = completed)
   {prog} --done [session] [-m NOTE]  Mark session completed and print END SESSION summary (later blocks ask to reopen)
   {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
   {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
@@ -65,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.28.6"
+VERSION = "0.28.7"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -225,19 +225,43 @@ def _orig_file_backup_path(target_path: Path) -> Path:
     return target_path.with_name(f"{target_path.name}.orig")
 
 
-def _iter_session_scripts(sdir: Path) -> list[Path]:
-    by_step: dict[str, Path] = {}
+_STEP_DIR_RE = re.compile(r"\d+(?:_\d+)?")
+_STEP_ARTIFACTS = ("block.sh", "block.ps1", "fix.py", "out", "error", "aborted", "meta.json")
+STEP_OUTCOMES = ("ok", "failed", "syntax-error", "not-run", "aborted", "saved")
+
+
+def _iter_session_steps(sdir: Path) -> list[Path]:
     if not sdir.is_dir():
         return []
-    for d in sdir.iterdir():
-        if not d.is_dir() or not re.fullmatch(r"\d+(?:_\d+)?", d.name):
-            continue
+    steps = [
+        d
+        for d in sdir.iterdir()
+        if d.is_dir()
+        and _STEP_DIR_RE.fullmatch(d.name)
+        and any((d / name).exists() for name in _STEP_ARTIFACTS)
+    ]
+    return sorted(steps, key=lambda d: _step_sort_key(d.name))
+
+
+def _iter_session_scripts(sdir: Path) -> list[Path]:
+    scripts: list[Path] = []
+    for d in _iter_session_steps(sdir):
         for ext in (".sh", ".ps1"):
             p = d / f"block{ext}"
             if p.is_file():
-                by_step.setdefault(d.name, p)
+                scripts.append(p)
                 break
-    return [by_step[k] for k in sorted(by_step.keys(), key=_step_sort_key)]
+    return scripts
+
+
+def get_session_state(sdir: Path) -> str:
+    if is_session_completed(sdir):
+        return "done"
+    if _iter_session_steps(sdir):
+        return "active"
+    if (sdir / "0").is_file():
+        return "bundle-only"
+    return "empty"
 
 
 def default_base_dir(prog: str | None = None) -> Path:
@@ -515,12 +539,24 @@ def write_step_meta(
     operations: list[dict[str, object]] | None = None,
     failed_step: int | None = None,
     renumbered_from: str | None = None,
+    outcome: str | None = None,
+    reason: str | None = None,
+    fix_target: str | None = None,
 ) -> Path:
+    if outcome is None:
+        outcome = "ok" if exit_code == 0 else "failed"
+    if outcome not in STEP_OUTCOMES:
+        raise ValueError(f"unknown step outcome: {outcome!r}")
     meta_file = step_dir / "meta.json"
     data: dict[str, object] = {
+        "outcome": outcome,
         "duration_ms": max(0, int(duration_ms)),
         "exit_code": int(exit_code),
     }
+    if reason:
+        data["reason"] = str(reason)
+    if fix_target:
+        data["fix_target"] = str(fix_target)
     if operations:
         data["operations"] = list(operations)
     if failed_step is not None and exit_code != 0:
@@ -8526,10 +8562,10 @@ def _consecutive_failed_fixes(sdir: Path, base_step: str) -> int:
     failures = 0
     for idx in sorted(indices):
         stem = f"{base_step}_{idx}"
-        st = _step_status(sdir, stem)
-        if st == "ABORTED":
+        outcome = _step_outcome(sdir, stem)["outcome"]
+        if outcome == "aborted":
             continue
-        if st == "END":
+        if outcome == "ok":
             failures = 0
         else:
             failures += 1
@@ -8628,6 +8664,7 @@ def not_run_exit(
     rc: int = 2,
     headless: bool = False,
     fix_target: str | None = None,
+    outcome: str | None = "not-run",
 ) -> int:
     step_dir = _step_dir(sdir, step_name)
     step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -8639,6 +8676,15 @@ def not_run_exit(
     err_target = step_dir / "error" if out_path.exists() else out_path
     try:
         write_private(err_target, line, overwrite=True)
+        if outcome and err_target == out_path:
+            write_step_meta(
+                step_dir,
+                duration_ms=0,
+                exit_code=rc,
+                outcome=outcome,
+                reason=detail_lines[0],
+                fix_target=fix_target,
+            )
     except Exception:
         pass
     is_headless = headless or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
@@ -9045,6 +9091,14 @@ def _validate_step_script_syntax(
         end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
     full_output = start_line + msg + end_line
     write_private(out_path, full_output, overwrite=True)
+    write_step_meta(
+        script_path.parent,
+        duration_ms=0,
+        exit_code=chk.returncode,
+        outcome="syntax-error",
+        reason=(msg.strip().splitlines() or [""])[0] or None,
+        renumbered_from=renumbered_from,
+    )
     if headless:
         sys.stdout.write(full_output)
         sys.stdout.flush()
@@ -9124,11 +9178,21 @@ def run_script(
     )
     if not approved:
         write_private(aborted_marker, "aborted\n", overwrite=True)
-        if abort_reason == "USER_ABORTED":
-            return 130
+        user_aborted = abort_reason == "USER_ABORTED"
         reason_str = abort_reason or f"aborted by user (re-run with: {prog_name()} --retry {label})"
+        write_step_meta(
+            step_dir,
+            duration_ms=0,
+            exit_code=130,
+            outcome="aborted",
+            reason=None if user_aborted else reason_str,
+            renumbered_from=renumbered_from,
+        )
+        if user_aborted:
+            return 130
         return not_run_exit(
-            label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless
+            label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless,
+            outcome=None,
         )
     aborted_marker.unlink(missing_ok=True)
 
@@ -9961,20 +10025,78 @@ def _step_sort_key(stem: str) -> tuple[int, int]:
     return (int(stem) if stem.isdigit() else 0, 0)
 
 
-def _step_status(sdir: Path, stem: str) -> str:
+def _meta_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _legacy_end_info(kind: str, rest: str, info: dict[str, object]) -> None:
+    rc_m = re.search(r"exit (\d+)", rest)
+    if rc_m:
+        info["exit_code"] = int(rc_m.group(1))
+    if kind == "NOT RUN":
+        info["outcome"] = "not-run"
+        info["reason"] = rest.lstrip(": ").strip() or None
+        return
+    if "syntax error" in rest:
+        info["outcome"] = "syntax-error"
+        return
+    info["outcome"] = "failed" if (kind == "FAILED" or rc_m) else "ok"
+    dur_m = re.search(r"\((?:exit \d+, )?([^)]+)\)", rest)
+    if dur_m and not dur_m.group(1).startswith("exit"):
+        info["duration"] = dur_m.group(1)
+
+
+def _apply_legacy_step_artifacts(
+    sdir: Path, stem: str, meta: dict[str, object], info: dict[str, object]
+) -> None:
     step_d = _step_dir(sdir, stem)
     if (step_d / "aborted").exists():
-        return "ABORTED"
+        info["outcome"] = "aborted"
+        return
+    if "exit_code" in meta:
+        info["outcome"] = "ok" if info["exit_code"] == 0 else "failed"
+        return
+    label = f"{sdir.name}/{stem}"
+    pat = re.compile(rf"^\[{re.escape(label)}\]\s+(END|SUCCESS|FAILED|NOT RUN)([^\n]*)", re.MULTILINE)
     for candidate in (step_d / "out", step_d / "error"):
         if candidate.is_file():
-            txt = candidate.read_text(encoding="utf-8", errors="replace")
-            label = f"{sdir.name}/{stem}"
-            matches = re.findall(rf"^\[{re.escape(label)}\]\s+(END|SUCCESS|FAILED|NOT RUN)([^\n]*)", txt, flags=re.MULTILINE)
+            matches = pat.findall(candidate.read_text(encoding="utf-8", errors="replace"))
             if matches:
                 kind, rest = matches[-1]
-                return (kind + rest.split("—")[0]).strip()
-            return "DONE"
-    return "SAVED"
+                _legacy_end_info(kind, rest.split("—")[0], info)
+            return
+
+
+def _step_outcome(sdir: Path, stem: str) -> dict[str, object]:
+    meta = read_step_meta(_step_dir(sdir, stem))
+    recorded = meta.get("outcome")
+    info: dict[str, object] = {
+        "outcome": recorded if recorded in STEP_OUTCOMES else "saved",
+        "exit_code": _meta_int(meta.get("exit_code")),
+        "duration_ms": _meta_int(meta.get("duration_ms")),
+        "duration": None,
+        "reason": meta.get("reason") or None,
+        "fix_target": meta.get("fix_target") or None,
+    }
+    if recorded not in STEP_OUTCOMES:
+        _apply_legacy_step_artifacts(sdir, stem, meta, info)
+    duration_ms = info["duration_ms"]
+    if info["duration"] is None and isinstance(duration_ms, int):
+        info["duration"] = format_duration(duration_ms / 1000.0)
+    return info
+
+
+def _step_status(sdir: Path, stem: str) -> str:
+    info = _step_outcome(sdir, stem)
+    outcome, rc, dur = info["outcome"], info["exit_code"], info["duration"]
+    dur_s = f" ({dur})" if dur else ""
+    if outcome == "ok":
+        return f"ok{dur_s}"
+    if outcome == "failed":
+        return f"exit {rc}{dur_s}" if rc is not None else f"failed{dur_s}"
+    if outcome == "syntax-error":
+        return f"syntax-error (exit {rc})" if rc is not None else "syntax-error"
+    return str(outcome)
 
 
 def _find_latest_step(session: str | None = None) -> tuple[str, str]:
@@ -9994,6 +10116,46 @@ def _find_latest_step(session: str | None = None) -> tuple[str, str]:
     raise SystemExit(f"{prog_name()}: no saved blocks found in {base}")
 
 
+def _session_open_hint(sdir: Path) -> str:
+    if get_session_state(sdir) in ("active", "bundle-only"):
+        return f"next: {sdir.name}/{next_free_step(sdir, min_step=1)}"
+    return ""
+
+
+def _session_tail(sdir: Path) -> str:
+    hint = _session_open_hint(sdir)
+    return f"  {hint}" if hint else _done_badge(sdir)
+
+
+def _clip_list_desc(desc: str, limit: int = 56) -> str:
+    return desc if len(desc) <= limit else desc[: limit - 3] + "..."
+
+
+def _bundle_row_desc(sdir: Path) -> str:
+    headers = {k.lower(): v for k, v in _parse_meta_header_items(sdir)}
+    ctx = [f"{label}: {headers[key]}" for key, label in (("task", "Task"), ("role", "Role")) if headers.get(key)]
+    joined = "; ".join(ctx)
+    return "Session context bundle (0)" + (f"; {joined}" if joined else "")
+
+
+def _step_row_desc(sdir: Path, stem: str) -> str:
+    step_d = _step_dir(sdir, stem)
+    for name in ("block.sh", "block.ps1"):
+        script = step_d / name
+        if script.is_file():
+            sh_text = script.read_text(encoding="utf-8", errors="replace")
+            summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
+            rows = summary.get("rows") or []
+            return _clip_list_desc("; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else "")
+    info = _step_outcome(sdir, stem)
+    parts = []
+    if info["reason"]:
+        parts.append(f"Reason: {info['reason']}")
+    if info["fix_target"]:
+        parts.append(f"--fix {info['fix_target']}")
+    return _clip_list_desc("; ".join(parts))
+
+
 def cmd_list(session: str | None = None) -> int:
     base = ensure_base()
     _warn_if_state_oversized(base)
@@ -10005,17 +10167,18 @@ def cmd_list(session: str | None = None) -> int:
         sys.stdout.write(f"Sessions in {base}:\n")
         total_bytes = 0
         for sdir in sdirs:
-            scripts = [p.parent.name for p in _iter_session_scripts(sdir)]
-            has_bundle = (sdir / "0").is_file()
+            steps = [d.name for d in _iter_session_steps(sdir)]
             sz = _dir_size_bytes(sdir)
             total_bytes += sz
-            if scripts:
-                last = f"{sdir.name}/{scripts[-1]} ({_step_status(sdir, scripts[-1])})"
-            elif has_bundle:
-                last = f"{sdir.name}/0 (BUNDLE)"
+            if steps:
+                last = f"{sdir.name}/{steps[-1]} ({_step_status(sdir, steps[-1])})"
+            elif (sdir / "0").is_file():
+                last = f"{sdir.name}/0 (bundle)"
             else:
                 last = "empty"
-            sys.stdout.write(f"  {sdir.name:<8}  {len(scripts):>3} block(s)  {_human_size(sz):>9}   last: {last}{_done_badge(sdir)}\n")
+            sys.stdout.write(
+                f"  {sdir.name:<8}  {len(steps):>3} block(s)  {_human_size(sz):>9}   last: {last}{_session_tail(sdir)}\n"
+            )
         sys.stdout.write(f"Total storage: {_human_size(total_bytes)} ({len(sdirs)} session(s))\n")
         session = sdirs[-1].name
         sys.stdout.write(f"\nRecent blocks in {session}:\n")
@@ -10023,23 +10186,18 @@ def cmd_list(session: str | None = None) -> int:
         sdir = base / session
         if not sdir.is_dir():
             raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
-        sys.stdout.write(f"Blocks in {session} ({_human_size(_dir_size_bytes(sdir))}){_done_badge(sdir)}:\n")
+        size = _human_size(_dir_size_bytes(sdir))
+        hint = _session_open_hint(sdir)
+        detail = f"{size}, {hint}" if hint else size
+        sys.stdout.write(f"Blocks in {session} ({detail}){_done_badge(sdir)}:\n")
     sdir = base / session
     if (sdir / "0").is_file():
         ref0 = f"{session}/0"
-        sys.stdout.write(f"  {ref0:<10}  {'BUNDLE':<24}  Session context bundle (0)\n")
-    script_paths = _iter_session_scripts(sdir)
-    for sp in script_paths[-15:]:
-        stem = sp.parent.name
-        st = _step_status(sdir, stem)
-        sh_text = sp.read_text(encoding="utf-8", errors="replace")
-        summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
-        rows = summary.get("rows") or []
-        desc = "; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else ""
-        if len(desc) > 56:
-            desc = desc[:53] + "..."
+        sys.stdout.write(f"  {ref0:<10}  {'bundle':<24}  {_bundle_row_desc(sdir)}\n")
+    for step_d in _iter_session_steps(sdir)[-15:]:
+        stem = step_d.name
         ref = f"{session}/{stem}"
-        sys.stdout.write(f"  {ref:<10}  {st:<24}  {desc}\n")
+        sys.stdout.write(f"  {ref:<10}  {_step_status(sdir, stem):<24}  {_step_row_desc(sdir, stem)}\n")
     return 0
 
 

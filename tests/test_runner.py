@@ -302,7 +302,7 @@ class TestRunner(RunBlockTestCase):
         r_list = self._run([str(SCRIPT), "--list"], capture_output=True, text=True, check=False)
         self.assertEqual(r_list.returncode, 0)
         self.assertIn("s1/1", r_list.stdout)
-        self.assertRegex(r_list.stdout, r"END \([^)\n]+\)")
+        self.assertRegex(r_list.stdout, r"ok \([^)\n]+\)")
 
         r_show = self._run([str(SCRIPT), "--show", "s1/1"], capture_output=True, text=True, check=False)
         self.assertEqual(r_show.returncode, 0)
@@ -311,6 +311,78 @@ class TestRunner(RunBlockTestCase):
         r_retry = self._run([str(SCRIPT), "--retry", "s1/1"], capture_output=True, text=True, check=False)
         self.assertEqual(r_retry.returncode, 0)
         self.assertIn("first_step", r_retry.stdout)
+
+    def test_session_lifecycle_state_and_step_outcome_meta(self):
+        sdir = self.tmp / "s7"
+        self.assertEqual(self.mod.get_session_state(sdir), "empty")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.mod.start_session("s7")
+        self.assertEqual(self.mod.get_session_state(sdir), "bundle-only")
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s7/1", "echo one\n"), 0)
+            self.assertNotEqual(self.mod.cmd_normal("s7/2", "exit 3\n"), 0)
+            rc_syn = self.mod.cmd_normal("s7/3", "if then\n")
+        self.assertNotEqual(rc_syn, 0)
+        self.assertEqual(self.mod.get_session_state(sdir), "active")
+        expected = (("1", "ok", 0), ("2", "failed", 3), ("3", "syntax-error", rc_syn))
+        for stem, outcome, rc in expected:
+            with self.subTest(step=stem):
+                meta = self.mod.read_step_meta(sdir / stem)
+                self.assertEqual(meta.get("outcome"), outcome)
+                self.assertEqual(meta.get("exit_code"), rc)
+        self.assertRegex(self.mod._step_status(sdir, "1"), r"^ok \(\S+\)$")
+        self.assertRegex(self.mod._step_status(sdir, "2"), r"^exit 3 \(\S+\)$")
+        self.assertEqual(self.mod._step_status(sdir, "3"), f"syntax-error (exit {rc_syn})")
+        self.mod.set_session_completed(sdir)
+        self.assertEqual(self.mod.get_session_state(sdir), "done")
+
+    def test_step_outcome_legacy_artifact_fallback(self):
+        sdir = self.tmp / "s8"
+        legacy = {
+            "1": ("out", "[s8/1] START\n\n[s8/1] END (1.5s)\n", "ok", "ok (1.5s)"),
+            "2": ("out", "[s8/2] END (exit 2, 1.0s)\n", "failed", "exit 2 (1.0s)"),
+            "3": ("out", "[s8/3] END (syntax error, exit 2)\n", "syntax-error", "syntax-error (exit 2)"),
+            "4": ("error", "[s8/4] NOT RUN: empty script on stdin\n", "not-run", "not-run"),
+            "5": ("aborted", "aborted\n", "aborted", "aborted"),
+            "6": ("block.sh", "echo 6\n", "saved", "saved"),
+        }
+        for stem, (fname, text, _outcome, _status) in legacy.items():
+            (sdir / stem).mkdir(parents=True)
+            (sdir / stem / fname).write_text(text, encoding="utf-8")
+        for stem, (_fname, _text, outcome, status) in legacy.items():
+            with self.subTest(step=stem):
+                self.assertEqual(self.mod._step_outcome(sdir, stem)["outcome"], outcome)
+                self.assertEqual(self.mod._step_status(sdir, stem), status)
+        self.assertEqual([d.name for d in self.mod._iter_session_steps(sdir)], list(legacy))
+        self.assertEqual(self.mod._step_outcome(sdir, "4")["reason"], "empty script on stdin")
+
+    def test_consecutive_failed_fixes_resets_on_ok_outcome(self):
+        sdir = self.tmp / "s9"
+        for stem, outcome, rc in (("1_1", "failed", 1), ("1_2", "ok", 0), ("1_3", "failed", 1)):
+            step_d = sdir / stem
+            step_d.mkdir(parents=True)
+            self.mod.write_step_meta(step_d, duration_ms=5, exit_code=rc, outcome=outcome)
+        self.assertEqual(self.mod._consecutive_failed_fixes(sdir, "1"), 1)
+
+    def test_list_open_session_next_hint_and_not_run_rows(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n"), 0)
+        r_list = self._run([str(SCRIPT), "--list"])
+        self._assert_ok(r_list)
+        self.assertRegex(r_list.stdout, r"s1 .*last: s1/1 \(ok \([^)\n]+\)\)\s+next: s1/2")
+        self.assertNotIn("[DONE]", r_list.stdout)
+        r_blocks = self._run([str(SCRIPT), "--list", "s1"])
+        self._assert_ok(r_blocks)
+        self.assertIn("next: s1/2", r_blocks.stdout)
+        step_fix = self.tmp / "s1" / "1_1"
+        step_fix.mkdir()
+        self.mod.write_step_meta(
+            step_fix, duration_ms=0, exit_code=2, outcome="not-run",
+            reason="STOP --fix: guard", fix_target="s1/1",
+        )
+        r_fix = self._run([str(SCRIPT), "--list", "s1"])
+        self._assert_ok(r_fix)
+        self.assertRegex(r_fix.stdout, r"s1/1_1\s+not-run\s+Reason: STOP --fix: guard; --fix s1/1")
 
     def test_f61_step_collision_interactive_renumbering(self):
         # 1. next_free_step and first_missing_step scan existing step & fix directories cleanly
@@ -1057,7 +1129,7 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("[s49/1] END (2.4s)\n", out1_txt)
         self.assertIn("· 2.4s", buf1.getvalue())
         self.assertIn("Stats:  ", buf1.getvalue())
-        self.assertEqual(self.mod._step_status(sdir, "1"), "END (2.4s)")
+        self.assertEqual(self.mod._step_status(sdir, "1"), "ok (2.4s)")
         meta1 = self.mod.read_step_meta(step1_dir)
         self.assertEqual(meta1.get("duration_ms"), 2400)
         self.assertEqual(meta1.get("exit_code"), 0)
@@ -1130,8 +1202,8 @@ class TestRunner(RunBlockTestCase):
         with contextlib.redirect_stdout(list_buf):
             self.assertEqual(self.mod.cmd_list("s49"), 0)
         list_out = list_buf.getvalue()
-        self.assertIn("END (2.4s)", list_out)
-        self.assertIn(f"END (exit {rc2},", list_out)
+        self.assertIn("ok (2.4s)", list_out)
+        self.assertIn(f"exit {rc2} (", list_out)
 
         # 5. PLAN visually nests AST-expanded sub-items in both flat, multi-dir, ASCII, and color modes
         mixed_script = (

@@ -15,18 +15,15 @@
 - Document `<session>/<step>/out`, `err`, `error`, `aborted`, and `meta.json` ordering and artifact guarantees in `README.md` and `AGENTS.md`.
 - Target files: `src/runner.py`, `README.md`, `AGENTS.md`, `tests/test_runner.py`.
 
-# 🎯 [NEXT] F83: Implement session lifecycle states, step outcome labels, and run_block -l display
+# 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
-- Depends on: D1
-- Bump: `PATCH`
-- In `src/config.py` and `src/runner.py`, extend `write_step_meta()` and step termination paths (`run_script`, `_validate_step_script_syntax`, `not_run_exit`, interactive abort in `run_script`) to persist `"outcome"` (`"ok"`, `"failed"`, `"syntax-error"`, `"not-run"`, `"aborted"`, `"saved"`), `"exit_code"`, `"duration_ms"`, and optional `"reason"` / `"fix_target"` in `<session>/<step>/meta.json`.
-- Add `_iter_session_steps(sdir)` in `src/config.py` to enumerate all step directories (`\d+(?:_\d+)?`) sorted by `_step_sort_key` that contain `block.sh`/`block.ps1`, `fix.py`, `out`, `error`, `aborted`, or `meta.json` (keeping `_iter_session_scripts(sdir)` for runnable script paths).
-- Add `_step_outcome(sdir, stem)` and update `_step_status(sdir, stem)` in `src/runner.py` to derive step status from `<step>/meta.json` with fallback to `aborted`/`out`/`error`/`block.*` artifacts for legacy directories, returning `ok (<duration>)` (or `ok`), `exit <rc> (<duration>)` (or `exit <rc>`), `syntax-error (exit <rc>)` (or `syntax-error`), `not-run`, `aborted`, and `saved` without overloading `END`.
-- Fix `_consecutive_failed_fixes(sdir, base_step)` in `src/runner.py` to check `_step_outcome(sdir, stem)["outcome"] == "ok"` (instead of `st == "END"`) so a succeeding `--fix` step with duration resets consecutive failure counts properly.
-- Add `get_session_state(sdir)` in `src/config.py` returning `"done"`, `"active"`, `"bundle-only"`, or `"empty"`, and update `cmd_list()` in `src/runner.py`:
-  - Session summary rows show `last: <session>/<last_step> (<step_status>)` (or `last: <session>/0 (bundle)`) followed by `next: <session>/<next_free_step>` for open sessions (`active` / `bundle-only`) and `[DONE]` (without `next:`) for completed sessions.
-  - Per-session block listings (`run_block -l [session]`) include `next: <session>/<next_free_step>` in open session headers, render `<session>/0` as `bundle` (including `Task` / `Role` context from session headers when present), and iterate `_iter_session_steps(sdir)` so `not-run` steps (such as failed `--fix` patches without `block.sh`) appear with their `Reason` / `--fix` target summary.
-- Update `src/header.py`, `README.md`, `tests/test_runner.py`, and `tests/test_cli.py`.
+- Depends on: D3
+- Bump: `MINOR`
+- In `src/config.py`, define canonical `CHILD_PAGER_ENV_VARS = ("PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER", "SYSTEMD_PAGER", "BAT_PAGER", "AWS_PAGER", "PSQL_PAGER", "DELTA_PAGER")` and add `get_setting("pager")` reading `RUN_BLOCK_PAGER` (default `"cat"`; values `"0"`, `"false"`, `"no"`, `"off"`, `"inherit"`, `"keep"`, `"passthrough"` return `""` to preserve the parent environment's pager variables unchanged).
+- In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run_block`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
+- Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
+- Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
+- Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
@@ -67,13 +64,6 @@
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `rxb` (updating embedded block rules, protocol markers, and env vars/compatibility aliases per the ecosystem rename design).
 - Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
 - Acceptance criteria: `build.py` outputs `rxb`, `install.sh`/`install.ps1` install `rxb` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `rxb`, and `python3 -m unittest discover -s tests` passes.
-
-# ⚪ [NEW] D3: Prevent unintended interactive pagers during block execution
-
-- Encountered a stall during block execution when a model-generated inspection command (`git diff HEAD`) opened an interactive pager inside the PTY, forcing manual `q` / `Ctrl+C` intervention.
-- Design a balanced approach in `run_block` rules (and/or runner defaults) that prevents trivial interactive pagination/stalls when reading output without blocking intentional human-in-the-loop prompts, keeping in mind a future automation layer that will introduce stricter non-interactive rules.
-
-- Also reproduce with `gh api` (which opens `less` on a TTY when `GH_PAGER` / `PAGER` is unset inside `run_block`'s PTY) in addition to `git diff`, and evaluate exporting non-interactive pager defaults (`PAGER=cat`, `GIT_PAGER=cat`, `GH_PAGER=cat`, `MANPAGER=cat`, `SYSTEMD_PAGER=cat`, `BAT_PAGER=cat`) in the child execution environment in `src/runner.py` (configurable via `src/config.py`).
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
 

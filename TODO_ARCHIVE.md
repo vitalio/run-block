@@ -1,3 +1,23 @@
+# ✅ [DONE] F83: Implement session lifecycle states, step outcome labels, and run_block -l display — *2026-11-21, Implemented session lifecycle states, structured step outcomes, and next/last display in run_block -l*
+
+- Depends on: D1
+- Bump: `PATCH`
+- In `src/config.py` and `src/runner.py`, extend `write_step_meta()` and step termination paths (`run_script`, `_validate_step_script_syntax`, `not_run_exit`, interactive abort in `run_script`) to persist `"outcome"` (`"ok"`, `"failed"`, `"syntax-error"`, `"not-run"`, `"aborted"`, `"saved"`), `"exit_code"`, `"duration_ms"`, and optional `"reason"` / `"fix_target"` in `<session>/<step>/meta.json`.
+- Add `_iter_session_steps(sdir)` in `src/config.py` to enumerate all step directories (`\d+(?:_\d+)?`) sorted by `_step_sort_key` that contain `block.sh`/`block.ps1`, `fix.py`, `out`, `error`, `aborted`, or `meta.json` (keeping `_iter_session_scripts(sdir)` for runnable script paths).
+- Add `_step_outcome(sdir, stem)` and update `_step_status(sdir, stem)` in `src/runner.py` to derive step status from `<step>/meta.json` with fallback to `aborted`/`out`/`error`/`block.*` artifacts for legacy directories, returning `ok (<duration>)` (or `ok`), `exit <rc> (<duration>)` (or `exit <rc>`), `syntax-error (exit <rc>)` (or `syntax-error`), `not-run`, `aborted`, and `saved` without overloading `END`.
+- Fix `_consecutive_failed_fixes(sdir, base_step)` in `src/runner.py` to check `_step_outcome(sdir, stem)["outcome"] == "ok"` (instead of `st == "END"`) so a succeeding `--fix` step with duration resets consecutive failure counts properly.
+- Add `get_session_state(sdir)` in `src/config.py` returning `"done"`, `"active"`, `"bundle-only"`, or `"empty"`, and update `cmd_list()` in `src/runner.py`:
+  - Session summary rows show `last: <session>/<last_step> (<step_status>)` (or `last: <session>/0 (bundle)`) followed by `next: <session>/<next_free_step>` for open sessions (`active` / `bundle-only`) and `[DONE]` (without `next:`) for completed sessions.
+  - Per-session block listings (`run_block -l [session]`) include `next: <session>/<next_free_step>` in open session headers, render `<session>/0` as `bundle` (including `Task` / `Role` context from session headers when present), and iterate `_iter_session_steps(sdir)` so `not-run` steps (such as failed `--fix` patches without `block.sh`) appear with their `Reason` / `--fix` target summary.
+- Update `src/header.py`, `README.md`, `tests/test_runner.py`, and `tests/test_cli.py`.
+
+# ✅ [DONE] D3: Prevent unintended interactive pagers during block execution — *2026-11-21, Designed non-interactive child pager defaults (CHILD_PAGER_ENV_VARS and RUN_BLOCK_PAGER) in AGENTS.md and created F85*
+
+- Encountered a stall during block execution when a model-generated inspection command (`git diff HEAD`) opened an interactive pager inside the PTY, forcing manual `q` / `Ctrl+C` intervention.
+- Design a balanced approach in `run_block` rules (and/or runner defaults) that prevents trivial interactive pagination/stalls when reading output without blocking intentional human-in-the-loop prompts, keeping in mind a future automation layer that will introduce stricter non-interactive rules.
+
+- Also reproduce with `gh api` (which opens `less` on a TTY when `GH_PAGER` / `PAGER` is unset inside `run_block`'s PTY) in addition to `git diff`, and evaluate exporting non-interactive pager defaults (`PAGER=cat`, `GIT_PAGER=cat`, `GH_PAGER=cat`, `MANPAGER=cat`, `SYSTEMD_PAGER=cat`, `BAT_PAGER=cat`) in the child execution environment in `src/runner.py` (configurable via `src/config.py`).
+
 # ✅ [DONE] D1: Design session lifecycle states, step outcome labels, and run_block -l display — *2026-11-21, Designed session lifecycle states (bundle-only/active/done), structured step outcomes (ok, exit <rc>, syntax-error, not-run, aborted, saved), and run_block -l next/last formatting in AGENTS.md and F83*
 
 - Depends on: F42

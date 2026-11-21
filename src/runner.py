@@ -225,10 +225,10 @@ def _consecutive_failed_fixes(sdir: Path, base_step: str) -> int:
     failures = 0
     for idx in sorted(indices):
         stem = f"{base_step}_{idx}"
-        st = _step_status(sdir, stem)
-        if st == "ABORTED":
+        outcome = _step_outcome(sdir, stem)["outcome"]
+        if outcome == "aborted":
             continue
-        if st == "END":
+        if outcome == "ok":
             failures = 0
         else:
             failures += 1
@@ -327,6 +327,7 @@ def not_run_exit(
     rc: int = 2,
     headless: bool = False,
     fix_target: str | None = None,
+    outcome: str | None = "not-run",
 ) -> int:
     step_dir = _step_dir(sdir, step_name)
     step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -338,6 +339,15 @@ def not_run_exit(
     err_target = step_dir / "error" if out_path.exists() else out_path
     try:
         write_private(err_target, line, overwrite=True)
+        if outcome and err_target == out_path:
+            write_step_meta(
+                step_dir,
+                duration_ms=0,
+                exit_code=rc,
+                outcome=outcome,
+                reason=detail_lines[0],
+                fix_target=fix_target,
+            )
     except Exception:
         pass
     is_headless = headless or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
@@ -744,6 +754,14 @@ def _validate_step_script_syntax(
         end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
     full_output = start_line + msg + end_line
     write_private(out_path, full_output, overwrite=True)
+    write_step_meta(
+        script_path.parent,
+        duration_ms=0,
+        exit_code=chk.returncode,
+        outcome="syntax-error",
+        reason=(msg.strip().splitlines() or [""])[0] or None,
+        renumbered_from=renumbered_from,
+    )
     if headless:
         sys.stdout.write(full_output)
         sys.stdout.flush()
@@ -823,11 +841,21 @@ def run_script(
     )
     if not approved:
         write_private(aborted_marker, "aborted\n", overwrite=True)
-        if abort_reason == "USER_ABORTED":
-            return 130
+        user_aborted = abort_reason == "USER_ABORTED"
         reason_str = abort_reason or f"aborted by user (re-run with: {prog_name()} --retry {label})"
+        write_step_meta(
+            step_dir,
+            duration_ms=0,
+            exit_code=130,
+            outcome="aborted",
+            reason=None if user_aborted else reason_str,
+            renumbered_from=renumbered_from,
+        )
+        if user_aborted:
+            return 130
         return not_run_exit(
-            label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless
+            label, sdir, step_dir.name, out_path, f"[{label}] NOT RUN: {reason_str}", rc=130, headless=headless,
+            outcome=None,
         )
     aborted_marker.unlink(missing_ok=True)
 
@@ -1660,20 +1688,78 @@ def _step_sort_key(stem: str) -> tuple[int, int]:
     return (int(stem) if stem.isdigit() else 0, 0)
 
 
-def _step_status(sdir: Path, stem: str) -> str:
+def _meta_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _legacy_end_info(kind: str, rest: str, info: dict[str, object]) -> None:
+    rc_m = re.search(r"exit (\d+)", rest)
+    if rc_m:
+        info["exit_code"] = int(rc_m.group(1))
+    if kind == "NOT RUN":
+        info["outcome"] = "not-run"
+        info["reason"] = rest.lstrip(": ").strip() or None
+        return
+    if "syntax error" in rest:
+        info["outcome"] = "syntax-error"
+        return
+    info["outcome"] = "failed" if (kind == "FAILED" or rc_m) else "ok"
+    dur_m = re.search(r"\((?:exit \d+, )?([^)]+)\)", rest)
+    if dur_m and not dur_m.group(1).startswith("exit"):
+        info["duration"] = dur_m.group(1)
+
+
+def _apply_legacy_step_artifacts(
+    sdir: Path, stem: str, meta: dict[str, object], info: dict[str, object]
+) -> None:
     step_d = _step_dir(sdir, stem)
     if (step_d / "aborted").exists():
-        return "ABORTED"
+        info["outcome"] = "aborted"
+        return
+    if "exit_code" in meta:
+        info["outcome"] = "ok" if info["exit_code"] == 0 else "failed"
+        return
+    label = f"{sdir.name}/{stem}"
+    pat = re.compile(rf"^\[{re.escape(label)}\]\s+(END|SUCCESS|FAILED|NOT RUN)([^\n]*)", re.MULTILINE)
     for candidate in (step_d / "out", step_d / "error"):
         if candidate.is_file():
-            txt = candidate.read_text(encoding="utf-8", errors="replace")
-            label = f"{sdir.name}/{stem}"
-            matches = re.findall(rf"^\[{re.escape(label)}\]\s+(END|SUCCESS|FAILED|NOT RUN)([^\n]*)", txt, flags=re.MULTILINE)
+            matches = pat.findall(candidate.read_text(encoding="utf-8", errors="replace"))
             if matches:
                 kind, rest = matches[-1]
-                return (kind + rest.split("—")[0]).strip()
-            return "DONE"
-    return "SAVED"
+                _legacy_end_info(kind, rest.split("—")[0], info)
+            return
+
+
+def _step_outcome(sdir: Path, stem: str) -> dict[str, object]:
+    meta = read_step_meta(_step_dir(sdir, stem))
+    recorded = meta.get("outcome")
+    info: dict[str, object] = {
+        "outcome": recorded if recorded in STEP_OUTCOMES else "saved",
+        "exit_code": _meta_int(meta.get("exit_code")),
+        "duration_ms": _meta_int(meta.get("duration_ms")),
+        "duration": None,
+        "reason": meta.get("reason") or None,
+        "fix_target": meta.get("fix_target") or None,
+    }
+    if recorded not in STEP_OUTCOMES:
+        _apply_legacy_step_artifacts(sdir, stem, meta, info)
+    duration_ms = info["duration_ms"]
+    if info["duration"] is None and isinstance(duration_ms, int):
+        info["duration"] = format_duration(duration_ms / 1000.0)
+    return info
+
+
+def _step_status(sdir: Path, stem: str) -> str:
+    info = _step_outcome(sdir, stem)
+    outcome, rc, dur = info["outcome"], info["exit_code"], info["duration"]
+    dur_s = f" ({dur})" if dur else ""
+    if outcome == "ok":
+        return f"ok{dur_s}"
+    if outcome == "failed":
+        return f"exit {rc}{dur_s}" if rc is not None else f"failed{dur_s}"
+    if outcome == "syntax-error":
+        return f"syntax-error (exit {rc})" if rc is not None else "syntax-error"
+    return str(outcome)
 
 
 def _find_latest_step(session: str | None = None) -> tuple[str, str]:
@@ -1693,6 +1779,46 @@ def _find_latest_step(session: str | None = None) -> tuple[str, str]:
     raise SystemExit(f"{prog_name()}: no saved blocks found in {base}")
 
 
+def _session_open_hint(sdir: Path) -> str:
+    if get_session_state(sdir) in ("active", "bundle-only"):
+        return f"next: {sdir.name}/{next_free_step(sdir, min_step=1)}"
+    return ""
+
+
+def _session_tail(sdir: Path) -> str:
+    hint = _session_open_hint(sdir)
+    return f"  {hint}" if hint else _done_badge(sdir)
+
+
+def _clip_list_desc(desc: str, limit: int = 56) -> str:
+    return desc if len(desc) <= limit else desc[: limit - 3] + "..."
+
+
+def _bundle_row_desc(sdir: Path) -> str:
+    headers = {k.lower(): v for k, v in _parse_meta_header_items(sdir)}
+    ctx = [f"{label}: {headers[key]}" for key, label in (("task", "Task"), ("role", "Role")) if headers.get(key)]
+    joined = "; ".join(ctx)
+    return "Session context bundle (0)" + (f"; {joined}" if joined else "")
+
+
+def _step_row_desc(sdir: Path, stem: str) -> str:
+    step_d = _step_dir(sdir, stem)
+    for name in ("block.sh", "block.ps1"):
+        script = step_d / name
+        if script.is_file():
+            sh_text = script.read_text(encoding="utf-8", errors="replace")
+            summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
+            rows = summary.get("rows") or []
+            return _clip_list_desc("; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else "")
+    info = _step_outcome(sdir, stem)
+    parts = []
+    if info["reason"]:
+        parts.append(f"Reason: {info['reason']}")
+    if info["fix_target"]:
+        parts.append(f"--fix {info['fix_target']}")
+    return _clip_list_desc("; ".join(parts))
+
+
 def cmd_list(session: str | None = None) -> int:
     base = ensure_base()
     _warn_if_state_oversized(base)
@@ -1704,17 +1830,18 @@ def cmd_list(session: str | None = None) -> int:
         sys.stdout.write(f"Sessions in {base}:\n")
         total_bytes = 0
         for sdir in sdirs:
-            scripts = [p.parent.name for p in _iter_session_scripts(sdir)]
-            has_bundle = (sdir / "0").is_file()
+            steps = [d.name for d in _iter_session_steps(sdir)]
             sz = _dir_size_bytes(sdir)
             total_bytes += sz
-            if scripts:
-                last = f"{sdir.name}/{scripts[-1]} ({_step_status(sdir, scripts[-1])})"
-            elif has_bundle:
-                last = f"{sdir.name}/0 (BUNDLE)"
+            if steps:
+                last = f"{sdir.name}/{steps[-1]} ({_step_status(sdir, steps[-1])})"
+            elif (sdir / "0").is_file():
+                last = f"{sdir.name}/0 (bundle)"
             else:
                 last = "empty"
-            sys.stdout.write(f"  {sdir.name:<8}  {len(scripts):>3} block(s)  {_human_size(sz):>9}   last: {last}{_done_badge(sdir)}\n")
+            sys.stdout.write(
+                f"  {sdir.name:<8}  {len(steps):>3} block(s)  {_human_size(sz):>9}   last: {last}{_session_tail(sdir)}\n"
+            )
         sys.stdout.write(f"Total storage: {_human_size(total_bytes)} ({len(sdirs)} session(s))\n")
         session = sdirs[-1].name
         sys.stdout.write(f"\nRecent blocks in {session}:\n")
@@ -1722,23 +1849,18 @@ def cmd_list(session: str | None = None) -> int:
         sdir = base / session
         if not sdir.is_dir():
             raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
-        sys.stdout.write(f"Blocks in {session} ({_human_size(_dir_size_bytes(sdir))}){_done_badge(sdir)}:\n")
+        size = _human_size(_dir_size_bytes(sdir))
+        hint = _session_open_hint(sdir)
+        detail = f"{size}, {hint}" if hint else size
+        sys.stdout.write(f"Blocks in {session} ({detail}){_done_badge(sdir)}:\n")
     sdir = base / session
     if (sdir / "0").is_file():
         ref0 = f"{session}/0"
-        sys.stdout.write(f"  {ref0:<10}  {'BUNDLE':<24}  Session context bundle (0)\n")
-    script_paths = _iter_session_scripts(sdir)
-    for sp in script_paths[-15:]:
-        stem = sp.parent.name
-        st = _step_status(sdir, stem)
-        sh_text = sp.read_text(encoding="utf-8", errors="replace")
-        summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
-        rows = summary.get("rows") or []
-        desc = "; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else ""
-        if len(desc) > 56:
-            desc = desc[:53] + "..."
+        sys.stdout.write(f"  {ref0:<10}  {'bundle':<24}  {_bundle_row_desc(sdir)}\n")
+    for step_d in _iter_session_steps(sdir)[-15:]:
+        stem = step_d.name
         ref = f"{session}/{stem}"
-        sys.stdout.write(f"  {ref:<10}  {st:<24}  {desc}\n")
+        sys.stdout.write(f"  {ref:<10}  {_step_status(sdir, stem):<24}  {_step_row_desc(sdir, stem)}\n")
     return 0
 
 
