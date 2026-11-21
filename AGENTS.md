@@ -54,6 +54,32 @@ rules are loaded via `.agents_bundle`.
   `--retry`) on a completed session, warn and prompt for confirmation
   (`SESSION COMPLETED`, default `No`), clearing the completed flag only when
   confirmed (or when `-y`/`--yes` is explicitly passed).
+- Session lifecycle states and step outcome labels (`src/config.py`,
+  `src/runner.py`):
+  - Session lifecycle state (`get_session_state(sdir)`): `done` when
+    `<session>/meta.json` has `"completed": true`; `active` when not completed
+    and at least one step directory (`_iter_session_steps(sdir)`) exists;
+    `bundle-only` when `<session>/0` exists without step directories (or
+    `empty` when neither exists).
+  - Step execution outcomes (`write_step_meta`, `_step_outcome`,
+    `_step_status`): persist structured `"outcome"` (`"ok"`, `"failed"`,
+    `"syntax-error"`, `"not-run"`, `"aborted"`, `"saved"`), `"exit_code"`,
+    `"duration_ms"`, optional `"reason"`, and `"fix_target"` in
+    `<session>/<step>/meta.json` across all exit paths (falling back to
+    `aborted`/`out`/`error`/`block.*` artifacts for legacy step directories).
+    Keep `[<session>/<step>] END (...)` exclusively as the agent stream marker
+    inside `<step>/out`, while rendering human/CLI step status labels as
+    `ok (<duration>)`, `exit <rc> (<duration>)`, `syntax-error (exit <rc>)`,
+    `not-run`, `aborted`, or `saved`.
+  - `_iter_session_steps(sdir)` enumerates all step directories (`\d+(?:_\d+)?`)
+    containing script, fix, output, error, abort, or metadata artifacts sorted
+    by `_step_sort_key` (including `not-run` `--fix` attempts that failed before
+    emitting `block.sh`), while `_iter_session_scripts(sdir)` returns runnable
+    script paths.
+  - `run_block -l` / `--list [session]` displays session lifecycle state,
+    `last: <ref> (<step_status>)`, and `next: <session>/<next_free_step>` for
+    open sessions (`active` / `bundle-only`) or `[DONE]` without `next:` for
+    completed sessions.
 - `src/cli.py` — CLI argument routing and self-update (`--update`,
   `--check-update`).
 - `tests/helpers.py` — shared `ROOT`, `SCRIPT`, `INSTALL_SH`, cached

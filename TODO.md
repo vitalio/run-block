@@ -1,13 +1,15 @@
-# 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
+# 🎯 [NEXT] F83: Implement session lifecycle states, step outcome labels, and run_block -l display
 
-- Depends on: F42
-- Design candidate for `role=design` (coordinates with `F42` `--done` / `END SESSION` session completion, `F71` `START SESSION`/`START STEP`/`END STEP` lifecycle naming, and `F20` session inspection CLI).
-- Problem: `cmd_list()` and `_step_status()` in `src/runner.py` parse the trailing `[sN/k] END` output marker of the last script in `_iter_session_scripts(sdir)` and render `last: sN/k (END)`, conflating individual step completion with overall session completion and obscuring whether a session is still active or finished.
-- Define clear separation between:
-  1. Step execution outcome (`ok`, `exit <rc>`, `not-run`, `syntax-error`, `aborted`, `saved`) derived from structured step metadata or output markers without overloading `END`.
-  2. Session lifecycle state (`active` / `bundle-only` / `done` via `<session>/meta.json` `completed` and accumulated `"stats"` from `F42`), `END SESSION` summary metrics, and next actionable step (`Next-Block: sN/<k>`).
-  3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
-- Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
+- Depends on: D1
+- Bump: `PATCH`
+- In `src/config.py` and `src/runner.py`, extend `write_step_meta()` and step termination paths (`run_script`, `_validate_step_script_syntax`, `not_run_exit`, interactive abort in `run_script`) to persist `"outcome"` (`"ok"`, `"failed"`, `"syntax-error"`, `"not-run"`, `"aborted"`, `"saved"`), `"exit_code"`, `"duration_ms"`, and optional `"reason"` / `"fix_target"` in `<session>/<step>/meta.json`.
+- Add `_iter_session_steps(sdir)` in `src/config.py` to enumerate all step directories (`\d+(?:_\d+)?`) sorted by `_step_sort_key` that contain `block.sh`/`block.ps1`, `fix.py`, `out`, `error`, `aborted`, or `meta.json` (keeping `_iter_session_scripts(sdir)` for runnable script paths).
+- Add `_step_outcome(sdir, stem)` and update `_step_status(sdir, stem)` in `src/runner.py` to derive step status from `<step>/meta.json` with fallback to `aborted`/`out`/`error`/`block.*` artifacts for legacy directories, returning `ok (<duration>)` (or `ok`), `exit <rc> (<duration>)` (or `exit <rc>`), `syntax-error (exit <rc>)` (or `syntax-error`), `not-run`, `aborted`, and `saved` without overloading `END`.
+- Fix `_consecutive_failed_fixes(sdir, base_step)` in `src/runner.py` to check `_step_outcome(sdir, stem)["outcome"] == "ok"` (instead of `st == "END"`) so a succeeding `--fix` step with duration resets consecutive failure counts properly.
+- Add `get_session_state(sdir)` in `src/config.py` returning `"done"`, `"active"`, `"bundle-only"`, or `"empty"`, and update `cmd_list()` in `src/runner.py`:
+  - Session summary rows show `last: <session>/<last_step> (<step_status>)` (or `last: <session>/0 (bundle)`) followed by `next: <session>/<next_free_step>` for open sessions (`active` / `bundle-only`) and `[DONE]` (without `next:`) for completed sessions.
+  - Per-session block listings (`run_block -l [session]`) include `next: <session>/<next_free_step>` in open session headers, render `<session>/0` as `bundle` (including `Task` / `Role` context from session headers when present), and iterate `_iter_session_steps(sdir)` so `not-run` steps (such as failed `--fix` patches without `block.sh`) appear with their `Reason` / `--fix` target summary.
+- Update `src/header.py`, `README.md`, `tests/test_runner.py`, and `tests/test_cli.py`.
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
@@ -22,7 +24,7 @@
 
 # ⚪ [NEW] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps
 
-- Depends on: D1
+- Depends on: F83
 - Hide `Bundle-Command` from TUI box headers in `src/ui.py` (`HIDDEN_SESSION_HEADER_KEYS`) to avoid noisy or multi-line `-p` headers in `START SESSION` / `START STEP` / `END STEP`, while preserving it in `meta.json` for `--info`.
 - Extend `--list` / `-l` in `src/cli.py` and `src/runner.py` with filtering by `Workdir`/path or query substring, and display session `Workdir`, `Role`/`Task` headers from `meta.json`/`0`, block count, size, timestamp, and last step status.
 - Add `--info [session]` (and `--show <session>` without step number) to display all parsed headers (including `Bundle-Command`) from `meta.json`/`0`, storage path, total size, and full block list with statuses and action summaries.

@@ -1,3 +1,14 @@
+# ✅ [DONE] D1: Design session lifecycle states, step outcome labels, and run_block -l display — *2026-11-21, Designed session lifecycle states (bundle-only/active/done), structured step outcomes (ok, exit <rc>, syntax-error, not-run, aborted, saved), and run_block -l next/last formatting in AGENTS.md and F83*
+
+- Depends on: F42
+- Design candidate for `role=design` (coordinates with `F42` `--done` / `END SESSION` session completion, `F71` `START SESSION`/`START STEP`/`END STEP` lifecycle naming, and `F20` session inspection CLI).
+- Problem: `cmd_list()` and `_step_status()` in `src/runner.py` parse the trailing `[sN/k] END` output marker of the last script in `_iter_session_scripts(sdir)` and render `last: sN/k (END)`, conflating individual step completion with overall session completion and obscuring whether a session is still active or finished.
+- Define clear separation between:
+  1. Step execution outcome (`ok`, `exit <rc>`, `not-run`, `syntax-error`, `aborted`, `saved`) derived from structured step metadata or output markers without overloading `END`.
+  2. Session lifecycle state (`active` / `bundle-only` / `done` via `<session>/meta.json` `completed` and accumulated `"stats"` from `F42`), `END SESSION` summary metrics, and next actionable step (`Next-Block: sN/<k>`).
+  3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
+- Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
+
 # ✅ [DONE] F81: Add Tab operation/part cursor and Enter slice viewer in block i(nfo) inspector — *2026-11-21*
 
 - Depends on: F69, F80
