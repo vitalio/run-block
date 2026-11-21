@@ -1,6 +1,26 @@
+# 🎯 [NEXT] F87: Deduplicate identical or contained bundle fragments and warn on partial text overlaps in bundle plan
+
+- Implement Runner-level content deduplication and partial text overlap detection in `src/bundle_plan.py` per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
+  - Add a helper `_normalize_part_payload_lines(part_lines: list[str]) -> list[str]` that strips a leading `===== ... =====` section/command header line and trims leading/trailing blank lines.
+  - In `parse_bundle_fragments()` (`src/bundle_plan.py:927-1002`), when `boundary` markers are present, compare each non-empty fragment's normalized payload lines against earlier accepted fragments:
+    - If a fragment's normalized payload is 100% identical to an earlier fragment (e.g., `include AGENTS.md` and `$ cat AGENTS.md`, or a duplicate rule/file), or if its normalized payload (`>= 3` non-empty lines) is a contiguous sub-slice of an earlier fragment's normalized payload, omit the duplicate fragment from `stripped_lines` / `raw_parts` so `<session>/0` does not contain duplicate text, and record a `fragment_deduped` warning in `plan["warnings"]` referencing the kept part index and saved line/token counts.
+  - In `analyze_bundle_warnings()` (`src/bundle_plan.py:400-505`), detect partial contiguous text overlaps across remaining non-empty fragments: when two fragments share a contiguous block of `>= 5` non-empty normalized lines (and `>= 200` characters) that is not a full duplicate, emit a `fragment_overlap` warning (`severity: "warn"`, `part_index`, `part_name`, `overlap_with`, `shared_lines`, `shared_chars`, and `message` showing `#<earlier_idx>`, shared line count, and overlap percentage).
+  - Add unit tests in `tests/test_bundle.py:2050-2136` covering 100% duplicate removal (`include` vs `cmd`), contiguous sub-slice containment removal, and partial overlap warning generation (`fragment_overlap`).
+- Target files: `src/bundle_plan.py:390-510`, `src/bundle_plan.py:815-1010`, `tests/test_bundle.py:2050-2136`.
+
+# 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
+
+- Depends on: D3
+- Bump: `MINOR`
+- In `src/config.py`, define canonical `CHILD_PAGER_ENV_VARS = ("PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER", "SYSTEMD_PAGER", "BAT_PAGER", "AWS_PAGER", "PSQL_PAGER", "DELTA_PAGER")` and add `get_setting("pager")` reading `RUN_BLOCK_PAGER` (default `"cat"`; values `"0"`, `"false"`, `"no"`, `"off"`, `"inherit"`, `"keep"`, `"passthrough"` return `""` to preserve the parent environment's pager variables unchanged).
+- In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run_block`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
+- Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
+- Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
+- Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
+
 # 🎯 [NEXT] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys
 
-- Depends on: F81, B8
+- Depends on: F81, B8, F87
 - Bump: `MINOR`
 - Replace generic `INFO · <label> · <~path>` fullscreen title bar in `_build_info_screen()` (`src/ui.py:3190-3324`) with the card title (`<CARD TITLE> · <label> · <~path>`, e.g. `END STEP · s229/2 · ~/.local/state/run_block/s229/2/out`, `START SESSION · s229/0 · ~/.local/state/run_block/s229/0`, `START STEP · s229/2 · ~/.local/state/run_block/s229/2/block.sh`, with `(edited)` suffix when modified).
 - Unify fullscreen header keys and bright styling across `START SESSION`, `START STEP`, `END STEP`, and other cards (`_format_info_header_lines()`, `_collect_info_report()`, `_colorize_kv_line()` in `src/ui.py:1443-1465`, `src/ui.py:2813-3180`):
@@ -20,16 +40,6 @@
   - Support `m(eta)` (`m`/`M` in raw TTY mode and `m`/`meta` in line mode) across all fullscreen views to open `<session>/meta.json` (in `START SESSION`) or `<session>/<step>/meta.json` (in step cards), while keeping `e(dit)` and `o(utput)` as synonyms for editing `<step>/out` in `END STEP` and `s(cript)` for `block.sh`.
   - Omit `Lines 1-N/N` and `Up/Down j/k PgUp/PgDn: scroll` from the footer bar when all body rows fit within a single viewport (`total_items <= viewport_rows`), show scroll position only when `total_items > viewport_rows`, show `Part <k>/<N>` in `Tab` cursor mode, and shorten the footer back hint to `Esc: back` (while keeping `Esc`, `q`, and `i` active as back keys).
 - Target files: `src/runner.py:389-602`, `src/runner.py:850-1035`, `src/bundle_plan.py:1187-1438`, `src/ui.py:1443-1572`, `src/ui.py:2400-3770`, `README.md`, `tests/test_ui.py:1800-2027`, `tests/test_runner.py:1350-1508`.
-
-# 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
-
-- Depends on: D3
-- Bump: `MINOR`
-- In `src/config.py`, define canonical `CHILD_PAGER_ENV_VARS = ("PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER", "SYSTEMD_PAGER", "BAT_PAGER", "AWS_PAGER", "PSQL_PAGER", "DELTA_PAGER")` and add `get_setting("pager")` reading `RUN_BLOCK_PAGER` (default `"cat"`; values `"0"`, `"false"`, `"no"`, `"off"`, `"inherit"`, `"keep"`, `"passthrough"` return `""` to preserve the parent environment's pager variables unchanged).
-- In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run_block`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
-- Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
-- Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
-- Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
