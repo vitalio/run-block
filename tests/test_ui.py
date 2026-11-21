@@ -608,7 +608,7 @@ class TestUi(RunBlockTestCase):
         )
         self.assertEqual(r_start_off.returncode, 0, r_start_off.stderr)
         self.assertNotIn("Sandbox:", r_start_off.stdout)
-        self.assertIn("\nSandbox: off\n", (sessions / "s1" / "0").read_text(encoding="utf-8"))
+        self.assertNotIn("Sandbox:", (sessions / "s1" / "0").read_text(encoding="utf-8"))
 
         r_sb_status = self._run(
             [str(SCRIPT), "--sandbox", "s1"],
@@ -1890,6 +1890,80 @@ class TestUi(RunBlockTestCase):
         self.assertIn("INFO · s77/0 · ~/s77/0 (edited)", out_txt)
         self.assertIn("5 parts (edited)", out_txt)
         self.assertIn("PART 2/5 · s77/0", out_txt)
+
+        # 4. Sequential row numbers (1..7), dim number coloring even on heavy warn/accent rows,
+        #    top-to-bottom Tab cursor across folder rows, BUNDLE folder viewer with delimiters,
+        #    and boundary-preserving e(dit) inside i(nfo)
+        tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        tty_stream.isatty = lambda: True  # type: ignore[method-assign]
+        saved_nc = os.environ.pop("NO_COLOR", None)
+        try:
+            with unittest.mock.patch.object(self.mod.sys, "stdout", tty_stream):
+                plan_77 = self.mod.load_session_bundle_plan(sdir, b0)
+                assert plan_77 is not None
+                raw_tbl = self.mod.format_bundle_parts_lines(plan_77, max_width=100)
+                col_tbl = self.mod._colorize_bundle_lines(raw_tbl)
+        finally:
+            if saved_nc is not None:
+                os.environ["NO_COLOR"] = saved_nc
+        # Header has no '#' and is reverse-video; row 2 is heavy (>25%) but its row number '2 ' is colored with dim _KEY_COLOR
+        self.assertNotIn("#", raw_tbl[0])
+        self.assertIn("\x1b[7m", col_tbl[0])
+        row2_col = next(ln for ln in col_tbl if "run_block:blocks/" in ln)
+        self.assertIn(f"{self.mod._KEY_COLOR}2 {self.mod._ANSI_RESET}{self.mod._WARN_COLOR}", row2_col)
+
+        # Verify top-to-bottom selectable rows 1..7 and folder viewer on row 3 (pkg (2)) and row 4 (sub (2))
+        b0_raw = sdir / "0.raw"
+        b0_raw.write_text(str(res["raw_full"]), encoding="utf-8")
+        b0.write_text(str(res["full"]), encoding="utf-8")
+        (sdir / "0.orig").unlink(missing_ok=True)
+        self.mod.write_session_meta(sdir, list(res["stdin_headers"]), bundle_plan=res["bundle_plan"])
+
+        seen_editor_texts: list[str] = []
+
+        def stub_raw_editor(p: Path, _r, _w) -> None:
+            txt = p.read_text(encoding="utf-8")
+            seen_editor_texts.append(txt)
+            p.write_text(txt.replace("Rule 1 line", "Rule 1 edited keeping boundary"), encoding="utf-8")
+
+        tty_w_folder = _KeepOpenStringIO()
+        # tab -> row 1, down -> row 2, down -> row 3 (pkg (2) folder), copy (Enter) -> open BUNDLE 3/7,
+        # next_part -> row 4 (sub (2) folder, BUNDLE 4/7), next_part -> row 5 (PART 3/5 pkg:r1),
+        # edit -> edits raw boundary-marked bundle, back -> exit info
+        keys_folder = iter(["tab", "down", "down", "copy", "next_part", "next_part", "edit", "back"])
+        with unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=stub_raw_editor), \
+             unittest.mock.patch.object(self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys_folder)), \
+             unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 28)):
+            res_folder = self.mod._show_info_fullscreen(
+                title_kind="START SESSION",
+                label="s77/0",
+                tty_r=io.StringIO(),
+                tty_w=tty_w_folder,
+                sdir=sdir,
+                out_path=b0,
+                edit_target=b0,
+                allow_copy=True,
+                on_edit_callback=on_edit,
+            )
+        self.assertTrue(res_folder["edited"])
+        folder_out = self.mod.ANSI_RE.sub("", tty_w_folder.getvalue())
+        self.assertIn("BUNDLE 3/7 · s77/0", folder_out)
+        self.assertIn("Source: pkg (2) (bundle)", folder_out)
+        self.assertIn("===== [part 3/5] [rule] pkg:r1 (lines ", folder_out)
+        self.assertIn("===== [part 4/5] [rule] pkg:r2 (lines ", folder_out)
+        self.assertIn("BUNDLE 4/7 · s77/0", folder_out)
+        self.assertIn("PART 3/5 · s77/0", folder_out)
+        # Editor saw the raw boundary markers, while saved b0 and 0.orig are clean without markers
+        self.assertEqual(len(seen_editor_texts), 1)
+        self.assertIn(f"<!-- bundle:{nonce}:part", seen_editor_texts[0])
+        after_b0 = b0.read_text(encoding="utf-8")
+        self.assertNotIn(f"bundle:{nonce}", after_b0)
+        self.assertIn("Rule 1 edited keeping boundary", after_b0)
+        self.assertNotIn(f"bundle:{nonce}", (sdir / "0.orig").read_text(encoding="utf-8"))
+        after_plan = self.mod.load_session_bundle_plan(sdir, b0)
+        assert after_plan is not None
+        self.assertEqual(after_plan["protocol"], "boundary")
+        self.assertEqual(after_plan["part_count"], 5)
 
 
 if __name__ == "__main__":

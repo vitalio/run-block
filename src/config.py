@@ -511,8 +511,11 @@ def parse_bundle_header_items(
                         items.append((raw_key, val))
         except OSError:
             pass
+    has_bundle = bundle_file.is_file()
     for raw_key, val in _parse_meta_header_items(session_dir):
         norm_key = raw_key.lower()
+        if has_bundle and norm_key in HIDDEN_SESSION_HEADER_KEYS:
+            continue
         if norm_key in index_by_norm:
             if norm_key not in HIDDEN_SESSION_HEADER_KEYS:
                 items[index_by_norm[norm_key]] = (raw_key, val)
@@ -581,6 +584,8 @@ def get_sandbox_mode(session_dir: Path | None = None, override: str | None = Non
         if raw_sb:
             mode_token = raw_sb.split()[0]
             return normalize_sandbox_mode(mode_token)
+        if (session_dir / "0").is_file():
+            return "off"
     val, _ = get_setting("sandbox")
     return normalize_sandbox_mode(val)
 

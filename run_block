@@ -65,7 +65,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.28.0"
+VERSION = "0.28.1"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block, optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -585,8 +585,11 @@ def parse_bundle_header_items(
                         items.append((raw_key, val))
         except OSError:
             pass
+    has_bundle = bundle_file.is_file()
     for raw_key, val in _parse_meta_header_items(session_dir):
         norm_key = raw_key.lower()
+        if has_bundle and norm_key in HIDDEN_SESSION_HEADER_KEYS:
+            continue
         if norm_key in index_by_norm:
             if norm_key not in HIDDEN_SESSION_HEADER_KEYS:
                 items[index_by_norm[norm_key]] = (raw_key, val)
@@ -655,6 +658,8 @@ def get_sandbox_mode(session_dir: Path | None = None, override: str | None = Non
         if raw_sb:
             mode_token = raw_sb.split()[0]
             return normalize_sandbox_mode(mode_token)
+        if (session_dir / "0").is_file():
+            return "off"
     val, _ = get_setting("sandbox")
     return normalize_sandbox_mode(val)
 
@@ -4172,8 +4177,8 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
         return lines
     out: list[str] = []
     tree_re = re.compile(r"^((?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))(.*)$")
-    tab_re = re.compile(r"^(\s*(?:\d+\s+)?\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
-    hdr_re = re.compile(r"^(\s*)(#\s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
+    tab_re = re.compile(r"^(\s*)(\d+\s)?(\s*\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
+    hdr_re = re.compile(r"^(\s{2})((?:#\s+|\s+)%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
     heavy_colors = {"warn": _WARN_COLOR, "accent": _HIGHLIGHT_COLOR}
     fn_heavy = globals().get("bundle_row_heavy_level")
     for line in lines:
@@ -4183,15 +4188,16 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
             continue
         m_tab = tab_re.match(line)
         if m_tab:
-            num_prefix, tag_br, tag, spaces, rest = m_tab.groups()
+            lead_sp, row_num_part, metrics_prefix, tag_br, tag, spaces, rest = m_tab.groups()
+            num_col_s = f"{lead_sp}{_KEY_COLOR}{row_num_part}{_ANSI_RESET}" if row_num_part else lead_sp
             level = fn_heavy(line) if callable(fn_heavy) else ""
             if level in heavy_colors:
-                num_prefix = f"{heavy_colors[level]}{num_prefix}{_ANSI_RESET}"
+                metrics_prefix = f"{heavy_colors[level]}{metrics_prefix}{_ANSI_RESET}"
             t_col = _BUNDLE_TAG_COLORS.get(tag, _TAG_COLORS.get(tag, _BORDER_COLOR))
             m_tree = tree_re.match(rest)
             if m_tree:
                 rest = f"{_KEY_COLOR}{m_tree.group(1)}{_ANSI_RESET}{m_tree.group(2)}"
-            out.append(f"{num_prefix}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+            out.append(f"{num_col_s}{metrics_prefix}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
             continue
         m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
         if m:
@@ -4984,6 +4990,18 @@ def append_note_to_file(target: Path, note: str, *, as_prompt: bool) -> bool:
     _write_orig_backup_once(_orig_file_backup_path(target), raw)
     current = raw.decode("utf-8", errors="replace")
     if as_prompt:
+        sdir = _resolve_session_dir(path_hint=target)
+        raw_path = (sdir / "0.raw") if (sdir is not None and target.name == "0") else None
+        if raw_path is not None and raw_path.is_file() and sdir is not None:
+            meta_hdrs = _parse_meta_header_items(sdir)
+            boundary = get_bundle_boundary(meta_hdrs)
+            if boundary:
+                raw_txt = raw_path.read_text(encoding="utf-8", errors="replace")
+                pre_hdrs, raw_body = parse_stdin_preamble(raw_txt)
+                new_raw_body = inject_embedded_prompt(raw_body, prompt=text, boundary=boundary)
+                hdr_block = "\n".join(f"{k}: {v}" for k, v in pre_hdrs) + "\n" if pre_hdrs else ""
+                new_raw_full = hdr_block + ("\n" + new_raw_body.strip("\n") + "\n" if (hdr_block and new_raw_body.strip()) else (new_raw_body.strip("\n") + "\n" if new_raw_body.strip() else ""))
+                write_private(raw_path, new_raw_full, overwrite=True)
         updated = inject_embedded_prompt(current, prompt=text) + "\n"
     else:
         updated = current.rstrip("\n") + "\n\n" + text + "\n"
@@ -5210,14 +5228,22 @@ def _compose_pager_frame(
     return frame, clamped_scroll, viewport_rows
 
 
-def _info_part_total(sdir: Path | None, bundle_path: Path | None) -> int:
+def _info_table_rows(sdir: Path | None, bundle_path: Path | None) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
     fn_load = globals().get("load_session_bundle_plan")
-    if not callable(fn_load) or sdir is None or bundle_path is None or not bundle_path.is_file():
-        return 0
+    fn_rows = globals().get("_collect_hierarchy_rows")
+    if not callable(fn_load) or not callable(fn_rows) or sdir is None or bundle_path is None or not bundle_path.is_file():
+        return None, []
     plan = fn_load(sdir, bundle_path)
     if not isinstance(plan, dict):
-        return 0
-    return len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
+        return None, []
+    all_rows = fn_rows(plan, details=True)
+    numbered = [r for r in all_rows if isinstance(r, dict) and str(r.get("num_str") or "").isdigit()]
+    return plan, numbered
+
+
+def _info_part_total(sdir: Path | None, bundle_path: Path | None) -> int:
+    _, numbered = _info_table_rows(sdir, bundle_path)
+    return len(numbered)
 
 
 _PART_ROW_NUM_RE = re.compile(r"^\s*(\d+)\s+\d+(?:\.\d+)?%\s+\S+\s+\d+\s+~\S+\s+\[[a-z0-9_-]+\]")
@@ -5259,14 +5285,30 @@ def _build_part_screen(
     *,
     can_edit: bool,
     error: str = "",
+    folder_row: dict[str, object] | None = None,
+    folder_entries: list[dict[str, object]] | None = None,
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
-    panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
+    is_folder = folder_row is not None and folder_entries is not None and len(folder_entries) > 1
+    if is_folder:
+        panel_title = f"BUNDLE {part_no}/{total} · {label}" if label else f"BUNDLE {part_no}/{total}"
+    else:
+        panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
     max_content_w = max(1, cols)
     title_line = f"{title_col}{panel_title}{_ANSI_RESET}" if _use_color() else panel_title
 
     hdr_kv: list[str] = []
-    if entry is not None:
+    if is_folder and folder_row is not None and folder_entries:
+        f_desc = str(folder_row.get("desc") or "bundle")
+        f_kind = str(folder_row.get("kind") or "bundle")
+        hdr_kv.append(f"Source: {f_desc} ({f_kind})")
+        starts = [int(e["line_start"]) for e in folder_entries if isinstance(e.get("line_start"), int)]
+        ends = [int(e["line_end"]) for e in folder_entries if isinstance(e.get("line_end"), int)]
+        idxs = [int(e["index"]) for e in folder_entries if isinstance(e.get("index"), int)]
+        if starts and ends:
+            p_span = f"parts {idxs[0]}..{idxs[-1]}, " if len(idxs) >= 2 else ""
+            hdr_kv.append(f"Range: {p_span}lines {min(starts)}-{max(ends)} of {label}")
+    elif entry is not None:
         hdr_kv.append(f"Source: {_part_label(entry)} ({entry.get('kind') or 'part'})")
         hdr_kv.append(f"Range: lines {entry.get('line_start')}-{entry.get('line_end')} of {label}")
     header_rows: list[str] = [title_line]
@@ -5924,13 +5966,22 @@ def _show_info_fullscreen(
         if not target.is_file():
             return None
         try:
-            before_bytes: bytes | None = target.read_bytes()
+            before_clean_bytes: bytes | None = target.read_bytes()
         except OSError:
-            before_bytes = None
+            before_clean_bytes = None
         if target.name.startswith("block.") and not target.name.startswith("block.orig."):
             orig_p = _orig_backup_path(target)
         else:
             orig_p = _orig_file_backup_path(target)
+        raw_bundle = (resolved_sdir / "0.raw") if (kind == "START SESSION" and resolved_sdir is not None and target.name == "0") else None
+        use_raw_stage = raw_bundle is not None and raw_bundle.is_file()
+        before_raw_bytes: bytes | None = None
+        if use_raw_stage and raw_bundle is not None:
+            try:
+                before_raw_bytes = raw_bundle.read_bytes()
+                target.write_bytes(before_raw_bytes)
+            except OSError:
+                use_raw_stage = False
         tty_w.write("\033[?25h\033[?1049l")
         tty_w.flush()
         try:
@@ -5939,11 +5990,19 @@ def _show_info_fullscreen(
             tty_w.write("\033[?1049h\033[?25l")
             tty_w.flush()
         try:
-            after_bytes: bytes | None = target.read_bytes() if target.is_file() else None
+            after_edit_bytes: bytes | None = target.read_bytes() if target.is_file() else None
         except OSError:
-            after_bytes = None
-        if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
-            _write_orig_backup_once(orig_p, before_bytes)
+            after_edit_bytes = None
+        if use_raw_stage and raw_bundle is not None and before_raw_bytes is not None:
+            if after_edit_bytes is None or after_edit_bytes == before_raw_bytes:
+                if before_clean_bytes is not None:
+                    target.write_bytes(before_clean_bytes)
+                return None
+            if before_clean_bytes is not None:
+                _write_orig_backup_once(orig_p, before_clean_bytes)
+            return _apply_edit_callbacks(target)
+        if before_clean_bytes is not None and after_edit_bytes is not None and after_edit_bytes != before_clean_bytes:
+            _write_orig_backup_once(orig_p, before_clean_bytes)
             return _apply_edit_callbacks(target)
         return None
 
@@ -5961,31 +6020,54 @@ def _show_info_fullscreen(
             return _apply_edit_callbacks(target)
         return None
 
-    def _open_part_viewer(initial_part_no: int) -> tuple[int, dict[str, object] | None]:
-        fn_load = globals().get("load_session_bundle_plan")
+    def _open_part_viewer(initial_row_no: int) -> tuple[int, dict[str, object] | None]:
         fn_extract = globals().get("extract_bundle_part")
-        if not callable(fn_load) or not callable(fn_extract) or resolved_sdir is None or out_path is None:
-            return initial_part_no, None
-        plan = fn_load(resolved_sdir, out_path)
-        total = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)]) if isinstance(plan, dict) else 0
-        if total < 1:
-            return initial_part_no, None
-        part_no = max(1, min(total, initial_part_no))
+        if not callable(fn_extract) or resolved_sdir is None or out_path is None:
+            return initial_row_no, None
+        plan, numbered_rows = _info_table_rows(resolved_sdir, out_path)
+        total_rows = len(numbered_rows)
+        if not isinstance(plan, dict) or total_rows < 1:
+            return initial_row_no, None
+        total_parts = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
+        row_no = max(1, min(total_rows, initial_row_no))
         part_scroll = 0
         while True:
+            cur_row = numbered_rows[row_no - 1]
+            p_indices = [int(i) for i in (cur_row.get("part_indices") or []) if isinstance(i, int) and i > 0]
+            if not p_indices and row_no <= total_parts:
+                p_indices = [row_no]
             entry: dict[str, object] | None = None
+            folder_entries: list[dict[str, object]] = []
             body_lines: list[str] = []
             err = ""
             try:
-                entry, chunk = fn_extract(plan, out_path.read_text(encoding="utf-8", errors="replace"), part_no)
-                body_lines = chunk.splitlines()
+                bundle_txt = out_path.read_text(encoding="utf-8", errors="replace")
+                if len(p_indices) == 1:
+                    entry, chunk = fn_extract(plan, bundle_txt, p_indices[0])
+                    body_lines = chunk.splitlines()
+                else:
+                    for idx_pos, p_idx in enumerate(p_indices):
+                        p_entry, p_chunk = fn_extract(plan, bundle_txt, p_idx)
+                        folder_entries.append(p_entry)
+                        if idx_pos > 0:
+                            body_lines.append("")
+                        p_kind = str(p_entry.get("kind") or "part")
+                        p_src = _part_label(p_entry)
+                        p_ls = p_entry.get("line_start")
+                        p_le = p_entry.get("line_end")
+                        delim = f"===== [part {p_idx}/{total_parts}] [{p_kind}] {p_src} (lines {p_ls}-{p_le}) ====="
+                        body_lines.append(f"{_KEY_COLOR}{delim}{_ANSI_RESET}" if _use_color() else delim)
+                        body_lines.extend(p_chunk.splitlines())
             except (ValueError, OSError) as exc:
                 err = str(exc)
             cols, rows = _term_size()
+            is_single = len(p_indices) == 1
+            disp_no = p_indices[0] if is_single else row_no
+            disp_total = total_parts if is_single else total_rows
             frame, part_scroll, vp_rows = _build_part_screen(
                 label,
-                part_no,
-                total,
+                disp_no,
+                disp_total,
                 entry,
                 body_lines,
                 cols,
@@ -5993,6 +6075,8 @@ def _show_info_fullscreen(
                 part_scroll,
                 can_edit=edit_target is not None and edit_target.is_file(),
                 error=err,
+                folder_row=None if is_single else cur_row,
+                folder_entries=None if is_single else folder_entries,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -6003,15 +6087,15 @@ def _show_info_fullscreen(
             if new_scroll is not None:
                 part_scroll = new_scroll
             elif key == "next_part":
-                part_no = min(total, part_no + 1)
+                row_no = min(total_rows, row_no + 1)
                 part_scroll = 0
             elif key == "prev_part":
-                part_no = max(1, part_no - 1)
+                row_no = max(1, row_no - 1)
                 part_scroll = 0
             elif key == "edit" and edit_target is not None and edit_target.is_file():
-                return part_no, _edit_artifact(edit_target)
+                return row_no, _edit_artifact(edit_target)
             elif key in ("back", "esc", "tab"):
-                return part_no, None
+                return row_no, None
 
     tty_w.write("\033[?1049h\033[?25l")
     tty_w.flush()
@@ -7395,12 +7479,32 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     if not bundle_path.is_file():
         return
     text = bundle_path.read_text(encoding="utf-8", errors="replace")
-    _, body = parse_stdin_preamble(text)
+    preamble_hdrs, body = parse_stdin_preamble(text)
     meta = read_session_meta(sdir)
     prev_plan = meta.get("bundle_plan") if isinstance(meta.get("bundle_plan"), dict) else None
     meta_hdrs = _parse_meta_header_items(sdir)
     boundary = get_bundle_boundary(meta_hdrs)
-    _, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
+    clean_body, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
+    raw_path = sdir / "0.raw"
+    if boundary and parsed_plan.get("protocol") == "boundary":
+        write_private(raw_path, text, overwrite=True)
+        hdr_block = "\n".join(f"{k}: {v}" for k, v in preamble_hdrs) + "\n" if preamble_hdrs else ""
+        text = hdr_block + ("\n" + clean_body + "\n" if (hdr_block and clean_body) else (clean_body + "\n" if clean_body else ""))
+        write_private(bundle_path, text, overwrite=True)
+        plan = reconcile_bundle_plan(parsed_plan, text)
+        update_session_meta(sdir, bundle_plan=plan)
+        return
+    if raw_path.is_file() and boundary:
+        raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
+        _, raw_body = parse_stdin_preamble(raw_text)
+        raw_clean_body, raw_plan = parse_bundle_fragments(raw_body, boundary=boundary)
+        if raw_plan.get("protocol") == "boundary" and raw_clean_body == body:
+            hdr_block = "\n".join(f"{k}: {v}" for k, v in preamble_hdrs) + "\n" if preamble_hdrs else ""
+            new_raw = hdr_block + ("\n" + raw_body.strip("\n") + "\n" if (hdr_block and raw_body.strip()) else (raw_body.strip("\n") + "\n" if raw_body.strip() else ""))
+            write_private(raw_path, new_raw, overwrite=True)
+            plan = reconcile_bundle_plan(raw_plan, text)
+            update_session_meta(sdir, bundle_plan=plan)
+            return
     if (
         isinstance(prev_plan, dict)
         and prev_plan.get("protocol") == "boundary"
@@ -7454,6 +7558,7 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
                         plan = reconcile_bundle_plan(kept_plan, text, track_lines=False)
                         update_session_meta(sdir, bundle_plan=plan)
                         return
+    raw_path.unlink(missing_ok=True)
     plan = reconcile_bundle_plan(parsed_plan, text)
     update_session_meta(sdir, bundle_plan=plan)
 
@@ -7472,6 +7577,7 @@ def _new_tree_node(name: str, chain: list[str]) -> dict[str, object]:
         "items": [],
         "children_by_name": {},
         "direct_parts": [],
+        "part_indices": [],
         "total_count": 0,
         "lines": 0,
         "chars": 0,
@@ -7492,6 +7598,10 @@ def _add_part_to_node(node: dict[str, object], entry: dict[str, object]) -> None
     node["gpt"] = int(node["gpt"]) + int(entry.get("gpt") or 0)
     node["claude"] = int(node["claude"]) + int(entry.get("claude") or 0)
     node["share_pct"] = round(float(node["share_pct"]) + float(entry.get("share_pct") or 0.0), 1)
+    p_idx = entry.get("index")
+    p_indices = node["part_indices"]
+    if isinstance(p_idx, int) and p_idx > 0 and isinstance(p_indices, list):
+        p_indices.append(p_idx)
     kind = str(entry.get("kind") or "part")
     kinds = node["kinds"]
     if isinstance(kinds, list) and kind not in kinds:
@@ -7579,6 +7689,7 @@ def _make_table_row(
     tree_prefix: str = "",
     part_num: str = "",
     depth: int = 0,
+    part_indices: list[int] | None = None,
 ) -> dict[str, object]:
     return {
         "num_str": part_num,
@@ -7590,6 +7701,7 @@ def _make_table_row(
         "kind": kind,
         "tree_prefix": tree_prefix,
         "desc": desc,
+        "part_indices": list(part_indices) if part_indices is not None else [],
     }
 
 
@@ -7629,6 +7741,13 @@ def _collect_hierarchy_rows(
     if not parts:
         return []
 
+    row_counter = 0
+
+    def _next_row_num() -> str:
+        nonlocal row_counter
+        row_counter += 1
+        return str(row_counter)
+
     def _emit_part(
         p: dict[str, object],
         parent_name: str,
@@ -7641,7 +7760,7 @@ def _collect_hierarchy_rows(
         lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
         lbl += _part_extras_suffix(p, include_ms=details)
         idx_val = p.get("index")
-        num_str = str(idx_val) if isinstance(idx_val, int) and idx_val > 0 else ""
+        p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
         rows.append(
             _make_table_row(
                 kind=str(p.get("kind") or "part"),
@@ -7652,8 +7771,9 @@ def _collect_hierarchy_rows(
                 claude_cnt=int(p.get("claude") or 0),
                 share_pct=float(p.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
-                part_num=num_str,
+                part_num=_next_row_num(),
                 depth=depth,
+                part_indices=p_indices,
             )
         )
 
@@ -7673,7 +7793,7 @@ def _collect_hierarchy_rows(
                 p_kind = "bundle"
             lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
             idx_val = p.get("index")
-            num_str = str(idx_val) if isinstance(idx_val, int) and idx_val > 0 else ""
+            p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
             rows.append(
                 _make_table_row(
                     kind=p_kind,
@@ -7684,14 +7804,16 @@ def _collect_hierarchy_rows(
                     claude_cnt=int(p.get("claude") or 0),
                     share_pct=float(p.get("share_pct") or 0.0),
                     tree_prefix=t_pfx,
-                    part_num=num_str,
+                    part_num=_next_row_num(),
                     depth=depth,
+                    part_indices=p_indices,
                 )
             )
             return
         cnt = int(node.get("total_count") or 0)
         rc_errs = int(node.get("rc_errors") or 0)
         lbl = f"{node['name']} ({cnt})" + (f" ({rc_errs} rc!=0)" if rc_errs else "")
+        node_indices = [int(i) for i in (node.get("part_indices") or []) if isinstance(i, int) and i > 0]
         rows.append(
             _make_table_row(
                 kind="bundle",
@@ -7702,8 +7824,9 @@ def _collect_hierarchy_rows(
                 claude_cnt=int(node.get("claude") or 0),
                 share_pct=float(node.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
-                part_num="",
+                part_num=_next_row_num(),
                 depth=depth,
+                part_indices=node_indices,
             )
         )
         if details or has_children:
@@ -7745,7 +7868,7 @@ def _collect_hierarchy_rows(
 def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: str = "  ") -> list[str]:
     if not rows:
         return []
-    w_num = max(len("#"), *(len(str(r.get("num_str") or "")) for r in rows))
+    w_num = max(1, *(len(str(r.get("num_str") or "")) for r in rows))
     w_pct_val = max(len("%"), *(len(str(r["pct_str"])) for r in rows))
     max_depth = max((int(r.get("depth") or 0) for r in rows), default=0)
     w_pct_col = w_pct_val + max_depth * 2
@@ -7756,7 +7879,7 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
 
     pct_hdr = "%".rjust(w_pct_val).ljust(w_pct_col)
     out: list[str] = [
-        f"{indent}{'#'.rjust(w_num)} {pct_hdr} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
+        f"{indent}{' ' * w_num} {pct_hdr} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
         f"{'~TOK'.rjust(w_tok)}  {'KIND'.ljust(w_kind)}  SOURCE"
     ]
     for r in rows:
@@ -10146,13 +10269,16 @@ def format_start_bundle(
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",
         f"Workdir: {wdir}",
-        f"Sandbox: {sb_hdr}",
-        f"Date: {ts}",
     ]
+    if normalize_sandbox_mode(sb_mode) != "off":
+        bundle_header_lines.append(f"Sandbox: {sb_hdr}")
+    bundle_header_lines.append(f"Date: {ts}")
     for exp_k, exp_v in exposed_headers:
         bundle_header_lines.append(f"{exp_k}: {exp_v}")
     bundle_header_text = "\n".join(bundle_header_lines) + "\n"
     full_text = bundle_header_text + ("\n" + clean_body + "\n" if clean_body else "")
+    norm_raw_body = raw_body.strip("\n")
+    raw_full_text = bundle_header_text + ("\n" + norm_raw_body + "\n" if norm_raw_body else "")
     full_tok = count_tokens(full_text.encode("utf-8"))
     total_lines = int(full_tok["lines"])
     total_chars = int(full_tok["chars"])
@@ -10171,6 +10297,7 @@ def format_start_bundle(
     return {
         "console_lines": console_lines,
         "full": full_text,
+        "raw_full": raw_full_text,
         "raw_body": raw_body,
         "stdin_headers": stdin_headers,
         "exposed_headers": exposed_headers,
@@ -10182,13 +10309,12 @@ def format_start_bundle(
     }
 
 
-def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
-    bundle_path = ensure_session_bundle(sdir)
-    text = bundle_path.read_text(encoding="utf-8", errors="replace")
+def _update_bundle_text_header(text: str, key: str, value: str) -> str:
     lines = text.splitlines()
     header_end = 0
     target_idx = -1
-    key_lower = key.lower()
+    key_lower = re.sub(r"\s+", "-", key.strip().lower())
+    remove_line = key_lower == "sandbox" and normalize_sandbox_mode(value.split()[0] if value.strip() else "") == "off"
     for idx, line in enumerate(lines):
         stripped = line.strip()
         if not stripped or stripped.startswith("====="):
@@ -10202,13 +10328,27 @@ def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
         if k == key_lower:
             target_idx = idx
         header_end = idx + 1
-    new_line = f"{key}: {value}"
-    if target_idx >= 0:
-        lines[target_idx] = new_line
+    if remove_line:
+        if target_idx >= 0:
+            lines.pop(target_idx)
     else:
-        insert_at = max(0, header_end - 1) if header_end > 0 else 0
-        lines.insert(insert_at, new_line)
-    write_private(bundle_path, "\n".join(lines) + "\n", overwrite=True)
+        new_line = f"{key}: {value}"
+        if target_idx >= 0:
+            lines[target_idx] = new_line
+        else:
+            insert_at = max(0, header_end - 1) if header_end > 0 else 0
+            lines.insert(insert_at, new_line)
+    return "\n".join(lines) + "\n"
+
+
+def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
+    bundle_path = ensure_session_bundle(sdir)
+    text = bundle_path.read_text(encoding="utf-8", errors="replace")
+    write_private(bundle_path, _update_bundle_text_header(text, key, value), overwrite=True)
+    raw_path = sdir / "0.raw"
+    if raw_path.is_file():
+        raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
+        write_private(raw_path, _update_bundle_text_header(raw_text, key, value), overwrite=True)
 
 
 def cmd_start(
@@ -10290,6 +10430,11 @@ def cmd_start(
         prompt=prompts,
     )
     write_private(bundle_path, str(res["full"]), overwrite=True)
+    raw_path = sdir / "0.raw"
+    if isinstance(res.get("bundle_plan"), dict) and res["bundle_plan"].get("protocol") == "boundary":
+        write_private(raw_path, str(res.get("raw_full") or res["full"]), overwrite=True)
+    else:
+        raw_path.unlink(missing_ok=True)
     stdin_headers = list(res.get("stdin_headers") or [])
     bundle_plan = res.get("bundle_plan")
     write_session_meta(

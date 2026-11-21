@@ -1536,8 +1536,8 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
         return lines
     out: list[str] = []
     tree_re = re.compile(r"^((?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))(.*)$")
-    tab_re = re.compile(r"^(\s*(?:\d+\s+)?\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
-    hdr_re = re.compile(r"^(\s*)(#\s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
+    tab_re = re.compile(r"^(\s*)(\d+\s)?(\s*\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
+    hdr_re = re.compile(r"^(\s{2})((?:#\s+|\s+)%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
     heavy_colors = {"warn": _WARN_COLOR, "accent": _HIGHLIGHT_COLOR}
     fn_heavy = globals().get("bundle_row_heavy_level")
     for line in lines:
@@ -1547,15 +1547,16 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
             continue
         m_tab = tab_re.match(line)
         if m_tab:
-            num_prefix, tag_br, tag, spaces, rest = m_tab.groups()
+            lead_sp, row_num_part, metrics_prefix, tag_br, tag, spaces, rest = m_tab.groups()
+            num_col_s = f"{lead_sp}{_KEY_COLOR}{row_num_part}{_ANSI_RESET}" if row_num_part else lead_sp
             level = fn_heavy(line) if callable(fn_heavy) else ""
             if level in heavy_colors:
-                num_prefix = f"{heavy_colors[level]}{num_prefix}{_ANSI_RESET}"
+                metrics_prefix = f"{heavy_colors[level]}{metrics_prefix}{_ANSI_RESET}"
             t_col = _BUNDLE_TAG_COLORS.get(tag, _TAG_COLORS.get(tag, _BORDER_COLOR))
             m_tree = tree_re.match(rest)
             if m_tree:
                 rest = f"{_KEY_COLOR}{m_tree.group(1)}{_ANSI_RESET}{m_tree.group(2)}"
-            out.append(f"{num_prefix}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
+            out.append(f"{num_col_s}{metrics_prefix}{t_col}{tag_br}{_ANSI_RESET}{spaces}{rest}")
             continue
         m = re.match(r"^(\s*)(\d+\.\s+)?(\[([a-z0-9_-]+)\])(\s+)(.*)$", line)
         if m:
@@ -2348,6 +2349,18 @@ def append_note_to_file(target: Path, note: str, *, as_prompt: bool) -> bool:
     _write_orig_backup_once(_orig_file_backup_path(target), raw)
     current = raw.decode("utf-8", errors="replace")
     if as_prompt:
+        sdir = _resolve_session_dir(path_hint=target)
+        raw_path = (sdir / "0.raw") if (sdir is not None and target.name == "0") else None
+        if raw_path is not None and raw_path.is_file() and sdir is not None:
+            meta_hdrs = _parse_meta_header_items(sdir)
+            boundary = get_bundle_boundary(meta_hdrs)
+            if boundary:
+                raw_txt = raw_path.read_text(encoding="utf-8", errors="replace")
+                pre_hdrs, raw_body = parse_stdin_preamble(raw_txt)
+                new_raw_body = inject_embedded_prompt(raw_body, prompt=text, boundary=boundary)
+                hdr_block = "\n".join(f"{k}: {v}" for k, v in pre_hdrs) + "\n" if pre_hdrs else ""
+                new_raw_full = hdr_block + ("\n" + new_raw_body.strip("\n") + "\n" if (hdr_block and new_raw_body.strip()) else (new_raw_body.strip("\n") + "\n" if new_raw_body.strip() else ""))
+                write_private(raw_path, new_raw_full, overwrite=True)
         updated = inject_embedded_prompt(current, prompt=text) + "\n"
     else:
         updated = current.rstrip("\n") + "\n\n" + text + "\n"
@@ -2574,14 +2587,22 @@ def _compose_pager_frame(
     return frame, clamped_scroll, viewport_rows
 
 
-def _info_part_total(sdir: Path | None, bundle_path: Path | None) -> int:
+def _info_table_rows(sdir: Path | None, bundle_path: Path | None) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
     fn_load = globals().get("load_session_bundle_plan")
-    if not callable(fn_load) or sdir is None or bundle_path is None or not bundle_path.is_file():
-        return 0
+    fn_rows = globals().get("_collect_hierarchy_rows")
+    if not callable(fn_load) or not callable(fn_rows) or sdir is None or bundle_path is None or not bundle_path.is_file():
+        return None, []
     plan = fn_load(sdir, bundle_path)
     if not isinstance(plan, dict):
-        return 0
-    return len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
+        return None, []
+    all_rows = fn_rows(plan, details=True)
+    numbered = [r for r in all_rows if isinstance(r, dict) and str(r.get("num_str") or "").isdigit()]
+    return plan, numbered
+
+
+def _info_part_total(sdir: Path | None, bundle_path: Path | None) -> int:
+    _, numbered = _info_table_rows(sdir, bundle_path)
+    return len(numbered)
 
 
 _PART_ROW_NUM_RE = re.compile(r"^\s*(\d+)\s+\d+(?:\.\d+)?%\s+\S+\s+\d+\s+~\S+\s+\[[a-z0-9_-]+\]")
@@ -2623,14 +2644,30 @@ def _build_part_screen(
     *,
     can_edit: bool,
     error: str = "",
+    folder_row: dict[str, object] | None = None,
+    folder_entries: list[dict[str, object]] | None = None,
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
-    panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
+    is_folder = folder_row is not None and folder_entries is not None and len(folder_entries) > 1
+    if is_folder:
+        panel_title = f"BUNDLE {part_no}/{total} · {label}" if label else f"BUNDLE {part_no}/{total}"
+    else:
+        panel_title = f"PART {part_no}/{total} · {label}" if label else f"PART {part_no}/{total}"
     max_content_w = max(1, cols)
     title_line = f"{title_col}{panel_title}{_ANSI_RESET}" if _use_color() else panel_title
 
     hdr_kv: list[str] = []
-    if entry is not None:
+    if is_folder and folder_row is not None and folder_entries:
+        f_desc = str(folder_row.get("desc") or "bundle")
+        f_kind = str(folder_row.get("kind") or "bundle")
+        hdr_kv.append(f"Source: {f_desc} ({f_kind})")
+        starts = [int(e["line_start"]) for e in folder_entries if isinstance(e.get("line_start"), int)]
+        ends = [int(e["line_end"]) for e in folder_entries if isinstance(e.get("line_end"), int)]
+        idxs = [int(e["index"]) for e in folder_entries if isinstance(e.get("index"), int)]
+        if starts and ends:
+            p_span = f"parts {idxs[0]}..{idxs[-1]}, " if len(idxs) >= 2 else ""
+            hdr_kv.append(f"Range: {p_span}lines {min(starts)}-{max(ends)} of {label}")
+    elif entry is not None:
         hdr_kv.append(f"Source: {_part_label(entry)} ({entry.get('kind') or 'part'})")
         hdr_kv.append(f"Range: lines {entry.get('line_start')}-{entry.get('line_end')} of {label}")
     header_rows: list[str] = [title_line]
@@ -3288,13 +3325,22 @@ def _show_info_fullscreen(
         if not target.is_file():
             return None
         try:
-            before_bytes: bytes | None = target.read_bytes()
+            before_clean_bytes: bytes | None = target.read_bytes()
         except OSError:
-            before_bytes = None
+            before_clean_bytes = None
         if target.name.startswith("block.") and not target.name.startswith("block.orig."):
             orig_p = _orig_backup_path(target)
         else:
             orig_p = _orig_file_backup_path(target)
+        raw_bundle = (resolved_sdir / "0.raw") if (kind == "START SESSION" and resolved_sdir is not None and target.name == "0") else None
+        use_raw_stage = raw_bundle is not None and raw_bundle.is_file()
+        before_raw_bytes: bytes | None = None
+        if use_raw_stage and raw_bundle is not None:
+            try:
+                before_raw_bytes = raw_bundle.read_bytes()
+                target.write_bytes(before_raw_bytes)
+            except OSError:
+                use_raw_stage = False
         tty_w.write("\033[?25h\033[?1049l")
         tty_w.flush()
         try:
@@ -3303,11 +3349,19 @@ def _show_info_fullscreen(
             tty_w.write("\033[?1049h\033[?25l")
             tty_w.flush()
         try:
-            after_bytes: bytes | None = target.read_bytes() if target.is_file() else None
+            after_edit_bytes: bytes | None = target.read_bytes() if target.is_file() else None
         except OSError:
-            after_bytes = None
-        if before_bytes is not None and after_bytes is not None and after_bytes != before_bytes:
-            _write_orig_backup_once(orig_p, before_bytes)
+            after_edit_bytes = None
+        if use_raw_stage and raw_bundle is not None and before_raw_bytes is not None:
+            if after_edit_bytes is None or after_edit_bytes == before_raw_bytes:
+                if before_clean_bytes is not None:
+                    target.write_bytes(before_clean_bytes)
+                return None
+            if before_clean_bytes is not None:
+                _write_orig_backup_once(orig_p, before_clean_bytes)
+            return _apply_edit_callbacks(target)
+        if before_clean_bytes is not None and after_edit_bytes is not None and after_edit_bytes != before_clean_bytes:
+            _write_orig_backup_once(orig_p, before_clean_bytes)
             return _apply_edit_callbacks(target)
         return None
 
@@ -3325,31 +3379,54 @@ def _show_info_fullscreen(
             return _apply_edit_callbacks(target)
         return None
 
-    def _open_part_viewer(initial_part_no: int) -> tuple[int, dict[str, object] | None]:
-        fn_load = globals().get("load_session_bundle_plan")
+    def _open_part_viewer(initial_row_no: int) -> tuple[int, dict[str, object] | None]:
         fn_extract = globals().get("extract_bundle_part")
-        if not callable(fn_load) or not callable(fn_extract) or resolved_sdir is None or out_path is None:
-            return initial_part_no, None
-        plan = fn_load(resolved_sdir, out_path)
-        total = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)]) if isinstance(plan, dict) else 0
-        if total < 1:
-            return initial_part_no, None
-        part_no = max(1, min(total, initial_part_no))
+        if not callable(fn_extract) or resolved_sdir is None or out_path is None:
+            return initial_row_no, None
+        plan, numbered_rows = _info_table_rows(resolved_sdir, out_path)
+        total_rows = len(numbered_rows)
+        if not isinstance(plan, dict) or total_rows < 1:
+            return initial_row_no, None
+        total_parts = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
+        row_no = max(1, min(total_rows, initial_row_no))
         part_scroll = 0
         while True:
+            cur_row = numbered_rows[row_no - 1]
+            p_indices = [int(i) for i in (cur_row.get("part_indices") or []) if isinstance(i, int) and i > 0]
+            if not p_indices and row_no <= total_parts:
+                p_indices = [row_no]
             entry: dict[str, object] | None = None
+            folder_entries: list[dict[str, object]] = []
             body_lines: list[str] = []
             err = ""
             try:
-                entry, chunk = fn_extract(plan, out_path.read_text(encoding="utf-8", errors="replace"), part_no)
-                body_lines = chunk.splitlines()
+                bundle_txt = out_path.read_text(encoding="utf-8", errors="replace")
+                if len(p_indices) == 1:
+                    entry, chunk = fn_extract(plan, bundle_txt, p_indices[0])
+                    body_lines = chunk.splitlines()
+                else:
+                    for idx_pos, p_idx in enumerate(p_indices):
+                        p_entry, p_chunk = fn_extract(plan, bundle_txt, p_idx)
+                        folder_entries.append(p_entry)
+                        if idx_pos > 0:
+                            body_lines.append("")
+                        p_kind = str(p_entry.get("kind") or "part")
+                        p_src = _part_label(p_entry)
+                        p_ls = p_entry.get("line_start")
+                        p_le = p_entry.get("line_end")
+                        delim = f"===== [part {p_idx}/{total_parts}] [{p_kind}] {p_src} (lines {p_ls}-{p_le}) ====="
+                        body_lines.append(f"{_KEY_COLOR}{delim}{_ANSI_RESET}" if _use_color() else delim)
+                        body_lines.extend(p_chunk.splitlines())
             except (ValueError, OSError) as exc:
                 err = str(exc)
             cols, rows = _term_size()
+            is_single = len(p_indices) == 1
+            disp_no = p_indices[0] if is_single else row_no
+            disp_total = total_parts if is_single else total_rows
             frame, part_scroll, vp_rows = _build_part_screen(
                 label,
-                part_no,
-                total,
+                disp_no,
+                disp_total,
                 entry,
                 body_lines,
                 cols,
@@ -3357,6 +3434,8 @@ def _show_info_fullscreen(
                 part_scroll,
                 can_edit=edit_target is not None and edit_target.is_file(),
                 error=err,
+                folder_row=None if is_single else cur_row,
+                folder_entries=None if is_single else folder_entries,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -3367,15 +3446,15 @@ def _show_info_fullscreen(
             if new_scroll is not None:
                 part_scroll = new_scroll
             elif key == "next_part":
-                part_no = min(total, part_no + 1)
+                row_no = min(total_rows, row_no + 1)
                 part_scroll = 0
             elif key == "prev_part":
-                part_no = max(1, part_no - 1)
+                row_no = max(1, row_no - 1)
                 part_scroll = 0
             elif key == "edit" and edit_target is not None and edit_target.is_file():
-                return part_no, _edit_artifact(edit_target)
+                return row_no, _edit_artifact(edit_target)
             elif key in ("back", "esc", "tab"):
-                return part_no, None
+                return row_no, None
 
     tty_w.write("\033[?1049h\033[?25l")
     tty_w.flush()

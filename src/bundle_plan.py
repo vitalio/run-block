@@ -982,12 +982,32 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     if not bundle_path.is_file():
         return
     text = bundle_path.read_text(encoding="utf-8", errors="replace")
-    _, body = parse_stdin_preamble(text)
+    preamble_hdrs, body = parse_stdin_preamble(text)
     meta = read_session_meta(sdir)
     prev_plan = meta.get("bundle_plan") if isinstance(meta.get("bundle_plan"), dict) else None
     meta_hdrs = _parse_meta_header_items(sdir)
     boundary = get_bundle_boundary(meta_hdrs)
-    _, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
+    clean_body, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
+    raw_path = sdir / "0.raw"
+    if boundary and parsed_plan.get("protocol") == "boundary":
+        write_private(raw_path, text, overwrite=True)
+        hdr_block = "\n".join(f"{k}: {v}" for k, v in preamble_hdrs) + "\n" if preamble_hdrs else ""
+        text = hdr_block + ("\n" + clean_body + "\n" if (hdr_block and clean_body) else (clean_body + "\n" if clean_body else ""))
+        write_private(bundle_path, text, overwrite=True)
+        plan = reconcile_bundle_plan(parsed_plan, text)
+        update_session_meta(sdir, bundle_plan=plan)
+        return
+    if raw_path.is_file() and boundary:
+        raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
+        _, raw_body = parse_stdin_preamble(raw_text)
+        raw_clean_body, raw_plan = parse_bundle_fragments(raw_body, boundary=boundary)
+        if raw_plan.get("protocol") == "boundary" and raw_clean_body == body:
+            hdr_block = "\n".join(f"{k}: {v}" for k, v in preamble_hdrs) + "\n" if preamble_hdrs else ""
+            new_raw = hdr_block + ("\n" + raw_body.strip("\n") + "\n" if (hdr_block and raw_body.strip()) else (raw_body.strip("\n") + "\n" if raw_body.strip() else ""))
+            write_private(raw_path, new_raw, overwrite=True)
+            plan = reconcile_bundle_plan(raw_plan, text)
+            update_session_meta(sdir, bundle_plan=plan)
+            return
     if (
         isinstance(prev_plan, dict)
         and prev_plan.get("protocol") == "boundary"
@@ -1041,6 +1061,7 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
                         plan = reconcile_bundle_plan(kept_plan, text, track_lines=False)
                         update_session_meta(sdir, bundle_plan=plan)
                         return
+    raw_path.unlink(missing_ok=True)
     plan = reconcile_bundle_plan(parsed_plan, text)
     update_session_meta(sdir, bundle_plan=plan)
 
@@ -1059,6 +1080,7 @@ def _new_tree_node(name: str, chain: list[str]) -> dict[str, object]:
         "items": [],
         "children_by_name": {},
         "direct_parts": [],
+        "part_indices": [],
         "total_count": 0,
         "lines": 0,
         "chars": 0,
@@ -1079,6 +1101,10 @@ def _add_part_to_node(node: dict[str, object], entry: dict[str, object]) -> None
     node["gpt"] = int(node["gpt"]) + int(entry.get("gpt") or 0)
     node["claude"] = int(node["claude"]) + int(entry.get("claude") or 0)
     node["share_pct"] = round(float(node["share_pct"]) + float(entry.get("share_pct") or 0.0), 1)
+    p_idx = entry.get("index")
+    p_indices = node["part_indices"]
+    if isinstance(p_idx, int) and p_idx > 0 and isinstance(p_indices, list):
+        p_indices.append(p_idx)
     kind = str(entry.get("kind") or "part")
     kinds = node["kinds"]
     if isinstance(kinds, list) and kind not in kinds:
@@ -1166,6 +1192,7 @@ def _make_table_row(
     tree_prefix: str = "",
     part_num: str = "",
     depth: int = 0,
+    part_indices: list[int] | None = None,
 ) -> dict[str, object]:
     return {
         "num_str": part_num,
@@ -1177,6 +1204,7 @@ def _make_table_row(
         "kind": kind,
         "tree_prefix": tree_prefix,
         "desc": desc,
+        "part_indices": list(part_indices) if part_indices is not None else [],
     }
 
 
@@ -1216,6 +1244,13 @@ def _collect_hierarchy_rows(
     if not parts:
         return []
 
+    row_counter = 0
+
+    def _next_row_num() -> str:
+        nonlocal row_counter
+        row_counter += 1
+        return str(row_counter)
+
     def _emit_part(
         p: dict[str, object],
         parent_name: str,
@@ -1228,7 +1263,7 @@ def _collect_hierarchy_rows(
         lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
         lbl += _part_extras_suffix(p, include_ms=details)
         idx_val = p.get("index")
-        num_str = str(idx_val) if isinstance(idx_val, int) and idx_val > 0 else ""
+        p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
         rows.append(
             _make_table_row(
                 kind=str(p.get("kind") or "part"),
@@ -1239,8 +1274,9 @@ def _collect_hierarchy_rows(
                 claude_cnt=int(p.get("claude") or 0),
                 share_pct=float(p.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
-                part_num=num_str,
+                part_num=_next_row_num(),
                 depth=depth,
+                part_indices=p_indices,
             )
         )
 
@@ -1260,7 +1296,7 @@ def _collect_hierarchy_rows(
                 p_kind = "bundle"
             lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
             idx_val = p.get("index")
-            num_str = str(idx_val) if isinstance(idx_val, int) and idx_val > 0 else ""
+            p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
             rows.append(
                 _make_table_row(
                     kind=p_kind,
@@ -1271,14 +1307,16 @@ def _collect_hierarchy_rows(
                     claude_cnt=int(p.get("claude") or 0),
                     share_pct=float(p.get("share_pct") or 0.0),
                     tree_prefix=t_pfx,
-                    part_num=num_str,
+                    part_num=_next_row_num(),
                     depth=depth,
+                    part_indices=p_indices,
                 )
             )
             return
         cnt = int(node.get("total_count") or 0)
         rc_errs = int(node.get("rc_errors") or 0)
         lbl = f"{node['name']} ({cnt})" + (f" ({rc_errs} rc!=0)" if rc_errs else "")
+        node_indices = [int(i) for i in (node.get("part_indices") or []) if isinstance(i, int) and i > 0]
         rows.append(
             _make_table_row(
                 kind="bundle",
@@ -1289,8 +1327,9 @@ def _collect_hierarchy_rows(
                 claude_cnt=int(node.get("claude") or 0),
                 share_pct=float(node.get("share_pct") or 0.0),
                 tree_prefix=t_pfx,
-                part_num="",
+                part_num=_next_row_num(),
                 depth=depth,
+                part_indices=node_indices,
             )
         )
         if details or has_children:
@@ -1332,7 +1371,7 @@ def _collect_hierarchy_rows(
 def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: str = "  ") -> list[str]:
     if not rows:
         return []
-    w_num = max(len("#"), *(len(str(r.get("num_str") or "")) for r in rows))
+    w_num = max(1, *(len(str(r.get("num_str") or "")) for r in rows))
     w_pct_val = max(len("%"), *(len(str(r["pct_str"])) for r in rows))
     max_depth = max((int(r.get("depth") or 0) for r in rows), default=0)
     w_pct_col = w_pct_val + max_depth * 2
@@ -1343,7 +1382,7 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
 
     pct_hdr = "%".rjust(w_pct_val).ljust(w_pct_col)
     out: list[str] = [
-        f"{indent}{'#'.rjust(w_num)} {pct_hdr} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
+        f"{indent}{' ' * w_num} {pct_hdr} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
         f"{'~TOK'.rjust(w_tok)}  {'KIND'.ljust(w_kind)}  SOURCE"
     ]
     for r in rows:

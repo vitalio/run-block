@@ -56,7 +56,7 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn("Date:", r_pipe.stdout)
         bundle1 = (self.tmp / "sessions/s1/0").read_text(encoding="utf-8")
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
-        self.assertIn("\nSandbox: off\n", bundle1)
+        self.assertNotIn("\nSandbox:", bundle1)
         self.assertNotIn("Bundle-Command:", bundle1)
         self.assertNotIn("Chat-Lang:", bundle1)
         self.assertNotIn("Role:", bundle1)
@@ -229,7 +229,8 @@ class TestBundle(RunBlockTestCase):
         s1_dir = self.tmp / "f28_sessions/s1"
         parsed = self.mod.parse_bundle_headers(s1_dir)
         self.assertEqual(Path(parsed["workdir"]).resolve(), proj.resolve())
-        self.assertEqual(parsed["sandbox"], "off")
+        self.assertNotIn("sandbox", parsed)
+        self.assertEqual(self.mod.get_sandbox_mode(s1_dir), "off")
         self.assertEqual(parsed["role"], "execute")
 
         # Legacy session fallback: headers in <session>/0 without meta.json still display
@@ -554,11 +555,11 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_start.returncode, 0, r_start.stderr)
 
         b0 = (sessions / "s1" / "0").read_text(encoding="utf-8")
-        # Core 5 headers cannot be overridden by stdin preamble
+        # Core headers cannot be overridden by stdin preamble; Sandbox: off is omitted
         self.assertIn("Session: s1\n", b0)
         self.assertIn("Next-Block: s1/1\n", b0)
         self.assertIn(f"Workdir: {proj.resolve()}\n", b0)
-        self.assertIn("Sandbox: off\n", b0)
+        self.assertNotIn("Sandbox:", b0)
         self.assertNotIn("fake_session", b0)
         self.assertNotIn("/nonexistent/hijack", b0)
         self.assertNotIn("1999-01-01", b0)
@@ -706,7 +707,8 @@ class TestBundle(RunBlockTestCase):
         }
         lines = self.mod.format_bundle_summary_lines(plan, max_width=100)
         text = "\n".join(lines)
-        self.assertRegex(lines[0], r"^\s+# +\s*% +CHARS +LINES +~TOK +KIND +SOURCE$")
+        self.assertRegex(lines[0], r"^\s+% +CHARS +LINES +~TOK +KIND +SOURCE$")
+        self.assertNotIn("#", lines[0])
         self.assertIn("[total]   3 parts", lines[1])
         self.assertIn("[total]   3 parts", lines[-1])
         self.assertEqual(self.mod.bundle_row_heavy_level(lines[1]), "")
@@ -1205,7 +1207,7 @@ class TestBundle(RunBlockTestCase):
             det_box, _, _ = self.mod.format_clipboard_box(
                 "s1/0", sessions / "s1" / "0", stats=self.mod.stats_line(sessions / "s1" / "0"), title_kind="START SESSION", bundle_details=True, sdir=sessions / "s1"
             )
-        self.assertIn("(6 parts)\n│   #", det_box)
+        self.assertRegex(det_box, r"\(6 parts\)\n│\s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE")
         self.assertIn("[total]   6 parts", det_box)
         self.assertIn("├─ bundleA:r1", det_box)
         self.assertIn("└─ bundleA:r2", det_box)
@@ -1802,7 +1804,8 @@ class TestBundle(RunBlockTestCase):
                         ])
                     self.assertEqual(rc5, 0)
                     b_s3_f = (sessions / "s3" / "0").read_text(encoding="utf-8")
-                    self.assertIn("Sandbox: off", b_s3_f)
+                    self.assertNotIn("Sandbox:", b_s3_f)
+                    self.assertEqual(self.mod.get_sandbox_mode(sessions / "s3"), "off")
                     self.assertIn("===== Prompt =====\nAfter cmd\n", b_s3_f)
 
                 # Missing argument for -p / --prompt
@@ -1956,13 +1959,20 @@ class TestBundle(RunBlockTestCase):
         table_text = "\n".join(table_lines)
         self.assertNotIn(".agents_bundle", table_text)
         self.assertNotIn("external", table_text)
-        # Header row starts with # and %
-        self.assertRegex(table_lines[0], r"^  #\s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE$")
-        # Top and bottom [total] rows at depth=0 with blank # and (edited)
+        # Header row omits # and starts with blank num column padding before %
+        self.assertRegex(table_lines[0], r"^   \s+%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE$")
+        self.assertNotIn("#", table_lines[0])
+        # Top and bottom [total] rows at depth=0 with blank num_str and (edited)
         self.assertIn("100.0%", table_lines[1])
         self.assertIn("[total]   6 parts (edited)", table_lines[1])
         self.assertEqual(table_lines[1], table_lines[-1])
         self.assertEqual(self.mod.bundle_row_heavy_level(table_lines[1]), "")
+        h_rows = self.mod._collect_hierarchy_rows(plan, details=True, edited=True)
+        self.assertEqual([r["num_str"] for r in h_rows], ["", "1", "2", "3", "4", "5", "6", "7", "8", ""])
+        self.assertEqual(
+            [r["part_indices"] for r in h_rows[1:-1]],
+            [[1], [2], [3, 4], [3, 4], [3], [4], [5], [6]],
+        )
 
         # Physical appearance order: #1 [header] -> #2 run_block -> pkgA -> subB -> #3 r1 -> #4 r2 -> #5 cmd -> #6 prompt
         idx_hdr = next(i for i, ln in enumerate(table_lines) if "[header]" in ln)
@@ -2024,6 +2034,56 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(cards, [{"kind": "start_session", "session": "s2"}])
         # Second pop returns empty after deferred.json was consumed
         self.assertEqual(self.mod.pop_deferred_cards(parent_step_dir), [])
+
+    def test_bundle_raw_markup_preservation_on_edit_and_sandbox_off_omission(self):
+        nonce = "bnd_edit_raw"
+        stdin_text = (
+            f"Bundle-Boundary: {nonce}\n"
+            "Bundle-Expose: Role, Task\n"
+            "Role: work\n"
+            "Task: F69\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r1","chain":["pkg","sub"]}} -->\n'
+            "Rule 1 original text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r2","chain":["pkg","sub"]}} -->\n'
+            "Rule 2 original text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"prompt","name":"Prompt","chain":[]}} -->\n'
+            "===== Prompt =====\n"
+            "Initial prompt text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        self._assert_ok(self._run(["--start", "--session", "s_raw"], input=stdin_text))
+        sdir = self.tmp / "s_raw"
+        b0 = sdir / "0"
+        b0_raw = sdir / "0.raw"
+        self.assertTrue(b0.is_file())
+        self.assertTrue(b0_raw.is_file())
+
+        clean_initial = b0.read_text(encoding="utf-8")
+        raw_initial = b0_raw.read_text(encoding="utf-8")
+        self.assertNotIn(f"bundle:{nonce}", clean_initial)
+        self.assertIn(f"<!-- bundle:{nonce}:part", raw_initial)
+        self.assertNotIn("Sandbox:", clean_initial)
+        self.assertNotIn("Sandbox:", raw_initial)
+        self.assertEqual(self.mod.get_sandbox_mode(sdir), "off")
+
+        # Session bundle without Sandbox: header defaults to off even if RUN_BLOCK_SANDBOX default setting is checked
+        self.mod.set_session_bundle_header(sdir, "Sandbox", self.mod.format_sandbox_header("strict"))
+        self.assertIn("Sandbox: strict", b0.read_text(encoding="utf-8"))
+        self.assertIn("Sandbox: strict", b0_raw.read_text(encoding="utf-8"))
+        self.assertEqual(self.mod.get_sandbox_mode(sdir), "strict")
+        self.mod.set_session_bundle_header(sdir, "Sandbox", "off")
+        self.assertNotIn("Sandbox:", b0.read_text(encoding="utf-8"))
+        self.assertNotIn("Sandbox:", b0_raw.read_text(encoding="utf-8"))
+        self.assertEqual(self.mod.get_sandbox_mode(sdir), "off")
+
+        # Bundle stats and bundle_plan count clean text without boundary markup
+        plan0 = self.mod.load_session_bundle_plan(sdir, b0)
+        assert plan0 is not None
+        self.assertEqual(plan0["protocol"], "boundary")
+        self.assertEqual(plan0["chars"], len(clean_initial))
+        self.assertLess(len(clean_initial), len(raw_initial))
 
 
 if __name__ == "__main__":

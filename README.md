@@ -47,11 +47,15 @@ width), while `Bundle-*` transport headers (`Bundle-Command`, `Bundle-Boundary`,
 from `<session>/0` and TUI boxes), and
 `Bundle-Expose` / `Bundle-Hide` control which remaining `stdin` headers are
 forwarded into `<session>/0` alongside `run_block`'s own headers (`Session`,
-`Next-Block`, `Workdir`, `Sandbox`, `Date`). When `Bundle-Boundary: <nonce>` is
+`Next-Block`, `Workdir`, `Date`, plus `Sandbox` when a non-`off` sandbox mode is
+active; `Sandbox: off` is omitted from `<session>/0` and clipboard text while
+remaining visible in `i(nfo)`). When `Bundle-Boundary: <nonce>` is
 present, `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
 markers are parsed into per-part `bundle_plan` metrics (lines, chars, GPT/Claude
 tokens, percentage share) in `<session>/meta.json` and stripped cleanly from
-`<session>/0` (falling back to `===== ... =====` sections when no boundary is
+`<session>/0` while preserving boundary markup in `<session>/0.raw` so `e(dit)`
+in `START SESSION` edits boundary-annotated text and re-parses clean metrics
+(falling back to `===== ... =====` sections when no boundary is
 provided). The inline `START SESSION` box stays compact (retaining core headers, `Bundle:`,
 dim `Stats:`, and `Bundle warnings` when present, while full per-part tables
 stay in `run_block --bundle-plan`); press `i` at any interactive prompt to open
@@ -60,26 +64,31 @@ the borderless alternate-screen fullscreen `i(nfo)` metadata viewer
 `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn` to scroll, `e(dit)`/`s(cript)`/`o(utput)`
 to edit artifacts, `p(rompt)` on clipboard-copyable screens to append prompt
 or output notes, `v(iew)` to open the plain-text report in your editor,
-`Tab` (`Tab: parts` in `START SESSION`) to toggle the part selection cursor
-across `#1..#N` (`Up`/`Down` or `j`/`k` move the cursor, `Enter` opens
-`PART N/M` with `n`/`N` part browsing and `e(dit)`, `Tab`/`Esc` exits cursor
+`Tab` (`Tab: parts` in `START SESSION`) to toggle the table row selection cursor
+top-to-bottom across sequential numbered rows `1..M` (`Up`/`Down` or `j`/`k`
+move the cursor across both `[bundle]` folder rows and leaf part rows, `Enter`
+opens `PART N/M` for a leaf part or `BUNDLE R/M` with constituent part
+delimiters for a multi-part `[bundle]` folder row, `n`/`N` steps across rows
+`1..M`, `e(dit)` edits the bundle, and `Tab`/`Esc` exits cursor
 mode), `Enter` to copy, and `Esc`/`q`/`i` to return) without leaving duplicate
 headers or stale lines in scrollback. All inline TUI boxes
 (`START SESSION`, `START STEP`, `END STEP`, and confirmation dialogs) clamp overflowing sections
 to the visible terminal height (`... +N more`) and reflow cleanly across both
 width and height `SIGWINCH` resizes.
 The `Summary` / `Parts` tables (`i(nfo)` and `--bundle-plan`) start with a
-`top`-style header row (`#`, `%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE`)
+`top`-style header row (`%`, `CHARS`, `LINES`, `~TOK`, `KIND`, `SOURCE` with a
+dim sequential row-number column without a `#` label)
 followed by a top `100.0%` `[total]` row and ending with a bottom `100.0%`
-`[total]` row (`<N> parts`, or `<N> parts (edited)` when modified). All bundle
-parts are ordered strictly in their physical appearance order (starting with
-`#1 [header] Headers & spacing` when leading session/preamble headers exist
-through `#N [prompt]` at the end), with tree hierarchy built purely from each
+`[total]` row (`<N> parts`, or `<N> parts (edited)` when modified). All non-`[total]`
+table rows are numbered sequentially `1..M` top-to-bottom in dim gray (including
+parent `[bundle]` folder rows and leaf part rows, starting with
+`1 [header] Headers & spacing` when leading session/preamble headers exist
+through `M [prompt]` at the end), with tree hierarchy built purely from each
 part's `chain` metadata and nested `%` shares indented by tree depth (`depth * 2`
 spaces). `chain`-backed nodes and single-part bundle inclusions are `[bundle]`,
 while `[rule]` marks leaf and root rules. Non-`[total]` rows with a share of at
 least 10% or ~3k tokens are accented, and rows with at least 25% or ~10k tokens
-are highlighted in the warning color.
+are highlighted in the warning color (keeping the leading row number dim).
 
 Each part in `bundle_plan` also records 1-based `line_start` / `line_end` line
 ranges inside the final cleaned `<session>/0` (body-relative for `stdin`

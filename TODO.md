@@ -17,26 +17,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
   3. Consistent `run_block -l` / `--list` and `--info` formatting across summary rows and recent-block listings (including fix-step ordering and optional `Task` / `Workdir` context).
 - Target files for downstream implementation: `src/runner.py`, `src/config.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `tests/test_runner.py`, `tests/test_cli.py`.
 
-# 🎯 [NEXT] F69: Sequential dim bundle table row numbers, folder/part Tab cursor viewer, preserve boundary markup on e(dit), and omit Sandbox: off
-
-- Depends on: F77
-- Sequential bundle table row numbers, dim number styling, and header without `#` (`src/bundle_plan.py`, `src/ui.py`):
-  - In `_collect_hierarchy_rows()`, assign strictly sequential 1-based table row numbers (`1, 2, ..., M`) top-to-bottom across all non-`[total]` table rows (both leaf part rows and multi-part parent `[bundle]` folder rows), leaving top and bottom `[total]` rows with blank `num_str = ""`.
-  - Record `part_indices: list[int]` on every numbered row (`[part_idx]` for a single leaf part row, and the ordered list of all descendant leaf part indices `[idx1, idx2, ...]` for a parent `[bundle]` folder row).
-  - In `_render_bundle_table()`, omit the `#` column header label (render blank padding `" " * w_num` before `% CHARS LINES ~TOK KIND SOURCE`).
-  - In `_colorize_bundle_lines()` (`src/ui.py`), match the `#`-free table header row and always color the leading row number column in dim `_KEY_COLOR` (`\x1b[2m`), keeping it dim even when the rest of the row prefix is colored with `warn` or `accent` in `bundle_row_heavy_level()`.
-- Top-to-bottom `Tab` table row cursor and `[bundle]` folder viewer (`src/ui.py`, `src/bundle_plan.py`):
-  - Update `_find_selectable_part_rows()`, `_build_info_screen()`, and `_show_info_fullscreen()` so `Tab` cursor navigation moves strictly top-to-bottom and bottom-to-top across sequential table rows `1..M` (including `[bundle]` folder rows) without jumping when parts are grouped into tree nodes.
-  - When `Enter` is pressed on row `r` (`1..M`) in `_open_part_viewer()`:
-    - For a single-part row (`len(part_indices) == 1`), open the part in `_build_part_screen()` (`PART <part_no>/<total_parts> · <label>`).
-    - For a multi-part `[bundle]` folder row (`len(part_indices) > 1`), render all constituent parts together in order with a clear delimiter header before each part (`===== [part <k>/<total_parts>] [<kind>] <source> (lines <start>-<end>) =====`) and folder metadata in `_build_part_screen()`, while `n`/`N` steps to the next/previous table row `1..M`.
-- Preserve boundary markup during `e(dit)` and count clean bundle size without markers (`src/bundle.py`, `src/bundle_plan.py`, `src/config.py`, `src/ui.py`):
-  - Preserve the raw boundary-annotated bundle source (e.g. in `<session>/0.raw` or an editable staging file) during `format_start_bundle()` and `cmd_start()` instead of stripping `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers irreversibly on initialization, keeping embedded block-rule injection idempotent.
-  - When `e(dit)` is triggered on `START SESSION` (inline or via `i(nfo)`), open the markup-preserving editable content so manual edits preserve fragment boundaries, then re-parse with `parse_bundle_fragments()` and update both the raw source and clean `<session>/0`, keeping `Stats:`, `bundle_plan`, clipboard text, `0.orig` backup, and `p(rompt)` compatibility strictly on the clean stripped text.
-- Omit `Sandbox: off` from `bundle_header_lines` in `format_start_bundle()` (`src/bundle.py`, `src/config.py`, `src/ui.py`):
-  - Only emit `Sandbox: <header>` in model-facing `<session>/0` and clipboard text when a sandbox mode is active (`normalize_sandbox_mode(sb_mode) != "off"`); remove any existing `Sandbox:` preamble line in `set_session_bundle_header()` when setting `Sandbox` to `off`, and treat a missing `Sandbox:` header in an existing session bundle (`(session_dir / "0").is_file()`) as `"off"` in `get_sandbox_mode()` while `i(nfo)` (`_format_info_header_lines()`) continues to display `Sandbox: off`.
-- Update `README.md`, rebuild `run_block` via `python3 build.py`, and verify with offline unit tests in `tests/test_bundle.py` and `tests/test_ui.py`.
-
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
 - Depends on: F57, B8

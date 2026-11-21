@@ -40,13 +40,16 @@ def format_start_bundle(
         f"Session: {session_name}",
         f"Next-Block: {session_name}/1",
         f"Workdir: {wdir}",
-        f"Sandbox: {sb_hdr}",
-        f"Date: {ts}",
     ]
+    if normalize_sandbox_mode(sb_mode) != "off":
+        bundle_header_lines.append(f"Sandbox: {sb_hdr}")
+    bundle_header_lines.append(f"Date: {ts}")
     for exp_k, exp_v in exposed_headers:
         bundle_header_lines.append(f"{exp_k}: {exp_v}")
     bundle_header_text = "\n".join(bundle_header_lines) + "\n"
     full_text = bundle_header_text + ("\n" + clean_body + "\n" if clean_body else "")
+    norm_raw_body = raw_body.strip("\n")
+    raw_full_text = bundle_header_text + ("\n" + norm_raw_body + "\n" if norm_raw_body else "")
     full_tok = count_tokens(full_text.encode("utf-8"))
     total_lines = int(full_tok["lines"])
     total_chars = int(full_tok["chars"])
@@ -65,6 +68,7 @@ def format_start_bundle(
     return {
         "console_lines": console_lines,
         "full": full_text,
+        "raw_full": raw_full_text,
         "raw_body": raw_body,
         "stdin_headers": stdin_headers,
         "exposed_headers": exposed_headers,
@@ -76,13 +80,12 @@ def format_start_bundle(
     }
 
 
-def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
-    bundle_path = ensure_session_bundle(sdir)
-    text = bundle_path.read_text(encoding="utf-8", errors="replace")
+def _update_bundle_text_header(text: str, key: str, value: str) -> str:
     lines = text.splitlines()
     header_end = 0
     target_idx = -1
-    key_lower = key.lower()
+    key_lower = re.sub(r"\s+", "-", key.strip().lower())
+    remove_line = key_lower == "sandbox" and normalize_sandbox_mode(value.split()[0] if value.strip() else "") == "off"
     for idx, line in enumerate(lines):
         stripped = line.strip()
         if not stripped or stripped.startswith("====="):
@@ -96,13 +99,27 @@ def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
         if k == key_lower:
             target_idx = idx
         header_end = idx + 1
-    new_line = f"{key}: {value}"
-    if target_idx >= 0:
-        lines[target_idx] = new_line
+    if remove_line:
+        if target_idx >= 0:
+            lines.pop(target_idx)
     else:
-        insert_at = max(0, header_end - 1) if header_end > 0 else 0
-        lines.insert(insert_at, new_line)
-    write_private(bundle_path, "\n".join(lines) + "\n", overwrite=True)
+        new_line = f"{key}: {value}"
+        if target_idx >= 0:
+            lines[target_idx] = new_line
+        else:
+            insert_at = max(0, header_end - 1) if header_end > 0 else 0
+            lines.insert(insert_at, new_line)
+    return "\n".join(lines) + "\n"
+
+
+def set_session_bundle_header(sdir: Path, key: str, value: str) -> None:
+    bundle_path = ensure_session_bundle(sdir)
+    text = bundle_path.read_text(encoding="utf-8", errors="replace")
+    write_private(bundle_path, _update_bundle_text_header(text, key, value), overwrite=True)
+    raw_path = sdir / "0.raw"
+    if raw_path.is_file():
+        raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
+        write_private(raw_path, _update_bundle_text_header(raw_text, key, value), overwrite=True)
 
 
 def cmd_start(
@@ -184,6 +201,11 @@ def cmd_start(
         prompt=prompts,
     )
     write_private(bundle_path, str(res["full"]), overwrite=True)
+    raw_path = sdir / "0.raw"
+    if isinstance(res.get("bundle_plan"), dict) and res["bundle_plan"].get("protocol") == "boundary":
+        write_private(raw_path, str(res.get("raw_full") or res["full"]), overwrite=True)
+    else:
+        raw_path.unlink(missing_ok=True)
     stdin_headers = list(res.get("stdin_headers") or [])
     bundle_plan = res.get("bundle_plan")
     write_session_meta(
