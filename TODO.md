@@ -1,3 +1,15 @@
+# 🎯 [NEXT] F80: Restructure README.md with Quick Start workflow, TUI shortcut table, and scannable feature sections
+
+- Replace the monolithic prose paragraphs in `README.md` (`## Starting a Session` and `### 2. Inspecting the START STEP before execution`) with a clear, scannable hierarchy wrapped at ~80 columns:
+  1. Concise intro and `## Key Features` bullet list (zero-daemon chat-to-terminal loop, AST/regex safety scanner, interactive TUI cards and fullscreen `i(nfo)` inspector, context bundle protocol and token accounting, targeted `--fix` patching and session lifecycle).
+  2. `## Quick Installation` (Linux/macOS `install.sh` and Windows PowerShell 7+ `install.ps1`).
+  3. `## Quick Start` with runnable examples up front and brief 3-5 line explanations for the 4-step workflow: starting a session (`run_block`, `<cmd> | run_block -p`), running numbered blocks (`<session>/<step>`), patching a failed block (`--fix`), and completing/chaining sessions (`--done` and nested `IN_RUN_BLOCK=1`).
+  4. `## Interactive TUI & Keyboard Shortcuts` summarizing card prompts (`START SESSION`, `START STEP`, `END STEP`, `END SESSION`, `STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `SESSION COMPLETED`), prompt keys (`Enter`/`y`, `n`/`Esc`, `p(rompt)`, `r(enumber)`, `i(nfo)`), and fullscreen `i(nfo)` navigation (`Tab` parts cursor, `Enter` part/bundle viewer, `n`/`N`, `e(dit)`/`s(cript)`/`o(utput)`, `v(iew)`) in compact tables instead of dense prose.
+  5. `## Context Bundles & Part Inspection` covering `Key: Value` preamble headers, `Bundle-*` protocol, `--bundle-plan`, and `--part N`.
+  6. `## Safety Scanner, Sandboxing & Approval Hooks` covering `--plan`, `--sandbox` (`off`, `strict`, `nonet`), `RUN_BLOCK_APPROVE_CMD`, and `RUN_BLOCK_SAFETY_*`.
+  7. `## CLI Reference` and `## Environment Variables` reference tables.
+- Target files: `README.md` (verifying consistency with `src/header.py`, `src/ui.py`, `src/runner.py`, `src/bundle_plan.py`, and `AGENTS.md`).
+
 # 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
 
 - Depends on: F42
@@ -39,7 +51,7 @@
 
 # ⚪ [NEW] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture
 
-- Depends on: B12
+- Depends on: B12, F80
 - Since the separate stderr capture, `src/runner.py` reads stdout and stderr via two descriptors on two reader threads (`_iter_child_streams`), so the order of lines in `step_dir / "out"` follows read timing instead of write order; previously the shared PTY descriptor kept the exact write order in interactive mode.
 - Impact on the model: a traceback or diagnostic may be separated from the command that produced it, and `__RB_STEP__` progress markers (stdout) may drift relative to stderr lines of the same step, which can mislead error attribution in long blocks with interleaved output.
 - Reproduce first with a unit test that interleaves `echo` and `echo >&2` in a loop and compares the order in `out` with the write order; then pick an approach (for example keep one shared descriptor for `out` and obtain `err` separately, such as a per-command stderr tee in the instrumented script, or accept and document the ordering limits).
@@ -49,6 +61,8 @@
 
 - Encountered a stall during block execution when a model-generated inspection command (`git diff HEAD`) opened an interactive pager inside the PTY, forcing manual `q` / `Ctrl+C` intervention.
 - Design a balanced approach in `run_block` rules (and/or runner defaults) that prevents trivial interactive pagination/stalls when reading output without blocking intentional human-in-the-loop prompts, keeping in mind a future automation layer that will introduce stricter non-interactive rules.
+
+- Also reproduce with `gh api` (which opens `less` on a TTY when `GH_PAGER` / `PAGER` is unset inside `run_block`'s PTY) in addition to `git diff`, and evaluate exporting non-interactive pager defaults (`PAGER=cat`, `GIT_PAGER=cat`, `GH_PAGER=cat`, `MANPAGER=cat`, `SYSTEMD_PAGER=cat`, `BAT_PAGER=cat`) in the child execution environment in `src/runner.py` (configurable via `src/config.py`).
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
 
