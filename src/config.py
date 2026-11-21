@@ -323,7 +323,15 @@ def update_session_meta(session_dir: Path, **updates: object) -> Path | None:
     return meta_file
 
 
-_SESSION_STATE_KEYS = ("completed", "completed_at", "completed_note", "stats")
+_SESSION_STATE_KEYS = (
+    "completed",
+    "completed_at",
+    "completed_note",
+    "stats",
+    "parent_session",
+    "parent_step",
+    "spawned_sessions",
+)
 _STAT_COUNTERS = ("steps", "ok", "failed", "fix", "renumbered", "duration_ms")
 
 
@@ -592,3 +600,93 @@ def no_clipboard() -> bool:
 
 def in_run_block() -> bool:
     return os.environ.get("IN_RUN_BLOCK") == "1"
+
+
+def parent_run_block_ref() -> tuple[str, str] | None:
+    if not in_run_block():
+        return None
+    sess = (os.environ.get("RUN_BLOCK_PARENT_SESSION") or "").strip()
+    step = (os.environ.get("RUN_BLOCK_PARENT_STEP") or "").strip()
+    if not sess or not step:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", sess):
+        return None
+    if not re.fullmatch(r"\d+(?:_\d+)?", step):
+        return None
+    return sess, step
+
+
+def _parent_step_dir_from_env() -> Path | None:
+    ref = parent_run_block_ref()
+    if ref is None:
+        return None
+    sess, step = ref
+    base = default_base_dir()
+    step_d = base / sess / step
+    return step_d if step_d.is_dir() else None
+
+
+def append_deferred_card(kind: str, **payload: object) -> bool:
+    step_d = _parent_step_dir_from_env()
+    if step_d is None:
+        return False
+    deferred_file = step_d / "deferred.json"
+    cards: list[dict[str, object]] = []
+    if deferred_file.is_file():
+        try:
+            raw = json.loads(deferred_file.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(raw, list):
+                cards = [c for c in raw if isinstance(c, dict)]
+        except (OSError, ValueError):
+            cards = []
+    entry: dict[str, object] = {"kind": kind}
+    entry.update(payload)
+    cards.append(entry)
+    text = json.dumps(cards, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(deferred_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    return True
+
+
+def pop_deferred_cards(step_dir: Path | None) -> list[dict[str, object]]:
+    if step_dir is None:
+        return []
+    deferred_file = step_dir / "deferred.json"
+    if not deferred_file.is_file():
+        return []
+    cards: list[dict[str, object]] = []
+    try:
+        raw = json.loads(deferred_file.read_text(encoding="utf-8", errors="replace"))
+        if isinstance(raw, list):
+            cards = [c for c in raw if isinstance(c, dict)]
+    except (OSError, ValueError):
+        cards = []
+    deferred_file.unlink(missing_ok=True)
+    return cards
+
+
+def record_parent_child_session(child_sdir: Path) -> tuple[str, str] | None:
+    ref = parent_run_block_ref()
+    if ref is None:
+        return None
+    parent_sess, parent_step = ref
+    base = child_sdir.parent
+    parent_sdir = base / parent_sess
+    update_session_meta(
+        child_sdir,
+        parent_session=parent_sess,
+        parent_step=parent_step,
+    )
+    if parent_sdir.is_dir():
+        p_meta = read_session_meta(parent_sdir)
+        raw_spawned = p_meta.get("spawned_sessions")
+        spawned: list[str] = (
+            [str(x) for x in raw_spawned if isinstance(x, str)]
+            if isinstance(raw_spawned, list)
+            else []
+        )
+        if child_sdir.name not in spawned:
+            spawned.append(child_sdir.name)
+        update_session_meta(parent_sdir, spawned_sessions=spawned)
+    return parent_sess, parent_step

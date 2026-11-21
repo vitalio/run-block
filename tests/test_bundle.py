@@ -1988,6 +1988,43 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(pct_end_1 - pct_end_0, 2)
         self.assertEqual(pct_end_2 - pct_end_1, 2)
 
+    def test_f79_nested_cmd_start_defers_card_and_links_parent_child_meta(self):
+        # Initialize parent session s1 and create active step directory s1/1
+        self._assert_ok(self._run(["--start", "--session", "s1"], input="Task: F79\n\nparent body\n"))
+        parent_sdir = self.tmp / "s1"
+        parent_step_dir = parent_sdir / "1"
+        parent_step_dir.mkdir(parents=True, exist_ok=True)
+
+        nested_env = {
+            **os.environ,
+            "IN_RUN_BLOCK": "1",
+            "RUN_BLOCK_PARENT_SESSION": "s1",
+            "RUN_BLOCK_PARENT_STEP": "1",
+        }
+        r_child = self._run(
+            [],
+            input="Task: F80\nTitle: Child task\n\nchild prompt body\n",
+            env=nested_env,
+        )
+        self._assert_ok(r_child)
+        # Inside the active step, stdout is only the single plain diagnostic line (no START SESSION box)
+        self.assertEqual(r_child.stdout, "run_block: initialized session s2 (s2/0)\n")
+        self.assertNotIn("START SESSION", r_child.stdout)
+
+        child_sdir = self.tmp / "s2"
+        self.assertTrue((child_sdir / "0").is_file())
+        child_meta = self.mod.read_session_meta(child_sdir)
+        self.assertEqual(child_meta.get("parent_session"), "s1")
+        self.assertEqual(child_meta.get("parent_step"), "1")
+
+        parent_meta = self.mod.read_session_meta(parent_sdir)
+        self.assertEqual(parent_meta.get("spawned_sessions"), ["s2"])
+
+        cards = self.mod.pop_deferred_cards(parent_step_dir)
+        self.assertEqual(cards, [{"kind": "start_session", "session": "s2"}])
+        # Second pop returns empty after deferred.json was consumed
+        self.assertEqual(self.mod.pop_deferred_cards(parent_step_dir), [])
+
 
 if __name__ == "__main__":
     unittest.main()

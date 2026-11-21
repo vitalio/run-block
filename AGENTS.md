@@ -36,13 +36,24 @@ rules are loaded via `.agents_bundle`.
   blank line) into `<session>/meta.json`, keeping `<session>/0` limited to
   `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
   `Date`) and the prompt body.
-- Session completion state (`--done`): persist `"completed": true` and
-  `"completed_at"` (UTC ISO timestamp), optional `"completed_note"`, and accumulated `"stats"`
-  (updated by `run_script` via `update_session_stats`) in `<session>/meta.json` without
-  altering `<session>/0` headers. Before running any block (`<session>/<step>`,
-  `--fix`, or `--retry`) on a completed session, warn and prompt for
-  confirmation (`SESSION COMPLETED`, default `No`), clearing the completed flag
-  only when confirmed (or when `-y`/`--yes` is explicitly passed).
+- Session completion state (`--done`) and nested `IN_RUN_BLOCK=1` contract:
+  persist `"completed": true` and `"completed_at"` (UTC ISO timestamp),
+  optional `"completed_note"`, accumulated `"stats"` (updated by `run_script`
+  via `update_session_stats`), and parent/child session linkage
+  (`"parent_session"`, `"parent_step"`, `"spawned_sessions"`) in
+  `<session>/meta.json` without altering `<session>/0` headers. `run_script`
+  exports `IN_RUN_BLOCK=1`, `RUN_BLOCK_PARENT_SESSION`, and
+  `RUN_BLOCK_PARENT_STEP`; inside a running step, nested step execution
+  (`<session>/<step>`, `--fix`, `--retry`) and sandbox mutations exit `2`,
+  while `--done` and `--start` / piped bundle initialization log a single plain
+  line to `stdout` and queue `end_session` / `start_session` events in
+  `<parent_sdir>/<parent_step>/deferred.json` so `run_script` renders
+  `END STEP` -> `END SESSION` -> `START SESSION` in order after updating step
+  stats (suppressing the outer `END STEP` clipboard prompt when a child session
+  is spawned). Before running any block (`<session>/<step>`, `--fix`, or
+  `--retry`) on a completed session, warn and prompt for confirmation
+  (`SESSION COMPLETED`, default `No`), clearing the completed flag only when
+  confirmed (or when `-y`/`--yes` is explicitly passed).
 - `src/cli.py` — CLI argument routing and self-update (`--update`,
   `--check-update`).
 - `tests/helpers.py` — shared `ROOT`, `SCRIPT`, `INSTALL_SH`, cached

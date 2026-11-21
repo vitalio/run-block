@@ -460,6 +460,57 @@ class TestCli(RunBlockTestCase):
         s5_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s5")
         self.assertEqual(Path(s5_hdrs["workdir"]).resolve(), explicit_dir.resolve())
 
+    def test_f79_nested_in_run_block_subcommand_guards(self):
+        # Create an initial session and step so retry/fix/show/list/sandbox have targets
+        self._assert_ok(self._run(["--start", "--session", "s1"], input="Task: F79\n\nhello\n"))
+        self._assert_ok(self._run(["-y", "s1/1"], input="echo first\n"))
+
+        nested_env = {
+            **os.environ,
+            "IN_RUN_BLOCK": "1",
+            "RUN_BLOCK_PARENT_SESSION": "s1",
+            "RUN_BLOCK_PARENT_STEP": "1",
+        }
+
+        # 1. Nested step execution (<session>/<step>, --fix, --retry) is rejected with exit 2
+        for label, argv, stdin_payload in (
+            ("step", ["s1/2"], "echo nested\n"),
+            ("fix", ["--fix", "s1/1"], "text = text.replace('first', 'second')\n"),
+            ("retry", ["--retry", "s1/1"], ""),
+            ("retry_implicit", ["--retry"], ""),
+        ):
+            with self.subTest(case=label):
+                proc = self._run(argv, input=stdin_payload, env=nested_env)
+                self.assertEqual(proc.returncode, 2, msg=proc.stderr)
+                self.assertIn("cannot run", proc.stderr)
+                self.assertIn("from inside a running block (active step: s1/1)", proc.stderr)
+
+        # 2. Read-only subcommands (--list, --show, --bundle-plan, --plan, --sandbox) succeed
+        r_list = self._run(["--list", "s1"], env=nested_env)
+        self._assert_ok(r_list)
+        self.assertIn("Blocks in s1", r_list.stdout)
+
+        r_show = self._run(["--show", "s1/1"], env=nested_env)
+        self._assert_ok(r_show)
+        self.assertIn("echo first", r_show.stdout)
+
+        r_bplan = self._run(["--bundle-plan", "s1"], env=nested_env)
+        self._assert_ok(r_bplan)
+        self.assertIn("[total]", r_bplan.stdout)
+
+        r_plan = self._run(["--plan"], input="echo safe\n", env=nested_env)
+        self._assert_ok(r_plan)
+        self.assertIn('"operations"', r_plan.stdout)
+
+        r_sb_ro = self._run(["--sandbox"], env=nested_env)
+        self._assert_ok(r_sb_ro)
+        self.assertIn("Session: s1", r_sb_ro.stdout)
+
+        # Sandbox mutation remains rejected with exit 2
+        r_sb_mut = self._run(["--sandbox", "strict", "s1"], env=nested_env)
+        self.assertEqual(r_sb_mut.returncode, 2)
+        self.assertIn("cannot modify session sandbox settings from inside a running block", r_sb_mut.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

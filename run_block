@@ -65,11 +65,11 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.27.1"
+VERSION = "0.28.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
-EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing a session: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block; prints an `END SESSION` summary with accumulated statistics and marks the session `[DONE]` in `--list`). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
-EMBEDDED_RULE_PWSH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@\'\ngit status -sb\n\'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@\'`, `\'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `\'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n\'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing a session: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block; prints an `END SESSION` summary with accumulated statistics and marks the session `[DONE]` in `--list`). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
+EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block, optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
+EMBEDDED_RULE_PWSH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@\'\ngit status -sb\n\'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@\'`, `\'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `\'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n\'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: When the user asks to end the session, or after the final commit, finish with `{cmd:run_block} --done [<session>] [-m "<note>"]` (allowed inside the last block, optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
 
 
 def prog_name() -> str:
@@ -397,7 +397,15 @@ def update_session_meta(session_dir: Path, **updates: object) -> Path | None:
     return meta_file
 
 
-_SESSION_STATE_KEYS = ("completed", "completed_at", "completed_note", "stats")
+_SESSION_STATE_KEYS = (
+    "completed",
+    "completed_at",
+    "completed_note",
+    "stats",
+    "parent_session",
+    "parent_step",
+    "spawned_sessions",
+)
 _STAT_COUNTERS = ("steps", "ok", "failed", "fix", "renumbered", "duration_ms")
 
 
@@ -666,6 +674,96 @@ def no_clipboard() -> bool:
 
 def in_run_block() -> bool:
     return os.environ.get("IN_RUN_BLOCK") == "1"
+
+
+def parent_run_block_ref() -> tuple[str, str] | None:
+    if not in_run_block():
+        return None
+    sess = (os.environ.get("RUN_BLOCK_PARENT_SESSION") or "").strip()
+    step = (os.environ.get("RUN_BLOCK_PARENT_STEP") or "").strip()
+    if not sess or not step:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", sess):
+        return None
+    if not re.fullmatch(r"\d+(?:_\d+)?", step):
+        return None
+    return sess, step
+
+
+def _parent_step_dir_from_env() -> Path | None:
+    ref = parent_run_block_ref()
+    if ref is None:
+        return None
+    sess, step = ref
+    base = default_base_dir()
+    step_d = base / sess / step
+    return step_d if step_d.is_dir() else None
+
+
+def append_deferred_card(kind: str, **payload: object) -> bool:
+    step_d = _parent_step_dir_from_env()
+    if step_d is None:
+        return False
+    deferred_file = step_d / "deferred.json"
+    cards: list[dict[str, object]] = []
+    if deferred_file.is_file():
+        try:
+            raw = json.loads(deferred_file.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(raw, list):
+                cards = [c for c in raw if isinstance(c, dict)]
+        except (OSError, ValueError):
+            cards = []
+    entry: dict[str, object] = {"kind": kind}
+    entry.update(payload)
+    cards.append(entry)
+    text = json.dumps(cards, indent=2, ensure_ascii=False) + "\n"
+    fd = os.open(deferred_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(text)
+    return True
+
+
+def pop_deferred_cards(step_dir: Path | None) -> list[dict[str, object]]:
+    if step_dir is None:
+        return []
+    deferred_file = step_dir / "deferred.json"
+    if not deferred_file.is_file():
+        return []
+    cards: list[dict[str, object]] = []
+    try:
+        raw = json.loads(deferred_file.read_text(encoding="utf-8", errors="replace"))
+        if isinstance(raw, list):
+            cards = [c for c in raw if isinstance(c, dict)]
+    except (OSError, ValueError):
+        cards = []
+    deferred_file.unlink(missing_ok=True)
+    return cards
+
+
+def record_parent_child_session(child_sdir: Path) -> tuple[str, str] | None:
+    ref = parent_run_block_ref()
+    if ref is None:
+        return None
+    parent_sess, parent_step = ref
+    base = child_sdir.parent
+    parent_sdir = base / parent_sess
+    update_session_meta(
+        child_sdir,
+        parent_session=parent_sess,
+        parent_step=parent_step,
+    )
+    if parent_sdir.is_dir():
+        p_meta = read_session_meta(parent_sdir)
+        raw_spawned = p_meta.get("spawned_sessions")
+        spawned: list[str] = (
+            [str(x) for x in raw_spawned if isinstance(x, str)]
+            if isinstance(raw_spawned, list)
+            else []
+        )
+        if child_sdir.name not in spawned:
+            spawned.append(child_sdir.name)
+        update_session_meta(parent_sdir, spawned_sessions=spawned)
+    return parent_sess, parent_step
 
 
 # --- Detailed pre-execution block plan and safety scanner ---
@@ -8824,7 +8922,15 @@ def run_script(
 
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
-    child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
+    child_env = scrub_child_env(
+        {
+            **os.environ,
+            "IN_RUN_BLOCK": "1",
+            "RUN_BLOCK_PARENT_SESSION": sdir.name,
+            "RUN_BLOCK_PARENT_STEP": step_dir.name,
+        },
+        sandbox_mode,
+    )
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
     exec_started = time.monotonic()
     try:
@@ -8948,13 +9054,23 @@ def run_script(
         )
     except OSError:
         pass
+    deferred_cards = pop_deferred_cards(step_dir)
+    end_session_cards = [c for c in deferred_cards if c.get("kind") == "end_session"]
+    start_session_cards = [c for c in deferred_cards if c.get("kind") == "start_session"]
+    has_deferred_start = bool(start_session_cards)
     clip_target = resolve_clipboard_target(out_path, full_output)
     if headless:
         if stdin_diag_lines:
             sys.stdout.write("".join(d + "\n" for d in stdin_diag_lines))
         sys.stdout.write(end_line)
         sys.stdout.flush()
-    elif in_run_block() or not sys.stdout.isatty() or clipboard_mode() != "prompt" or clipboard_command(clip_target) is None:
+    elif (
+        has_deferred_start
+        or in_run_block()
+        or not sys.stdout.isatty()
+        or clipboard_mode() != "prompt"
+        or clipboard_command(clip_target) is None
+    ):
         end_body = build_box_body_lines(
             clip_target,
             rc=rc,
@@ -8967,7 +9083,7 @@ def run_script(
         )
         sys.stdout.write("\n" + format_info_box("END STEP", end_body) + "\n")
         sys.stdout.flush()
-    if not headless:
+    if not headless and not has_deferred_start:
         offer_clipboard_copy(
             label,
             out_path,
@@ -8978,6 +9094,20 @@ def run_script(
             failed_step=failed_step,
             sdir=sdir,
         )
+    base_dir = sdir.parent
+    for card in end_session_cards:
+        sess_name = str(card.get("session") or sdir.name)
+        target_sdir = base_dir / sess_name
+        if target_sdir.is_dir():
+            render_end_session_card(target_sdir, headless=headless)
+    valid_start_dirs = [
+        base_dir / str(card.get("session") or "")
+        for card in start_session_cards
+        if str(card.get("session") or "") and (base_dir / str(card.get("session") or "")).is_dir()
+    ]
+    for idx, target_sdir in enumerate(valid_start_dirs):
+        is_last = idx == len(valid_start_dirs) - 1
+        render_start_session_card(target_sdir, offer_copy=(is_last and not headless))
     return rc
 
 
@@ -9067,24 +9197,9 @@ def _session_stats_lines(meta: dict[str, object]) -> list[str]:
     return lines
 
 
-def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool = False) -> int:
-    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
-    base = ensure_base()
-    if session:
-        sdir = base / session
-        if not sdir.is_dir():
-            raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
-    else:
-        found = _find_latest_session_dir()
-        if found is None:
-            raise SystemExit(f"{prog_name()}: no sessions found in {base}")
-        sdir = found
+def render_end_session_card(sdir: Path, *, headless: bool = False) -> None:
     name = sdir.name
-    if is_session_completed(sdir):
-        when = read_session_meta(sdir).get("completed_at") or "unknown time"
-        sys.stdout.write(f"{prog_name()}: session {name} is already marked as completed ({when})\n")
-        return 0
-    meta = set_session_completed(sdir, note=note)
+    meta = read_session_meta(sdir)
     lines = [f"Session: {name}", f"Completed: {meta.get('completed_at')}", *_session_stats_lines(meta)]
     if meta.get("completed_note"):
         lines.append(f"Note: {meta['completed_note']}")
@@ -9093,6 +9208,35 @@ def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool
     else:
         sys.stdout.write(format_info_box("END SESSION", lines) + "\n")
     sys.stdout.flush()
+
+
+def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool = False) -> int:
+    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    base = ensure_base()
+    if session:
+        sdir = base / session
+        if not sdir.is_dir():
+            raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
+    else:
+        parent_ref = parent_run_block_ref()
+        if parent_ref is not None and (base / parent_ref[0]).is_dir():
+            sdir = base / parent_ref[0]
+        else:
+            found = _find_latest_session_dir()
+            if found is None:
+                raise SystemExit(f"{prog_name()}: no sessions found in {base}")
+            sdir = found
+    name = sdir.name
+    if is_session_completed(sdir):
+        when = read_session_meta(sdir).get("completed_at") or "unknown time"
+        sys.stdout.write(f"{prog_name()}: session {name} is already marked as completed ({when})\n")
+        return 0
+    set_session_completed(sdir, note=note)
+    if in_run_block() and append_deferred_card("end_session", session=name):
+        sys.stdout.write(f"{prog_name()}: session {name} marked completed\n")
+        sys.stdout.flush()
+        return 0
+    render_end_session_card(sdir, headless=headless)
     return 0
 
 
@@ -9143,9 +9287,22 @@ def _guard_completed_session(
     return rc_out
 
 
+def _reject_nested_step_execution(action: str) -> int:
+    prog = prog_name()
+    parent_ref = parent_run_block_ref()
+    where = f" (active step: {parent_ref[0]}/{parent_ref[1]})" if parent_ref else ""
+    sys.stderr.write(
+        f"{prog}: cannot run {action} from inside a running block{where}\n"
+    )
+    sys.stderr.flush()
+    return 2
+
+
 def cmd_normal(
     ref: str, payload: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
+    if in_run_block():
+        return _reject_nested_step_execution(f"block {ref}")
     payload, split_err = _reassemble_split_payload(payload)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, step = parse_ref(ref, allow_fix_step=False)
@@ -9328,6 +9485,8 @@ def cmd_normal(
 def cmd_fix(
     ref: str, fix_code: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
+    if in_run_block():
+        return _reject_nested_step_execution(f"--fix {ref}")
     fix_code, split_err = _reassemble_split_payload(fix_code)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, target = parse_ref(ref, allow_fix_step=True)
@@ -9642,6 +9801,9 @@ def cmd_show(ref: str | None = None, part: int | None = None) -> int:
 def cmd_retry(
     ref: str | None = None, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
+    if in_run_block():
+        target = f"--retry {ref}" if ref else "--retry"
+        return _reject_nested_step_execution(target)
     if ref:
         session, step = parse_ref(ref, allow_fix_step=True)
     else:
@@ -9684,9 +9846,6 @@ def _find_latest_session_dir() -> Path | None:
 
 def cmd_sandbox(argv: list[str]) -> int:
     prog = prog_name()
-    if in_run_block():
-        sys.stderr.write(f"{prog}: cannot modify session sandbox settings from inside a running block\n")
-        return 2
     mode_arg: str | None = None
     session_arg: str | None = None
     for a in argv:
@@ -9702,7 +9861,14 @@ def cmd_sandbox(argv: list[str]) -> int:
             raise SystemExit(f"{prog}: usage: {prog} --sandbox [off|strict|nonet] [session]")
 
     base = ensure_base()
-    sdir = (base / session_arg) if session_arg else _find_latest_session_dir()
+    if session_arg:
+        sdir: Path | None = base / session_arg
+    else:
+        parent_ref = parent_run_block_ref()
+        if parent_ref is not None and (base / parent_ref[0]).is_dir():
+            sdir = base / parent_ref[0]
+        else:
+            sdir = _find_latest_session_dir()
     backend = detect_sandbox_backend()
     if mode_arg is None:
         cur_mode = get_sandbox_mode(sdir)
@@ -9713,6 +9879,9 @@ def cmd_sandbox(argv: list[str]) -> int:
             f"Backend: {backend}\n"
         )
         return 0
+    if in_run_block():
+        sys.stderr.write(f"{prog}: cannot modify session sandbox settings from inside a running block\n")
+        return 2
     if sdir is None:
         sdir = start_session(session_arg, sandbox_mode=mode_arg)
     else:
@@ -10128,9 +10297,28 @@ def cmd_start(
         stdin_headers,
         bundle_plan=bundle_plan if isinstance(bundle_plan, dict) else None,
     )
+    if in_run_block():
+        record_parent_child_session(sdir)
+        if append_deferred_card("start_session", session=session_name):
+            sys.stdout.write(f"{prog}: initialized session {session_name} ({session_name}/0)\n")
+            sys.stdout.flush()
+            return 0
+    render_start_session_card(sdir)
+    return 0
+
+
+def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:
+    session_name = sdir.name
+    bundle_path = sdir / "0"
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
-    if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:
+    if (
+        offer_copy
+        and not in_run_block()
+        and sys.stdout.isatty()
+        and clipboard_mode() == "prompt"
+        and clipboard_command(bundle_path) is not None
+    ):
         offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
@@ -10138,9 +10326,8 @@ def cmd_start(
         )
         sys.stdout.write(format_info_box("START SESSION", full_body) + "\n")
         sys.stdout.flush()
-        if not in_run_block():
+        if offer_copy and not in_run_block():
             offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
-    return 0
 
 
 def refresh_bundle_meta(bundle_path: Path) -> None:

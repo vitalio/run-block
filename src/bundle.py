@@ -191,9 +191,28 @@ def cmd_start(
         stdin_headers,
         bundle_plan=bundle_plan if isinstance(bundle_plan, dict) else None,
     )
+    if in_run_block():
+        record_parent_child_session(sdir)
+        if append_deferred_card("start_session", session=session_name):
+            sys.stdout.write(f"{prog}: initialized session {session_name} ({session_name}/0)\n")
+            sys.stdout.flush()
+            return 0
+    render_start_session_card(sdir)
+    return 0
+
+
+def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:
+    session_name = sdir.name
+    bundle_path = sdir / "0"
     body_lines = [f"Bundle: {bundle_path}"]
     label0 = f"{session_name}/0"
-    if not in_run_block() and sys.stdout.isatty() and clipboard_mode() == "prompt" and clipboard_command(bundle_path) is not None:
+    if (
+        offer_copy
+        and not in_run_block()
+        and sys.stdout.isatty()
+        and clipboard_mode() == "prompt"
+        and clipboard_command(bundle_path) is not None
+    ):
         offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
@@ -201,9 +220,8 @@ def cmd_start(
         )
         sys.stdout.write(format_info_box("START SESSION", full_body) + "\n")
         sys.stdout.flush()
-        if not in_run_block():
+        if offer_copy and not in_run_block():
             offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
-    return 0
 
 
 def refresh_bundle_meta(bundle_path: Path) -> None:

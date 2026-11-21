@@ -916,7 +916,15 @@ def run_script(
 
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
-    child_env = scrub_child_env({**os.environ, "IN_RUN_BLOCK": "1"}, sandbox_mode)
+    child_env = scrub_child_env(
+        {
+            **os.environ,
+            "IN_RUN_BLOCK": "1",
+            "RUN_BLOCK_PARENT_SESSION": sdir.name,
+            "RUN_BLOCK_PARENT_STEP": step_dir.name,
+        },
+        sandbox_mode,
+    )
     exec_cmd = build_sandbox_exec(exec_cmd, work_dir=work_dir, base_dir=ensure_base(), sandbox_mode=sandbox_mode)
     exec_started = time.monotonic()
     try:
@@ -1040,13 +1048,23 @@ def run_script(
         )
     except OSError:
         pass
+    deferred_cards = pop_deferred_cards(step_dir)
+    end_session_cards = [c for c in deferred_cards if c.get("kind") == "end_session"]
+    start_session_cards = [c for c in deferred_cards if c.get("kind") == "start_session"]
+    has_deferred_start = bool(start_session_cards)
     clip_target = resolve_clipboard_target(out_path, full_output)
     if headless:
         if stdin_diag_lines:
             sys.stdout.write("".join(d + "\n" for d in stdin_diag_lines))
         sys.stdout.write(end_line)
         sys.stdout.flush()
-    elif in_run_block() or not sys.stdout.isatty() or clipboard_mode() != "prompt" or clipboard_command(clip_target) is None:
+    elif (
+        has_deferred_start
+        or in_run_block()
+        or not sys.stdout.isatty()
+        or clipboard_mode() != "prompt"
+        or clipboard_command(clip_target) is None
+    ):
         end_body = build_box_body_lines(
             clip_target,
             rc=rc,
@@ -1059,7 +1077,7 @@ def run_script(
         )
         sys.stdout.write("\n" + format_info_box("END STEP", end_body) + "\n")
         sys.stdout.flush()
-    if not headless:
+    if not headless and not has_deferred_start:
         offer_clipboard_copy(
             label,
             out_path,
@@ -1070,6 +1088,20 @@ def run_script(
             failed_step=failed_step,
             sdir=sdir,
         )
+    base_dir = sdir.parent
+    for card in end_session_cards:
+        sess_name = str(card.get("session") or sdir.name)
+        target_sdir = base_dir / sess_name
+        if target_sdir.is_dir():
+            render_end_session_card(target_sdir, headless=headless)
+    valid_start_dirs = [
+        base_dir / str(card.get("session") or "")
+        for card in start_session_cards
+        if str(card.get("session") or "") and (base_dir / str(card.get("session") or "")).is_dir()
+    ]
+    for idx, target_sdir in enumerate(valid_start_dirs):
+        is_last = idx == len(valid_start_dirs) - 1
+        render_start_session_card(target_sdir, offer_copy=(is_last and not headless))
     return rc
 
 
@@ -1159,24 +1191,9 @@ def _session_stats_lines(meta: dict[str, object]) -> list[str]:
     return lines
 
 
-def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool = False) -> int:
-    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
-    base = ensure_base()
-    if session:
-        sdir = base / session
-        if not sdir.is_dir():
-            raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
-    else:
-        found = _find_latest_session_dir()
-        if found is None:
-            raise SystemExit(f"{prog_name()}: no sessions found in {base}")
-        sdir = found
+def render_end_session_card(sdir: Path, *, headless: bool = False) -> None:
     name = sdir.name
-    if is_session_completed(sdir):
-        when = read_session_meta(sdir).get("completed_at") or "unknown time"
-        sys.stdout.write(f"{prog_name()}: session {name} is already marked as completed ({when})\n")
-        return 0
-    meta = set_session_completed(sdir, note=note)
+    meta = read_session_meta(sdir)
     lines = [f"Session: {name}", f"Completed: {meta.get('completed_at')}", *_session_stats_lines(meta)]
     if meta.get("completed_note"):
         lines.append(f"Note: {meta['completed_note']}")
@@ -1185,6 +1202,35 @@ def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool
     else:
         sys.stdout.write(format_info_box("END SESSION", lines) + "\n")
     sys.stdout.flush()
+
+
+def cmd_done(session: str | None = None, note: str | None = None, auto_yes: bool = False) -> int:
+    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    base = ensure_base()
+    if session:
+        sdir = base / session
+        if not sdir.is_dir():
+            raise SystemExit(f"{prog_name()}: session {session!r} not found in {base}")
+    else:
+        parent_ref = parent_run_block_ref()
+        if parent_ref is not None and (base / parent_ref[0]).is_dir():
+            sdir = base / parent_ref[0]
+        else:
+            found = _find_latest_session_dir()
+            if found is None:
+                raise SystemExit(f"{prog_name()}: no sessions found in {base}")
+            sdir = found
+    name = sdir.name
+    if is_session_completed(sdir):
+        when = read_session_meta(sdir).get("completed_at") or "unknown time"
+        sys.stdout.write(f"{prog_name()}: session {name} is already marked as completed ({when})\n")
+        return 0
+    set_session_completed(sdir, note=note)
+    if in_run_block() and append_deferred_card("end_session", session=name):
+        sys.stdout.write(f"{prog_name()}: session {name} marked completed\n")
+        sys.stdout.flush()
+        return 0
+    render_end_session_card(sdir, headless=headless)
     return 0
 
 
@@ -1235,9 +1281,22 @@ def _guard_completed_session(
     return rc_out
 
 
+def _reject_nested_step_execution(action: str) -> int:
+    prog = prog_name()
+    parent_ref = parent_run_block_ref()
+    where = f" (active step: {parent_ref[0]}/{parent_ref[1]})" if parent_ref else ""
+    sys.stderr.write(
+        f"{prog}: cannot run {action} from inside a running block{where}\n"
+    )
+    sys.stderr.flush()
+    return 2
+
+
 def cmd_normal(
     ref: str, payload: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
+    if in_run_block():
+        return _reject_nested_step_execution(f"block {ref}")
     payload, split_err = _reassemble_split_payload(payload)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, step = parse_ref(ref, allow_fix_step=False)
@@ -1420,6 +1479,8 @@ def cmd_normal(
 def cmd_fix(
     ref: str, fix_code: str, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
+    if in_run_block():
+        return _reject_nested_step_execution(f"--fix {ref}")
     fix_code, split_err = _reassemble_split_payload(fix_code)
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, target = parse_ref(ref, allow_fix_step=True)
@@ -1734,6 +1795,9 @@ def cmd_show(ref: str | None = None, part: int | None = None) -> int:
 def cmd_retry(
     ref: str | None = None, auto_yes: bool = False, sandbox_override: str | None = None
 ) -> int:
+    if in_run_block():
+        target = f"--retry {ref}" if ref else "--retry"
+        return _reject_nested_step_execution(target)
     if ref:
         session, step = parse_ref(ref, allow_fix_step=True)
     else:
@@ -1776,9 +1840,6 @@ def _find_latest_session_dir() -> Path | None:
 
 def cmd_sandbox(argv: list[str]) -> int:
     prog = prog_name()
-    if in_run_block():
-        sys.stderr.write(f"{prog}: cannot modify session sandbox settings from inside a running block\n")
-        return 2
     mode_arg: str | None = None
     session_arg: str | None = None
     for a in argv:
@@ -1794,7 +1855,14 @@ def cmd_sandbox(argv: list[str]) -> int:
             raise SystemExit(f"{prog}: usage: {prog} --sandbox [off|strict|nonet] [session]")
 
     base = ensure_base()
-    sdir = (base / session_arg) if session_arg else _find_latest_session_dir()
+    if session_arg:
+        sdir: Path | None = base / session_arg
+    else:
+        parent_ref = parent_run_block_ref()
+        if parent_ref is not None and (base / parent_ref[0]).is_dir():
+            sdir = base / parent_ref[0]
+        else:
+            sdir = _find_latest_session_dir()
     backend = detect_sandbox_backend()
     if mode_arg is None:
         cur_mode = get_sandbox_mode(sdir)
@@ -1805,6 +1873,9 @@ def cmd_sandbox(argv: list[str]) -> int:
             f"Backend: {backend}\n"
         )
         return 0
+    if in_run_block():
+        sys.stderr.write(f"{prog}: cannot modify session sandbox settings from inside a running block\n")
+        return 2
     if sdir is None:
         sdir = start_session(session_arg, sandbox_mode=mode_arg)
     else:

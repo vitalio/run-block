@@ -1,3 +1,25 @@
+# ✅ [DONE] F79: Defer nested END SESSION and START SESSION cards until after outer END STEP and guard nested step execution — *2026-11-21, Deferred nested END SESSION and START SESSION cards after outer END STEP, linked parent/child session meta, and guarded nested step execution*
+
+- Depends on: D2
+- Implement the nested `run_block` execution contract (`IN_RUN_BLOCK=1`) and deferred session lifecycle cards designed in `D2`:
+  1. Parent step environment & metadata linkage (`src/config.py:270-454`, `src/config.py:580-600`, `src/runner.py:915-925`):
+     - Export `IN_RUN_BLOCK=1`, `RUN_BLOCK_PARENT_SESSION=<session>`, and `RUN_BLOCK_PARENT_STEP=<step>` into `child_env` in `run_script()`.
+     - Provide helpers in `src/config.py` (`parent_run_block_ref()`, `append_deferred_card()`, `pop_deferred_cards()`) storing ordered deferred lifecycle events (`end_session`, `start_session`) in the outer step directory (`<parent_sdir>/<parent_step>/deferred.json` or `step.json`).
+     - When `cmd_start()` runs with `IN_RUN_BLOCK=1` and a valid parent session/step, record `"parent_session"` and `"parent_step"` in `<child>/meta.json` and append `<child>` to `"spawned_sessions"` in `<parent>/meta.json`.
+  2. Subcommand guards when `in_run_block()` is true (`src/cli.py:107-295`, `src/runner.py`):
+     - Allow read-only inspection (`--list`, `--show`, `--bundle-plan`, `--plan`, `--sandbox`) and deferred lifecycle transitions (`--done`, `--start` / piped bundle initialization).
+     - Reject nested step execution (`<session>/<step>`, `--fix`, `--retry`) with a clear error message on `stderr` and non-zero exit status (`2`).
+  3. Deferred `END SESSION` (`--done`) and `START SESSION` (`<cmd> | run_block` / `--start`) inside a running step (`src/runner.py:990-1080`, `src/runner.py:1162-1190`, `src/bundle.py:108-208`):
+     - When `cmd_done()` runs with `in_run_block()` and an active parent step: mark the session completed in `<session>/meta.json`, print a single plain diagnostic line `run_block: session <name> marked completed` to `stdout` (so the step `out` log records completion without embedding the `╭─ END SESSION ───` box inside the step output or clipboard), and enqueue an `end_session` deferred card on the parent step.
+     - When `cmd_start()` runs with `in_run_block()` and an active parent step: write `<child>/0` and `<child>/meta.json`, print a single plain diagnostic line `run_block: initialized session <child> (<child>/0)` to `stdout` without printing the `╭─ START SESSION ───` box inside the outer step output, and enqueue a `start_session` deferred card on the parent step.
+  4. Strict post-step card ordering and clipboard handoff in outer `run_script()` (`src/runner.py:1025-1080`):
+     - After the child process exits, write `[<label>] END (...)` to `out`, write `step.json`, and call `update_session_stats()` first (so the completing step itself is included in the session's final step count, ok/failed tallies, and duration).
+     - Pop any deferred cards queued during the step:
+       1. Render `╭─ END STEP ───` first. If any deferred `start_session` card is queued, render `END STEP` as an info box without prompting `-> Copy to clipboard?` (and without copying the outer step log over the new session bundle); otherwise run `offer_clipboard_copy()` for `END STEP` as usual.
+       2. Render each deferred `╭─ END SESSION ───` card (re-reading `<session>/meta.json` after `update_session_stats()` so the final step is counted).
+       3. Render each deferred `╭─ START SESSION ───` card, invoking `offer_clipboard_copy()` (or auto-copy / info box per TTY and clipboard settings) on the final spawned `<child>/0` bundle.
+- Update `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `AGENTS.md`, rebuild `run_block` via `python3 build.py`, and add unit tests in `tests/test_runner.py`, `tests/test_bundle.py`, and `tests/test_cli.py`.
+
 # ✅ [DONE] D2: Design nested run_block contract (IN_RUN_BLOCK=1) for session initialization and subcommand guards — *2026-11-21, Designed nested run_block contract, subcommand guards, and post-END STEP deferred END SESSION / START SESSION cards in F79*
 
 - Depends on: F42

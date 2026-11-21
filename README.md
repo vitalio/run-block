@@ -189,13 +189,24 @@ RUN_FIX
 run_block --done [session] [-m "wrap-up note"]
 ```
 
-Marks a session (default: the most recent one) as completed: `completed`,
-`completed_at`, and an optional `completed_note` are stored in
-`<session>/meta.json` together with the statistics accumulated while blocks
-ran (`stats`: steps, ok/failed/`--fix`/renumbered counts, total duration),
-and an `END SESSION` card prints the summary. `--done` is also allowed
-inside the final block of a session, and `--list` shows completed sessions
-with a `[DONE]` badge.
+Marks a session (default: the active parent session inside a block, or the
+most recent session otherwise) as completed: `completed`, `completed_at`, and
+an optional `completed_note` are stored in `<session>/meta.json` together with
+the statistics accumulated while blocks ran (`stats`: steps,
+ok/failed/`--fix`/renumbered counts, total duration), and an `END SESSION`
+card prints the summary. `--done` and nested session initialization
+(`<cmd> | run_block` or `run_block --start`) are allowed inside a running block
+(`IN_RUN_BLOCK=1`, which permits read-only `--list`, `--show`, `--bundle-plan`,
+`--plan`, and `--sandbox` inspection while rejecting nested `<session>/<step>`,
+`--fix`, and `--retry` step execution with exit code `2`): inside the step log
+they emit concise single-line notices (`run_block: session <name> marked
+completed` and `run_block: initialized session <child> (<child>/0)`), link
+`"parent_session"` / `"parent_step"` and `"spawned_sessions"` in `meta.json`,
+and defer their `END SESSION` (counting the completing step itself) and
+`START SESSION` TUI cards until after the outer `END STEP` card (suppressing
+the outer step's clipboard prompt when a new `<child>/0` session bundle is
+spawned so clipboard handoff targets `<child>/0`). `--list` shows completed
+sessions with a `[DONE]` badge.
 
 Running another block (`<session>/<step>`, `--fix`, or `--retry`) on a
 completed session first shows a `SESSION COMPLETED` confirmation

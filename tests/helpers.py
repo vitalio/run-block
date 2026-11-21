@@ -32,6 +32,8 @@ _TRACKED_ENV_KEYS = (
     "RUN_BLOCK_DIR",
     "RUN_BLOCK_CWD",
     "IN_RUN_BLOCK",
+    "RUN_BLOCK_PARENT_SESSION",
+    "RUN_BLOCK_PARENT_STEP",
     "RUN_BLOCK_UPDATE_URL",
     "RUN_BLOCK_SHELL",
     "RUN_BLOCK_EDITOR",
@@ -82,6 +84,8 @@ class RunBlockTestCase(unittest.TestCase):
         os.environ["RUN_BLOCK_NO_CLIPBOARD"] = "1"
         os.environ["NO_COLOR"] = "1"
         os.environ.pop("IN_RUN_BLOCK", None)
+        os.environ.pop("RUN_BLOCK_PARENT_SESSION", None)
+        os.environ.pop("RUN_BLOCK_PARENT_STEP", None)
         self.tmp = Path(tempfile.mkdtemp(prefix="rb_test_"))
         os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
         self.mod = load_module()
