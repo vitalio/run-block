@@ -643,7 +643,35 @@ def _prepare_progress_script(
 
 
 def _iter_child_streams(out_fd, err_fd):
-    """Yield (is_err, text) chunks read concurrently from two child descriptors."""
+    """Yield (is_err, text) chunks read from two child descriptors."""
+    if os.name != "nt":
+        fds = [out_fd, err_fd]
+        while fds:
+            try:
+                rlist, _, _ = select.select(fds, [], [])
+            except OSError:
+                break
+            if out_fd in fds and out_fd not in rlist:
+                try:
+                    r_out, _, _ = select.select([out_fd], [], [], 0.001)
+                except OSError:
+                    r_out = []
+                if r_out:
+                    rlist = [out_fd] + list(rlist)
+            for fd in list(fds):
+                if fd not in rlist:
+                    continue
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    chunk = b""
+                if not chunk:
+                    fds.remove(fd)
+                    continue
+                yield (fd == err_fd), chunk.decode("utf-8", "replace")
+                break
+        return
+
     q: queue.Queue = queue.Queue()
 
     def _reader(fd, is_err):

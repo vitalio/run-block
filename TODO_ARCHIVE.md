@@ -1,3 +1,11 @@
+# ✅ [DONE] B12: Stabilize flaky test_f56_progress_alignment_colors_and_silent_collapse (stdout/stderr ordering in live progress output) — *2026-11-21, Use single-threaded select loop prioritizing stdout before stderr in _iter_child_streams*
+
+Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment_colors_and_silent_collapse`: the `live_e2e` assertion expects `hello_f56` directly followed by the `✓ [2/3] (` line, but `err_f56` from the next operation (`echo err_f56 >&2`) sometimes appears in between.
+- Suspected cause (unconfirmed): ordering race between separately read child `stdout` and `stderr` descriptors merged into `out` in `src/runner.py`.
+- Step 1: read the stream merge and progress rendering in `src/runner.py`, reproduce with a loop of about 30 runs of the single test.
+- Step 2: if cross-stream ordering is intentionally not guaranteed, relax the test; if it is an output defect, fix `src/runner.py` and keep the assertion.
+- Acceptance criteria: 50 consecutive isolated runs of the test pass; full offline suite passes.
+
 # ✅ [DONE] F69: Sequential dim bundle table row numbers, folder/part Tab cursor viewer, preserve boundary markup on e(dit), and omit Sandbox: off — *2026-11-21, Sequential dim bundle table row numbers without # header, folder/part Tab cursor viewer, boundary markup preservation on e(dit), and Sandbox: off omission from session bundle preamble*
 
 - Depends on: F77
