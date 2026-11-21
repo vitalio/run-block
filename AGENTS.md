@@ -9,7 +9,9 @@ rules are loaded via `.agents_bundle`.
   constants, and embedded block rule placeholders (`EMBEDDED_RULE_BASH`,
   `EMBEDDED_RULE_PWSH`) populated by `build.py`.
 - `src/config.py` — zero-config environment variable settings (`RUN_BLOCK_*`,
-  `VISUAL`/`EDITOR`) and working directory resolution.
+  `VISUAL`/`EDITOR`), non-interactive child pager variable tuple
+  (`CHILD_PAGER_ENV_VARS` controlled by `RUN_BLOCK_PAGER`, default `cat`), and
+  working directory resolution.
 - `src/rules/blocks/*.md` — internal embedded terminal block execution rule
   sources injected by `build.py` into `src/header.py`. Keep
   `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` in sync in the same
@@ -24,7 +26,11 @@ rules are loaded via `.agents_bundle`.
   `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
   headless mode. Child `stdout` and `stderr` are read via separate
   descriptors and merged into `out`; `stderr` is also saved to `err`, which
-  the `END STEP` box prefers for its `Error:` line.
+  the `END STEP` box prefers for its `Error:` line. Exports non-interactive
+  pager defaults (`CHILD_PAGER_ENV_VARS` set to `get_setting("pager")[0]`,
+  default `cat`, unless disabled via `RUN_BLOCK_PAGER=inherit|off|0|false`) in
+  the child execution environment while keeping PTY `stdin` connected for
+  intentional interactive prompts.
 - `src/bundle_plan.py` — Bundle Input Protocol header filtering, boundary/section
   fragment parser, embedded terminal block rule injection/deduplication, and
   per-part token/size accounting persisted to `meta.json`.
