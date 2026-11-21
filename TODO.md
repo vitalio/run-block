@@ -1,15 +1,3 @@
-# 🎯 [NEXT] F80: Restructure README.md with Quick Start workflow, TUI shortcut table, and scannable feature sections
-
-- Replace the monolithic prose paragraphs in `README.md` (`## Starting a Session` and `### 2. Inspecting the START STEP before execution`) with a clear, scannable hierarchy wrapped at ~80 columns:
-  1. Concise intro and `## Key Features` bullet list (zero-daemon chat-to-terminal loop, AST/regex safety scanner, interactive TUI cards and fullscreen `i(nfo)` inspector, context bundle protocol and token accounting, targeted `--fix` patching and session lifecycle).
-  2. `## Quick Installation` (Linux/macOS `install.sh` and Windows PowerShell 7+ `install.ps1`).
-  3. `## Quick Start` with runnable examples up front and brief 3-5 line explanations for the 4-step workflow: starting a session (`run_block`, `<cmd> | run_block -p`), running numbered blocks (`<session>/<step>`), patching a failed block (`--fix`), and completing/chaining sessions (`--done` and nested `IN_RUN_BLOCK=1`).
-  4. `## Interactive TUI & Keyboard Shortcuts` summarizing card prompts (`START SESSION`, `START STEP`, `END STEP`, `END SESSION`, `STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`, `SESSION COMPLETED`), prompt keys (`Enter`/`y`, `n`/`Esc`, `p(rompt)`, `r(enumber)`, `i(nfo)`), and fullscreen `i(nfo)` navigation (`Tab` parts cursor, `Enter` part/bundle viewer, `n`/`N`, `e(dit)`/`s(cript)`/`o(utput)`, `v(iew)`) in compact tables instead of dense prose.
-  5. `## Context Bundles & Part Inspection` covering `Key: Value` preamble headers, `Bundle-*` protocol, `--bundle-plan`, and `--part N`.
-  6. `## Safety Scanner, Sandboxing & Approval Hooks` covering `--plan`, `--sandbox` (`off`, `strict`, `nonet`), `RUN_BLOCK_APPROVE_CMD`, and `RUN_BLOCK_SAFETY_*`.
-  7. `## CLI Reference` and `## Environment Variables` reference tables.
-- Target files: `README.md` (verifying consistency with `src/header.py`, `src/ui.py`, `src/runner.py`, `src/bundle_plan.py`, and `AGENTS.md`).
-
 # 🎯 [NEXT] D1: Design session lifecycle states, step outcome labels, and run_block -l display
 
 - Depends on: F42
