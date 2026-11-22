@@ -35,9 +35,19 @@ rules are loaded via `.agents_bundle`.
   (`<st_dev>:<st_ino>` of the step capture stdout descriptor: the PTY slave or
   the capture pipe write end) in the child environment so upstream producers
   can tell direct step console output from a shell pipeline inside a step.
-- `src/bundle_plan.py` — Bundle Input Protocol header filtering, boundary/section
-  fragment parser, embedded terminal block rule injection/deduplication, and
-  per-part token/size accounting persisted to `meta.json`.
+- `src/bundle_parse.py` — Bundle Input Protocol header constants and filtering,
+  embedded terminal block rule and prompt injection, section metadata
+  inference, fragment deduplication/overlap detection, and
+  `analyze_bundle_warnings()` diagnostics (pure parsing and analysis, no
+  session I/O or rendering).
+- `src/bundle_plan.py` — `bundle_plan` data model and provenance chain helpers,
+  line range assignment and `--part N` extraction, plan construction and header
+  reconciliation (`parse_bundle_fragments()`, `reconcile_bundle_plan()`), and
+  `<session>/meta.json` persistence (`refresh_bundle_plan_meta()`,
+  `load_session_bundle_plan()`).
+- `src/bundle_view.py` — provenance tree construction, heavy-row classification,
+  hierarchical table rendering, summary/parts/warning item formatters, and
+  `--bundle-plan` text/CLI output (`cmd_bundle_plan()`).
 - `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
   piped `stdin` (`run_block` / `<command> | run_block` -> `<session>/0` and
   `<session>/meta.json`), injecting embedded `bash`/`pwsh` terminal block
@@ -134,9 +144,10 @@ rules are loaded via `.agents_bundle`.
   tracks the header shift applied by `reconcile_bundle_plan`, which keeps the
   shift idempotent). Never store fragment text in `meta.json`; `--part N`
   slices `<session>/0` using these ranges (`extract_bundle_part`).
-- Analyzer & diagnostics: Keep bundle parsing, size/error/secret diagnostics,
-  and `--bundle-plan` output in a dedicated module (`src/bundle_plan.py`),
-  reusing `src/safety.py` secret detection without duplicating patterns.
+- Analyzer & diagnostics: Keep parsing and size/error/secret diagnostics in
+  `src/bundle_parse.py`, plan state and persistence in `src/bundle_plan.py`,
+  and `--bundle-plan` rendering in `src/bundle_view.py`, reusing
+  `src/safety.py` secret detection without duplicating patterns.
 - Fragment dedup and overlap: `parse_bundle_fragments()` drops duplicate or
   contained boundary fragments via `_dedupe_fragments()` before ranges are
   assigned, so `<session>/0`, `bundle_plan` ranges, and `0.raw` re-parsing

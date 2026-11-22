@@ -7943,6 +7943,42 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     plan = reconcile_bundle_plan(parsed_plan, text)
     update_session_meta(sdir, bundle_plan=plan)
 
+def _enrich_bundle_plan(plan: dict[str, object], full_text: str | None = None) -> dict[str, object]:
+    out = dict(plan)
+    parts = [dict(p) for p in (out.get("parts") or []) if isinstance(p, dict)]
+    for part in parts:
+        if part.get("chars") is None:
+            part["chars"] = int(part.get("bytes") or 0)
+    out["parts"] = parts
+    if out.get("chars") is None:
+        out["chars"] = int(out.get("bytes") or sum(_part_chars(p) for p in parts))
+    has_hdr_part = bool(parts and str(parts[0].get("kind") or "") == "header")
+    if full_text is not None and not has_hdr_part:
+        out = reconcile_bundle_plan(out, full_text)
+    if "warnings" not in out:
+        out["warnings"] = analyze_bundle_warnings(parts, total_gpt=int(out.get("gpt") or 0))
+    return out
+
+
+def load_session_bundle_plan(sdir: Path | None, bundle_path: Path | None = None) -> dict[str, object] | None:
+    meta = read_session_meta(sdir) if sdir is not None else {}
+    raw_plan = meta.get("bundle_plan")
+    bpath = bundle_path if bundle_path is not None else (sdir / "0" if sdir is not None else None)
+    btext = bpath.read_text(encoding="utf-8", errors="replace") if (bpath is not None and bpath.is_file()) else None
+    if isinstance(raw_plan, dict) and "parts" in raw_plan and "warnings" in raw_plan:
+        return _enrich_bundle_plan(raw_plan, full_text=btext)
+    if btext is not None:
+        _, body = parse_stdin_preamble(btext)
+        meta_hdrs = _parse_meta_header_items(sdir) if sdir is not None else []
+        boundary = get_bundle_boundary(meta_hdrs)
+        _, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
+        if isinstance(raw_plan, dict) and raw_plan.get("protocol") == "boundary" and parsed_plan.get("protocol") != "boundary":
+            return _enrich_bundle_plan(raw_plan, full_text=btext)
+        return reconcile_bundle_plan(parsed_plan, btext)
+    if isinstance(raw_plan, dict):
+        return _enrich_bundle_plan(raw_plan)
+    return None
+
 
 def _format_tok_pair(gpt_cnt: int, claude_cnt: int, *, unit: bool = True) -> str:
     lo = min(gpt_cnt, claude_cnt)
@@ -8359,44 +8395,6 @@ def format_bundle_warning_items(plan: dict[str, object]) -> list[tuple[str, str]
         for w in warns
         if w.get("message")
     ]
-
-
-def _enrich_bundle_plan(plan: dict[str, object], full_text: str | None = None) -> dict[str, object]:
-    out = dict(plan)
-    parts = [dict(p) for p in (out.get("parts") or []) if isinstance(p, dict)]
-    for part in parts:
-        if part.get("chars") is None:
-            part["chars"] = int(part.get("bytes") or 0)
-    out["parts"] = parts
-    if out.get("chars") is None:
-        out["chars"] = int(out.get("bytes") or sum(_part_chars(p) for p in parts))
-    has_hdr_part = bool(parts and str(parts[0].get("kind") or "") == "header")
-    if full_text is not None and not has_hdr_part:
-        out = reconcile_bundle_plan(out, full_text)
-    if "warnings" not in out:
-        out["warnings"] = analyze_bundle_warnings(parts, total_gpt=int(out.get("gpt") or 0))
-    return out
-
-
-def load_session_bundle_plan(sdir: Path | None, bundle_path: Path | None = None) -> dict[str, object] | None:
-    meta = read_session_meta(sdir) if sdir is not None else {}
-    raw_plan = meta.get("bundle_plan")
-    bpath = bundle_path if bundle_path is not None else (sdir / "0" if sdir is not None else None)
-    btext = bpath.read_text(encoding="utf-8", errors="replace") if (bpath is not None and bpath.is_file()) else None
-    if isinstance(raw_plan, dict) and "parts" in raw_plan and "warnings" in raw_plan:
-        return _enrich_bundle_plan(raw_plan, full_text=btext)
-    if btext is not None:
-        _, body = parse_stdin_preamble(btext)
-        meta_hdrs = _parse_meta_header_items(sdir) if sdir is not None else []
-        boundary = get_bundle_boundary(meta_hdrs)
-        _, parsed_plan = parse_bundle_fragments(body, boundary=boundary)
-        if isinstance(raw_plan, dict) and raw_plan.get("protocol") == "boundary" and parsed_plan.get("protocol") != "boundary":
-            return _enrich_bundle_plan(raw_plan, full_text=btext)
-        return reconcile_bundle_plan(parsed_plan, btext)
-    if isinstance(raw_plan, dict):
-        return _enrich_bundle_plan(raw_plan)
-    return None
-
 
 def format_bundle_plan_text(
     plan: dict[str, object],
