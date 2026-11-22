@@ -97,7 +97,8 @@
 
 - Depends on: F89, F95
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `run` (updating `agents/blocks/bash.md`, protocol markers, and env vars/compatibility aliases per `todo_flow:D8` and ADR 0003).
-- Acceptance criteria: `build.py` outputs `run`, `install.sh` installs `run` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `run`, and `python3 -m unittest discover -s tests` passes.
+- Remove transitional `Bundle-Expose` and `Bundle-Hide` header parsing/filtering compatibility (`BUNDLE_EXPOSE_HEADER`, `BUNDLE_HIDE_HEADER`) from `src/bundle_parse.py`, documentation, and tests now that `agents_bundle` (`F15` / `todo_flow:F4`) emits `export`-driven preamble headers directly.
+- Acceptance criteria: `build.py` outputs `run`, `install.sh` installs `run` (plus any agreed compatibility alias), `Bundle-Expose` / `Bundle-Hide` legacy handling is removed, `--help`/embedded rules/docs/tests reflect `run-block` and `run`, and `python3 -m unittest discover -s tests` passes.
 - Target files: `build.py`, `install.sh`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/safety.py`, `src/ui.py`, `agents/blocks/bash.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
