@@ -917,7 +917,7 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn("│ Summary:", tty_out)
         self.assertIn("\033[?1049h", tty_out)
         self.assertIn("\033[?1049l", tty_out)
-        self.assertIn("INFO · s1/0 · ", tty_out)
+        self.assertIn("START SESSION · s1/0 · ", tty_out)
         self.assertNotIn("╭─ INFO", tty_out)
         self.assertNotIn("Parts (7 parts):", tty_out)
         self.assertIn("[total]   7 parts", tty_out)

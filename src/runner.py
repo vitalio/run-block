@@ -386,6 +386,10 @@ def not_run_exit(
     return rc
 
 
+def _clean_out_text(text: str) -> str:
+    return CR_LINE_RE.sub("", ANSI_RE.sub("", text)).replace("\r\n", "\n")
+
+
 class _ProgressLineFilter:
     def __init__(
         self,
@@ -413,6 +417,9 @@ class _ProgressLineFilter:
         self._active_has_output: bool = False
         self.step_durations: dict[int, float] = {}
         self.step_order: list[int] = []
+        self.line_base = 0
+        self._op_text: dict[int, list[str]] = {}
+        self._pre_text: list[str] = []
 
     @staticmethod
     def _truncate_width(text: str, max_w: int) -> str:
@@ -521,6 +528,13 @@ class _ProgressLineFilter:
             parts.append(banner)
         return "".join(parts)
 
+    def _note_out(self, text: str) -> None:
+        if self.active_step is not None:
+            self._active_has_output = True
+            self._op_text.setdefault(self.active_step, []).append(text)
+        else:
+            self._pre_text.append(text)
+
     def feed_events(self, text: str) -> list[tuple[str, str]]:
         self.buf += text
         events: list[tuple[str, str]] = []
@@ -533,16 +547,14 @@ class _ProgressLineFilter:
                 if prog:
                     events.append(("prog", prog))
             else:
-                if self.active_step is not None:
-                    self._active_has_output = True
+                self._note_out(line + "\n")
                 events.append(("out", line + "\n"))
         if self.buf:
             if not (
                 self.marker_prefix.startswith(self.buf)
                 or self.buf.startswith(self.marker_prefix)
             ):
-                if self.active_step is not None:
-                    self._active_has_output = True
+                self._note_out(self.buf)
                 events.append(("out", self.buf))
                 self.buf = ""
         return events
@@ -569,8 +581,7 @@ class _ProgressLineFilter:
                 if prog:
                     prog_parts.append(prog)
             else:
-                if self.active_step is not None:
-                    self._active_has_output = True
+                self._note_out(rem)
                 rem_out = rem
         if self.active_step is not None and self._active_started is not None:
             elapsed = max(0.0, float(self._clock()) - self._active_started)
@@ -584,20 +595,39 @@ class _ProgressLineFilter:
             self._active_started = None
         return rem_out, "".join(prog_parts)
 
-    def operation_timings(self) -> list[dict[str, object]]:
+    def operation_timings(self, total_chars: int | None = None) -> list[dict[str, object]]:
+        pre = count_tokens(_clean_out_text("".join(self._pre_text)).encode("utf-8"))
+        pos = self.line_base + int(pre["lines"])
+        total = int(total_chars or 0)
         timings: list[dict[str, object]] = []
         for step_num in self.step_order:
             if step_num not in self.step_durations:
                 continue
             info = self.step_map.get(step_num) or {}
-            timings.append(
-                {
-                    "step": step_num,
-                    "tag": str(info.get("tag") or ""),
-                    "desc": str(info.get("desc") or "").replace("\n", " ").strip(),
-                    "duration_ms": int(round(self.step_durations[step_num] * 1000.0)),
-                }
-            )
+            text = _clean_out_text("".join(self._op_text.get(step_num, [])))
+            st = count_tokens(text.encode("utf-8"))
+            lines = int(st["lines"])
+            chars = int(st["chars"])
+            line_no = int(info.get("line") or 0)
+            entry: dict[str, object] = {
+                "step": step_num,
+                "tag": str(info.get("tag") or ""),
+                "desc": str(info.get("desc") or "").replace("\n", " ").strip(),
+                "duration_ms": int(round(self.step_durations[step_num] * 1000.0)),
+                "line": line_no,
+                "end_line": int(info.get("end_line") or line_no),
+                "lines": lines,
+                "chars": chars,
+                "bytes": int(st["bytes"]),
+                "gpt": int(st["gpt"]),
+                "claude": int(st["claude"]),
+                "share_pct": round(100.0 * chars / total, 1) if total > 0 else 0.0,
+            }
+            if lines > 0:
+                entry["out_line_start"] = pos + 1
+                entry["out_line_end"] = pos + lines
+            pos += lines
+            timings.append(entry)
         return timings
 
 
@@ -906,6 +936,7 @@ def run_script(
         if tmp_progress_path is not None:
             step_map = {int(s["step"]): s for s in step_lines if s.get("step")}
             progress_filter = _ProgressLineFilter(step_map, len(step_lines))
+            progress_filter.line_base = sum(c.count("\n") for c in log_chunks)
             exec_cmd = (
                 [shell_bin, "-NoProfile", "-File", str(tmp_progress_path)]
                 if is_ps
@@ -1007,11 +1038,21 @@ def run_script(
             log_chunks.append(diag + "\n")
     dur_str = format_duration(duration_s)
     duration_ms = int(round(duration_s * 1000.0))
-    op_timings = progress_filter.operation_timings() if progress_filter is not None else []
     failed_step = (
         progress_filter.active_step
         if (rc != 0 and progress_filter is not None)
         else None
+    )
+    end_detail = f"exit {rc}, {dur_str}" if rc != 0 else dur_str
+    end_line = f"\n[{label}] END ({end_detail})\n"
+    if rc != 0 and footer_on_fail:
+        end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
+    log_chunks.append(end_line)
+    full_output = _clean_out_text("".join(log_chunks))
+    op_timings = (
+        progress_filter.operation_timings(total_chars=len(full_output))
+        if progress_filter is not None
+        else []
     )
     write_step_meta(
         step_dir,
@@ -1021,12 +1062,6 @@ def run_script(
         failed_step=failed_step,
         renumbered_from=renumbered_from,
     )
-    end_detail = f"exit {rc}, {dur_str}" if rc != 0 else dur_str
-    end_line = f"\n[{label}] END ({end_detail})\n"
-    if rc != 0 and footer_on_fail:
-        end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
-    log_chunks.append(end_line)
-    full_output = CR_LINE_RE.sub("", ANSI_RE.sub("", "".join(log_chunks))).replace("\r\n", "\n")
     write_private(out_path, full_output)
     try:
         update_session_stats(

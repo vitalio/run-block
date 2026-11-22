@@ -24,7 +24,7 @@ one-keystroke clipboard handoff with Claude/GPT/Gemini token counts.
   cards (`START SESSION`, `START STEP`, `END STEP`, `END SESSION`) with
   `SIGWINCH` reflow, in-place `p(rompt)` note appending, and a borderless
   alternate-screen `i(nfo)` viewer with `Tab` part navigation and artifact
-  editing (`e`/`s`/`o`/`v`).
+  editing (`e`/`s`/`o`/`m`/`v`).
 - **Context bundle protocol & token accounting** — parses `Key: Value` and
   `Bundle-*` preamble headers, strips `Bundle-Boundary` part markers into
   hierarchical `bundle_plan` token/share tables (`--bundle-plan`, `--part N`),
@@ -154,17 +154,18 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
 
 | Key | Context | Action |
 | :--- | :--- | :--- |
-| `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn` | All `i(nfo)` views | Scroll the fullscreen report vertically |
+| `Up`/`Down`, `j`/`k`, `PgUp`/`PgDn` | All `i(nfo)` views | Scroll the fullscreen report vertically (the footer shows `Lines a-b/N` and the scroll hint only when the body overflows) |
 | `Tab` (`Tab: parts`) | `START SESSION` `i(nfo)` | Toggle the row selection cursor across sequential numbered bundle rows `1..M` (`[bundle]` folders and leaf parts) |
-| `Tab` (`Tab: parts`) | Step `i(nfo)` (`START STEP`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`, `STEP ALREADY EXISTS`) | Toggle the row selection cursor across the numbered `Operations:` rows `1..N` of the step script (child tree rows are skipped) |
+| `Tab` (`Tab: parts`) | Step `i(nfo)` (`START STEP`, `END STEP`, `SYNTAX ERROR`, `NOT RUN`, `STEP ALREADY EXISTS`) | Toggle the row selection cursor across the numbered operation rows `1..N` of the breakdown table (`START STEP`: pre-execution script table; `END STEP`: output table with `TIME`) |
 | `Enter` (in `Tab` cursor) | `START SESSION` `i(nfo)` | Open `PART N/M` for a leaf part or `BUNDLE R/M` (with constituent part delimiters) for a `[bundle]` folder row |
-| `Enter` (in `Tab` cursor) | Step `i(nfo)` | Open `PART k/N` with the selected operation's script lines (`Source`, `Directory`, `Timing`, `Range: lines a-b of <script>`); `n`/`N` step across operations, `e`/`s` edit the script and refresh the operations |
+| `Enter` (in `Tab` cursor) | Step `i(nfo)` | Open `PART k/N` for the selected operation: `Command`, `Timing`, `Script-Range`, and `Range: lines a-b of <out>` with the operation's captured output slice from `<step>/out` (script lines in `START STEP` or without `out`); `n`/`N` step across operations, `e`/`o` edit `out`, `s` edits the script, `m` opens `meta.json` |
 | `n` / `N` | `PART` / `BUNDLE` viewer | Step forward or backward across sequential numbered rows `1..M` |
 | `e` (`e(dit)`) | `START SESSION` / `START STEP` | Edit `<session>/0.raw` (preserving boundary markup and `0.orig`) or `block.sh`/`.ps1` (`block.orig.*`) and re-parse in place |
 | `s` (`s(cript)`) / `o` (`o(utput)`) | Step `i(nfo)` views | Edit saved block script or captured step output in `$VISUAL`/`$EDITOR` (preserving `*.orig` backups and updating stats) |
 | `O` / `o` (`overwrite`) | `STEP ALREADY EXISTS` `i(nfo)` | Overwrite the existing step directory and proceed with the new block |
 | `p` (`p(rompt)`) | Copyable `i(nfo)` views | Append a prompt or output note via `$VISUAL`/`$EDITOR` and recalculate token stats |
 | `v` (`v(iew)`) | All `i(nfo)` views | Open the plain-text `i(nfo)` report directly in `$VISUAL`/`$EDITOR` |
+| `m` (`m(eta)`) | All `i(nfo)` views | Open `<session>/meta.json` (`START SESSION`) or `<session>/<step>/meta.json` (step cards) in `$VISUAL`/`$EDITOR` |
 | `Enter` | Copyable `i(nfo)` views | Copy the active bundle or step output to the clipboard and exit `i(nfo)` |
 | `Esc` / `q` / `i` | All `i(nfo)` views | Exit cursor/part subview or return from `i(nfo)` to the inline prompt without scrollback clutter |
 

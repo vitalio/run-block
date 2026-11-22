@@ -1069,7 +1069,7 @@ class TestRunner(RunBlockTestCase):
 
         tty_out = tty_w.getvalue()
         self.assertEqual(tty_out.count("╭─ START STEP "), 2)
-        self.assertEqual(tty_out.count("INFO · s1/1 · "), 3)
+        self.assertEqual(tty_out.count("START STEP · s1/1 · "), 3)
         self.assertIn("Original Plan (block.orig.sh):", tty_out)
         self.assertIn("-> Execute this block? [Y/n/i(nfo)]:", tty_out)
         self.assertIn("-> Execute this block? [y/n/i(nfo)]:", tty_out)
@@ -1080,7 +1080,8 @@ class TestRunner(RunBlockTestCase):
 
         sum1 = self.mod.summarize_script_actions(edit_1_script, work_dir=work)
         sum2 = self.mod.summarize_script_actions(edit_2_script, work_dir=work)
-        self.assertIn(str(sum1["meta"]), tty_out)
+        self.assertIn("2 operations (edited)", tty_out)
+        self.assertNotIn("Original Plan (block.orig.sh):\n  Script:", tty_out.replace("\r", ""))
         self.assertIn(f"{sum2['meta']} (edited)", tty_out)
 
         # --show notes the original backup
@@ -1167,7 +1168,7 @@ class TestRunner(RunBlockTestCase):
 
         tty_out = tty_w.getvalue()
         self.assertEqual(tty_out.count("╭─ END STEP "), 2)
-        self.assertEqual(tty_out.count("INFO · s1/1 · "), 3)
+        self.assertEqual(tty_out.count("END STEP · s1/1 · "), 3)
         self.assertIn("Error:  noisy stderr line", tty_out)
         self.assertIn("Error:       cleaned failure reason", tty_out)
         self.assertIn("Error:  updated final error", tty_out)
@@ -1279,8 +1280,8 @@ class TestRunner(RunBlockTestCase):
         # 3. _ProgressLineFilter tracks per-operation durations and interleaved events deterministically
         t_seq = iter([10.0, 10.25, 13.65])
         step_map = {
-            1: {"step": 1, "tag": "read", "desc": "cat a.txt"},
-            2: {"step": 2, "tag": "exec", "desc": "pytest -q"},
+            1: {"step": 1, "tag": "read", "desc": "cat a.txt", "line": 1, "end_line": 1},
+            2: {"step": 2, "tag": "exec", "desc": "pytest -q", "line": 2, "end_line": 3},
         }
         pf = self.mod._ProgressLineFilter(step_map, total_steps=2, clock=lambda: next(t_seq))
         events = pf.feed_events("__RB_STEP__:1\nalpha\n__RB_STEP__:2\nfail\n")
@@ -1295,10 +1296,20 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(rem_out, "")
         self.assertIn("✗ [2/2] (3.4s)", rem_prog)
         self.assertEqual(
-            pf.operation_timings(),
+            pf.operation_timings(total_chars=11),
             [
-                {"step": 1, "tag": "read", "desc": "cat a.txt", "duration_ms": 250},
-                {"step": 2, "tag": "exec", "desc": "pytest -q", "duration_ms": 3400},
+                {
+                    "step": 1, "tag": "read", "desc": "cat a.txt", "duration_ms": 250,
+                    "line": 1, "end_line": 1, "lines": 1, "chars": 6, "bytes": 6,
+                    "gpt": 2, "claude": 2, "share_pct": 54.5,
+                    "out_line_start": 1, "out_line_end": 1,
+                },
+                {
+                    "step": 2, "tag": "exec", "desc": "pytest -q", "duration_ms": 3400,
+                    "line": 2, "end_line": 3, "lines": 1, "chars": 5, "bytes": 5,
+                    "gpt": 2, "claude": 2, "share_pct": 45.5,
+                    "out_line_start": 2, "out_line_end": 2,
+                },
             ],
         )
 
@@ -1325,6 +1336,19 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(meta2.get("exit_code"), rc2)
         self.assertEqual(meta2.get("failed_step"), 2)
         self.assertEqual(len(meta2.get("operations") or []), 2)
+        out2_lines = out2_txt.splitlines()
+        prev_end = 0
+        for op in meta2["operations"]:
+            with self.subTest(step=op["step"]):
+                self.assertGreaterEqual(op["line"], 1)
+                self.assertIn("share_pct", op)
+                if op["lines"] > 0:
+                    self.assertGreater(op["out_line_start"], prev_end)
+                    self.assertEqual(op["out_line_end"] - op["out_line_start"] + 1, op["lines"])
+                    self.assertLessEqual(op["out_line_end"], len(out2_lines))
+                    prev_end = op["out_line_end"]
+                else:
+                    self.assertNotIn("out_line_start", op)
 
         list_buf = io.StringIO()
         with contextlib.redirect_stdout(list_buf):

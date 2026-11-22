@@ -277,6 +277,17 @@ HIDDEN_SESSION_HEADER_KEYS = frozenset({
     "date",
 })
 
+FULLSCREEN_HIDDEN_HEADER_KEYS = frozenset({
+    "bundle-boundary",
+    "bundle-expose",
+    "bundle-hide",
+    "bundle-protocol",
+    "chat-lang",
+})
+
+# Optional TIME column between ~TOK and KIND in breakdown table rows.
+TABLE_TIME_COL_PATTERN = r"(?:[^\s\[]\S*\s+)?"
+
 
 def is_bundle_transport_header(key: str) -> bool:
     norm = re.sub(r"\s+", "-", key.strip().lower())

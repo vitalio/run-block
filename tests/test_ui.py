@@ -171,7 +171,7 @@ class TestUi(RunBlockTestCase):
             mock_copy.assert_called_once_with(["true"], s_out)
             out_c_text = tty_w_c.getvalue()
             self.assertIn("-> Copy out to clipboard? [Y/n/r(enumber)/i(nfo)]:", out_c_text)
-            self.assertIn("INFO · STEP ALREADY EXISTS · ", out_c_text)
+            self.assertIn("STEP ALREADY EXISTS · /", out_c_text)
             self.assertIn(f"✓ Copied {s_out} to clipboard.", out_c_text)
 
             # Pressing Esc on STEP ALREADY EXISTS exits without copying or overwriting
@@ -1679,10 +1679,10 @@ class TestUi(RunBlockTestCase):
             finally:
                 if saved_nc is not None:
                     os.environ["NO_COLOR"] = saved_nc
-            self.assertIn("INFO · s54/0 · ", frame0)
+            self.assertIn("START SESSION · s54/0 · ", frame0)
             self.assertNotIn("╭─ INFO", frame0)
             self.assertNotIn("│ Session:", frame0)
-            self.assertNotIn("Bundle:", frame0)
+            self.assertIn("Bundle:", frame0)
             self.assertNotIn("Stats:", frame0)
             self.assertIn("Sandbox:", frame0)
             self.assertIn("off", frame0)
@@ -1716,10 +1716,10 @@ class TestUi(RunBlockTestCase):
                 self.mod.offer_clipboard_copy("s54/0", b0, title_kind="START SESSION", sdir=sdir)
             self.assertEqual(len(viewed_reports), 1)
             self.assertNotIn("\x1b[", viewed_reports[0])
-            self.assertIn("Sandbox:         off", viewed_reports[0])
-            self.assertIn("Bundle-Command:  agents_bundle role=work task=F54", viewed_reports[0])
+            self.assertRegex(viewed_reports[0], r"Sandbox:\s+off")
+            self.assertRegex(viewed_reports[0], r"Bundle-Command:\s+agents_bundle role=work task=F54")
 
-            # 3. END STEP omits Steps:, while i(nfo) shows timed operations with % shares, (failed), and Pre-execution Plan
+            # 3. END STEP omits Steps:, while i(nfo) shows the output breakdown table with TIME, (failed), and [total] rows
             step1 = sdir / "1"
             step1.mkdir()
             scr1 = step1 / "block.sh"
@@ -1738,10 +1738,14 @@ class TestUi(RunBlockTestCase):
             info_end, _, _ = self.mod._build_info_screen(
                 "END STEP", "s54/1", 100, 32, 0, sdir=sdir, out_path=out1, script_path=scr1, rc=1
             )
-            self.assertIn("Operations (2 timed):", info_end)
-            self.assertIn("1. [read]  200ms (20.0%)  cat README.md", info_end)
-            self.assertIn("2. [read]  800ms (80.0%) (failed)  ls missing", info_end)
-            self.assertIn("Pre-execution Plan (block.orig.sh):", info_end)
+            self.assertNotIn("Operations (", info_end)
+            self.assertNotIn("Pre-execution Plan", info_end)
+            self.assertIn("TIME", info_end)
+            self.assertIn("[total]", info_end)
+            self.assertIn("2 operations", info_end)
+            self.assertIn("cat README.md", info_end)
+            self.assertIn("ls missing (failed)", info_end)
+            self.assertIn("800ms", info_end)
             self.assertIn("Script-Orig:", info_end)
 
             # 4. STEP ALREADY EXISTS i(nfo) -> O(verwrite) (with out) and o(verwrite) (without out)
@@ -1792,9 +1796,9 @@ class TestUi(RunBlockTestCase):
             self.assertFalse(res_comp)
             comp_out = tw_comp.getvalue()
             self.assertIn("-> Reopen completed session s54? [y/N/i(nfo)]:", comp_out)
-            self.assertIn("INFO · s54 · ", comp_out)
-            self.assertIn("Completed:       2026-11-19T20:00:00Z", comp_out)
-            self.assertIn("Completed-Note:  done", comp_out)
+            self.assertIn("SESSION COMPLETED · s54 · ", comp_out)
+            self.assertRegex(comp_out, r"Completed:\s+2026-11-19T20:00:00Z")
+            self.assertRegex(comp_out, r"Completed-Note:\s+done")
         finally:
             self.mod.BASE_DIR = old_base
 
@@ -1845,12 +1849,12 @@ class TestUi(RunBlockTestCase):
                 allow_copy=True,
             )
         plain_frame = self.mod.ANSI_RE.sub("", frame)
-        self.assertIn("INFO · s77/0 · ~/s77/0", plain_frame)
+        self.assertIn("START SESSION · s77/0 · ~/s77/0", plain_frame)
         self.assertNotIn("(edited)", plain_frame)
         self.assertNotIn("╭─", plain_frame)
         self.assertNotIn("╰─", plain_frame)
         self.assertNotIn("│ Session:", plain_frame)
-        self.assertNotIn("Bundle:", plain_frame)
+        self.assertIn("Bundle:", plain_frame)
         self.assertNotIn("Stats:", plain_frame)
 
         # 3. p(rompt) inside fullscreen i(nfo) appends prompt, creates 0.orig, refreshes bundle_plan and [total] (edited)
@@ -1888,7 +1892,7 @@ class TestUi(RunBlockTestCase):
         self.assertTrue((sdir / "0.orig").is_file())
         self.assertIn("Appended from info screen", b0.read_text(encoding="utf-8"))
         out_txt = self.mod.ANSI_RE.sub("", tty_w.getvalue())
-        self.assertIn("INFO · s77/0 · ~/s77/0 (edited)", out_txt)
+        self.assertIn("START SESSION · s77/0 · ~/s77/0 (edited)", out_txt)
         self.assertIn("5 parts (edited)", out_txt)
         self.assertIn("PART 2/5 · s77/0", out_txt)
 
@@ -1967,28 +1971,18 @@ class TestUi(RunBlockTestCase):
         self.assertEqual(after_plan["part_count"], 5)
 
     def test_step_info_operation_cursor_and_slice_viewer(self):
-        items = [
-            "Operations (2 timed):",
-            "  1. [git]  10ms (50.0%)  git status -sb",
-            "      ├─ [read]  child row",
-            "  2. [exec]  5ms (25.0%)  ls",
-            "",
-            "Pre-execution Plan (block.sh):",
-            "  1. [git]  git status -sb",
-        ]
-        self.assertEqual(self.mod._find_selectable_operation_rows(items), [(1, 1), (2, 3)])
-        self.assertEqual(self.mod._find_selectable_operation_rows(["Safety warnings (1):", "  1. [x] y"]), [])
-
         sdir = self.tmp / "s9"
         step_dir = sdir / "1"
         step_dir.mkdir(parents=True)
         script = step_dir / "block.sh"
         script.write_text("git status -sb\npython3 - <<'PY'\nprint(1)\nPY\nls -la\n", encoding="utf-8")
         out = step_dir / "out"
-        out.write_text("ok\n", encoding="utf-8")
+        out.write_text("ok\nline2\nline3\nline4\n", encoding="utf-8")
         timings = [
-            {"step": 1, "tag": "git", "desc": "git status -sb", "duration_ms": 10},
-            {"step": 2, "tag": "python", "desc": "1 line", "duration_ms": 20},
+            {"step": 1, "tag": "git", "desc": "git status -sb", "duration_ms": 10,
+             "lines": 1, "chars": 3, "gpt": 1, "claude": 1, "out_line_start": 1, "out_line_end": 1},
+            {"step": 2, "tag": "python", "desc": "1 line", "duration_ms": 20,
+             "lines": 3, "chars": 15, "gpt": 4, "claude": 5, "out_line_start": 2, "out_line_end": 4},
             {"step": 3, "tag": "read", "desc": "ls -la", "duration_ms": 5},
         ]
         common = dict(sdir=sdir, out_path=out, script_path=script, rc=0, op_timings=timings, allow_copy=True)
@@ -2017,10 +2011,47 @@ class TestUi(RunBlockTestCase):
         self.assertEqual(res["action"], "back")
         shown = self.mod.ANSI_RE.sub("", buf.getvalue())
         self.assertIn("PART 2/3 · s9/1", shown)
+        self.assertIn("Command: [python] 1 line", shown)
+        self.assertIn("Script-Range: lines 2-4 of", shown)
         self.assertIn("Range: lines 2-4 of", shown)
-        self.assertIn("print(1)", shown)
+        self.assertIn("line2", shown)
+        self.assertIn("line4", shown)
+        self.assertNotIn("print(1)", shown)
         self.assertIn("PART 3/3 · s9/1", shown)
-        self.assertIn("Range: lines 5-5 of", shown)
+        self.assertIn("Range: (no output)", shown)
+
+    def test_fullscreen_footer_meta_key_and_operation_table(self):
+        for raw, key in (("m\n", "meta"), ("meta\n", "meta"), ("e\n", "edit"), ("o\n", "output")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self.mod._parse_pager_line(raw), key)
+
+        tail = ["m(eta)", "Esc: back"]
+        fit, _, _ = self.mod._compose_pager_frame(["T"], ["a", "b"], 80, 10, 0, tail)
+        plain_fit = self.mod.ANSI_RE.sub("", fit)
+        self.assertNotIn("Lines ", plain_fit)
+        self.assertNotIn("scroll", plain_fit)
+        self.assertIn("m(eta) · Esc: back", plain_fit)
+        long_items = [f"row{i}" for i in range(40)]
+        over, _, _ = self.mod._compose_pager_frame(["T"], long_items, 80, 10, 0, tail)
+        plain_over = self.mod.ANSI_RE.sub("", over)
+        self.assertIn("Lines 1-8/40", plain_over)
+        self.assertIn("PgUp/PgDn: scroll", plain_over)
+
+        ops = [
+            {"step": 1, "tag": "read", "desc": "cat a", "duration_ms": 200, "lines": 1, "chars": 10,
+             "gpt": 3, "claude": 3, "share_pct": 20.0},
+            {"step": 2, "tag": "exec", "desc": "make", "duration_ms": 800, "lines": 9, "chars": 40000,
+             "gpt": 10000, "claude": 11500, "share_pct": 80.0},
+        ]
+        total = {"lines": 10, "chars": 50000, "gpt": 12500, "claude": 14400, "duration_ms": 1000}
+        lines = self.mod.format_operation_table_lines(ops, total, max_width=100, edited=True, failed_step=2)
+        plain = [self.mod.ANSI_RE.sub("", ln) for ln in lines]
+        self.assertRegex(plain[0], r"%\s+CHARS\s+LINES\s+~TOK\s+TIME\s+KIND\s+SOURCE")
+        self.assertRegex(plain[1], r"100\.0%.*1\.0s\s+\[total\]\s+2 operations \(edited\)")
+        self.assertRegex(plain[-1], r"100\.0%.*\[total\]")
+        self.assertTrue(any("make (failed)" in ln and "800ms" in ln for ln in plain))
+        self.assertEqual(self.mod.bundle_row_heavy_level(plain[3]), "warn")
+        self.assertEqual(self.mod.bundle_row_heavy_level(plain[2]), "accent")
 
 
 if __name__ == "__main__":

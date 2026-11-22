@@ -76,7 +76,9 @@ HEAVY_WARN_SHARE = 25.0
 HEAVY_WARN_TOK = 10000
 HEAVY_ACCENT_SHARE = 10.0
 HEAVY_ACCENT_TOK = 3000
-_TABLE_ROW_RE = re.compile(r"^\s*(?:\d+\s+)?(\d+(?:\.\d+)?)%\s+\S+\s+\d+\s+(~\S+)\s+\[([a-z0-9_-]+)\]")
+_TABLE_ROW_RE = re.compile(
+    r"^\s*(?:\d+\s+)?(\d+(?:\.\d+)?)%\s+\S+\s+\d+\s+(~\S+)\s+" + TABLE_TIME_COL_PATTERN + r"\[([a-z0-9_-]+)\]"
+)
 _COUNT_RE = re.compile(r"(\d+(?:\.\d+)?)([kKmM]?)")
 
 
@@ -125,8 +127,9 @@ def _make_table_row(
     part_num: str = "",
     depth: int = 0,
     part_indices: list[int] | None = None,
+    time_str: str | None = None,
 ) -> dict[str, object]:
-    return {
+    row: dict[str, object] = {
         "num_str": part_num,
         "depth": depth,
         "pct_str": f"{share_pct:.1f}%",
@@ -138,6 +141,9 @@ def _make_table_row(
         "desc": desc,
         "part_indices": list(part_indices) if part_indices is not None else [],
     }
+    if time_str is not None:
+        row["time_str"] = time_str
+    return row
 
 
 def _part_extras_suffix(p: dict[str, object]) -> str:
@@ -305,11 +311,16 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
     w_ln = max(len("LINES"), *(len(str(r["lines_str"])) for r in rows))
     w_tok = max(len("~TOK"), *(len(str(r["tok_str"])) for r in rows))
     w_kind = max(len("KIND"), *(len(f"[{r['kind']}]") for r in rows))
+    has_time = any("time_str" in r for r in rows)
+    w_time = max(len("TIME"), *(len(str(r.get("time_str") or "")) for r in rows)) if has_time else 0
+
+    def _time_col(val: str) -> str:
+        return f"{val.rjust(w_time)}  " if has_time else ""
 
     pct_hdr = "%".rjust(w_pct_val).ljust(w_pct_col)
     out: list[str] = [
         f"{indent}{' ' * w_num} {pct_hdr} {'CHARS'.rjust(w_ch)} {'LINES'.rjust(w_ln)} "
-        f"{'~TOK'.rjust(w_tok)}  {'KIND'.ljust(w_kind)}  SOURCE"
+        f"{'~TOK'.rjust(w_tok)}  {_time_col('TIME')}{'KIND'.ljust(w_kind)}  SOURCE"
     ]
     for r in rows:
         num_col = str(r.get("num_str") or "").rjust(w_num)
@@ -322,6 +333,7 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
             f"{str(r['chars_str']).rjust(w_ch)} "
             f"{str(r['lines_str']).rjust(w_ln)} "
             f"{str(r['tok_str']).rjust(w_tok)}  "
+            f"{_time_col(str(r.get('time_str') or ''))}"
             f"{kind_col}  "
         )
         full_pfx = f"{cols_prefix}{r.get('tree_prefix') or ''}"
@@ -334,6 +346,57 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
             out.append(sub_indent + cont)
     return out
 
+
+def _collect_operation_rows(
+    ops: list[dict[str, object]],
+    total: dict[str, object],
+    *,
+    edited: bool,
+    failed_step: int | None,
+) -> list[dict[str, object]]:
+    timed = total.get("duration_ms") is not None
+    rows: list[dict[str, object]] = []
+    for pos, op in enumerate(ops, 1):
+        desc = str(op.get("desc") or "").replace("\n", " ").strip() or "(no description)"
+        if failed_step is not None and op.get("step") == failed_step:
+            desc += " (failed)"
+        step_no = op.get("step")
+        rows.append(
+            _make_table_row(
+                kind=str(op.get("tag") or "exec"),
+                desc=desc,
+                lines_cnt=int(op.get("lines") or 0),
+                chars_cnt=int(op.get("chars") or 0),
+                gpt_cnt=int(op.get("gpt") or 0),
+                claude_cnt=int(op.get("claude") or 0),
+                share_pct=float(op.get("share_pct") or 0.0),
+                part_num=str(step_no if isinstance(step_no, int) and step_no > 0 else pos),
+                time_str=format_duration(max(0, int(op.get("duration_ms") or 0)) / 1000.0).replace(" ", "") if timed else None,
+            )
+        )
+    cnt = len(ops)
+    tot_row = _make_table_row(
+        kind="total",
+        desc=f"{cnt} operation{'s' if cnt != 1 else ''}" + (" (edited)" if edited else ""),
+        lines_cnt=int(total.get("lines") or 0),
+        chars_cnt=int(total.get("chars") or 0),
+        gpt_cnt=int(total.get("gpt") or 0),
+        claude_cnt=int(total.get("claude") or 0),
+        share_pct=100.0,
+        time_str=format_duration(max(0, int(total.get("duration_ms") or 0)) / 1000.0).replace(" ", "") if timed else None,
+    )
+    return [dict(tot_row), *rows, dict(tot_row)]
+
+def format_operation_table_lines(
+    ops: list[dict[str, object]],
+    total: dict[str, object],
+    max_width: int = 120,
+    *,
+    edited: bool = False,
+    failed_step: int | None = None,
+) -> list[str]:
+    rows = _collect_operation_rows(ops, total, edited=edited, failed_step=failed_step)
+    return _render_bundle_table(rows, max_width=max_width)
 
 def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
     return _render_bundle_table(_collect_hierarchy_rows(plan, edited=edited), max_width=max_width)

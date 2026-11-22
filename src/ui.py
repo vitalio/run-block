@@ -1440,12 +1440,20 @@ def _is_same_cwd(wdir_val: str) -> bool:
         return os.path.abspath(wdir_part) == os.path.abspath(os.getcwd())
 
 
-def _colorize_kv_line(line: str, *, bright_stats: bool = False) -> str:
+def _colorize_kv_line(line: str, *, bright: bool = False) -> str:
     if not _use_color():
         return line
     m = re.match(r"^([A-Za-z][A-Za-z0-9_-]*:)(\s+)(.*)$", line)
     if m:
         key, spaces, val = m.group(1), m.group(2), m.group(3)
+        if bright:
+            if key == "Workdir:" and not _is_same_cwd(val):
+                return f"{key}{spaces}{_HIGHLIGHT_COLOR}{val}{_ANSI_RESET}"
+            if key == "Exit:" and val.strip() != "0":
+                return f"{key}{spaces}{_WARN_COLOR}{val}{_ANSI_RESET}"
+            if key == "Error:":
+                return f"{key}{spaces}{_ERROR_COLOR}{val}{_ANSI_RESET}"
+            return line
         if key == "Workdir:":
             if _is_same_cwd(val):
                 return f"{_KEY_COLOR}{key}{spaces}{val}{_ANSI_RESET}"
@@ -1456,8 +1464,6 @@ def _colorize_kv_line(line: str, *, bright_stats: bool = False) -> str:
             return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_WARN_COLOR}{val}{_ANSI_RESET}"
         if key == "Error:":
             return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{_ERROR_COLOR}{val}{_ANSI_RESET}"
-        if key == "Stats:" and bright_stats:
-            return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}\x1b[97m{val}{_ANSI_RESET}"
         if key in ("Fix:", "Output:", "Stats:"):
             return f"{_KEY_COLOR}{key}{spaces}{val}{_ANSI_RESET}"
         return f"{_KEY_COLOR}{key}{_ANSI_RESET}{spaces}{val}"
@@ -1538,8 +1544,10 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
         return lines
     out: list[str] = []
     tree_re = re.compile(r"^((?:│  |\|  |   )*(?:├─ |└─ |\|- |`- ))(.*)$")
-    tab_re = re.compile(r"^(\s*)(\d+\s)?(\s*\S+%\s+\S+\s+\d+\s+~\S+\s+)(\[([a-z0-9_-]+)\])(\s+)(.*)$")
-    hdr_re = re.compile(r"^(\s{2})((?:#\s+|\s+)%\s+CHARS\s+LINES\s+~TOK\s+KIND\s+SOURCE)\s*$")
+    tab_re = re.compile(
+        r"^(\s*)(\d+\s)?(\s*\S+%\s+\S+\s+\d+\s+~\S+\s+" + TABLE_TIME_COL_PATTERN + r")(\[([a-z0-9_-]+)\])(\s+)(.*)$"
+    )
+    hdr_re = re.compile(r"^(\s{2})((?:#\s+|\s+)%\s+CHARS\s+LINES\s+~TOK\s+(?:TIME\s+)?KIND\s+SOURCE)\s*$")
     heavy_colors = {"warn": _WARN_COLOR, "accent": _HIGHLIGHT_COLOR}
     fn_heavy = globals().get("bundle_row_heavy_level")
     for line in lines:
@@ -2430,6 +2438,8 @@ def _parse_pager_line(line: str) -> str:
         return "overwrite"
     if ans in ("v", "view"):
         return "view"
+    if ans in ("m", "meta"):
+        return "meta"
     if ans == "n":
         return "next_part"
     if raw == "N":
@@ -2500,6 +2510,8 @@ def _read_pager_key(tty_r, *, flush: bool = False) -> str:
                     return "overwrite"
                 if ch in (b"v", b"V"):
                     return "view"
+                if ch in (b"m", b"M"):
+                    return "meta"
                 if ch == b"n":
                     return "next_part"
                 if ch == b"N":
@@ -2559,6 +2571,8 @@ def _compose_pager_frame(
     footer_tail: list[str],
     *,
     scroll_hint: str = "Up/Down j/k PgUp/PgDn: scroll",
+    position_label: str | None = None,
+    always_hint: bool = False,
 ) -> tuple[str, int, int]:
     viewport_rows = max(1, rows - len(header_rows) - 1)
     max_scroll = max(0, len(all_items) - viewport_rows)
@@ -2568,11 +2582,15 @@ def _compose_pager_frame(
         visible.append("")
 
     total_items = len(all_items)
-    start_idx = clamped_scroll + 1 if total_items > 0 else 0
-    end_idx = min(total_items, clamped_scroll + viewport_rows)
-    pos_txt = f"Lines {start_idx}-{end_idx}/{total_items}" if total_items > 0 else "0 lines"
-
-    footer_parts: list[str] = [pos_txt, scroll_hint, *footer_tail]
+    overflow = total_items > viewport_rows
+    footer_parts: list[str] = []
+    if position_label:
+        footer_parts.append(position_label)
+    elif overflow:
+        footer_parts.append(f"Lines {clamped_scroll + 1}-{min(total_items, clamped_scroll + viewport_rows)}/{total_items}")
+    if overflow or always_hint:
+        footer_parts.append(scroll_hint)
+    footer_parts.extend(footer_tail)
     footer_raw = " " + " · ".join(footer_parts)
     footer_txt = _truncate_display_width(footer_raw, cols) if display_width(footer_raw) > cols else footer_raw
     if _use_color():
@@ -2603,7 +2621,9 @@ def _info_part_total(sdir: Path | None, bundle_path: Path | None) -> int:
     return len(numbered)
 
 
-_PART_ROW_NUM_RE = re.compile(r"^\s*(\d+)\s+\d+(?:\.\d+)?%\s+\S+\s+\d+\s+~\S+\s+\[[a-z0-9_-]+\]")
+_PART_ROW_NUM_RE = re.compile(
+    r"^\s*(\d+)\s+\d+(?:\.\d+)?%\s+\S+\s+\d+\s+~\S+\s+" + TABLE_TIME_COL_PATTERN + r"\[[a-z0-9_-]+\]"
+)
 
 
 def _find_selectable_part_rows(items: list[str]) -> list[tuple[int, int]]:
@@ -2621,28 +2641,6 @@ def _find_selectable_part_rows(items: list[str]) -> list[tuple[int, int]]:
 
 
 _STEP_INFO_KINDS = ("START STEP", "END STEP", "SYNTAX ERROR", "NOT RUN", "STEP ALREADY EXISTS")
-_OP_ROW_NUM_RE = re.compile(r"^\s*(\d+)\.\s+\[[a-z0-9_-]+\]")
-_OP_SECTION_HEADING_RE = re.compile(r"^(?:Operations(?: \(\d+ timed\))?:|Pre-execution Plan \(.*\):)$")
-
-
-def _find_selectable_operation_rows(items: list[str]) -> list[tuple[int, int]]:
-    found: list[tuple[int, int]] = []
-    seen_ops: set[int] = set()
-    in_section = False
-    for row_idx, raw_line in enumerate(items):
-        plain = ANSI_RE.sub("", raw_line)
-        if not in_section:
-            in_section = bool(_OP_SECTION_HEADING_RE.match(plain.strip()))
-            continue
-        if not plain.strip():
-            break
-        m = _OP_ROW_NUM_RE.match(plain)
-        if m:
-            ono = int(m.group(1))
-            if ono not in seen_ops:
-                seen_ops.add(ono)
-                found.append((ono, row_idx))
-    return found
 
 
 def _info_operation_steps(
@@ -2660,6 +2658,44 @@ def _info_operation_steps(
     ]
 
 
+def _info_meta_path(
+    kind: str, sdir: Path | None, script: Path | None, out_path: Path | None
+) -> Path | None:
+    if kind == "START SESSION":
+        cand = sdir / "meta.json" if sdir is not None else None
+    else:
+        step_dir = script.parent if script is not None else (out_path.parent if out_path is not None else None)
+        cand = step_dir / "meta.json" if step_dir is not None else None
+    return cand if cand is not None and cand.is_file() else None
+
+
+def _step_op_timings(
+    op_timings: list[dict[str, object]] | None, script: Path | None
+) -> list[dict[str, object]]:
+    if op_timings is not None:
+        return op_timings
+    if script is None:
+        return []
+    ops_meta = read_step_meta(script.parent).get("operations")
+    return [x for x in ops_meta if isinstance(x, dict)] if isinstance(ops_meta, list) else []
+
+
+def _step_part_total(
+    kind: str,
+    script: Path | None,
+    sdir: Path | None,
+    label: str,
+    op_timings: list[dict[str, object]] | None,
+    *,
+    has_output: bool,
+) -> int:
+    if kind != "START STEP" and has_output:
+        timed = _step_op_timings(op_timings, script)
+        if timed:
+            return len(timed)
+    return len(_info_operation_steps(script, sdir, label))
+
+
 def _build_operation_screen(
     label: str,
     op_no: int,
@@ -2674,12 +2710,15 @@ def _build_operation_screen(
     scroll_top: int,
     *,
     can_edit: bool,
+    out_path: Path | None = None,
+    out_lines: list[str] | None = None,
+    has_meta: bool = False,
 ) -> tuple[str, int, int]:
     tag = str(step.get("tag") or "exec")
     desc = str(step.get("desc") or "").strip()
     line_no = int(step.get("line") or 0)
     end_no = int(step.get("end_line") or line_no)
-    hdr = [f"Source: [{tag}] {desc}" if desc else f"Source: [{tag}]"]
+    hdr = [f"Command: [{tag}] {desc}" if desc else f"Command: [{tag}]"]
     if step.get("dir"):
         hdr.append(f"Directory: {step['dir']}")
     if timing is not None:
@@ -2690,24 +2729,40 @@ def _build_operation_screen(
         hdr.append(f"Timing: {format_duration(dur_ms / 1000.0)}" + (" (failed)" if failed else ""))
     elif failed:
         hdr.append("Timing: (failed)")
-    hdr.append(f"Range: lines {line_no}-{end_no} of {_shorten_home_path(script_path)}")
+    hdr.append(f"Script-Range: lines {line_no}-{end_no} of {_shorten_home_path(script_path)}")
     footer = ["n/N: next/prev operation"]
-    if can_edit:
-        footer.append("e(dit) script")
-    footer.append("Esc/q/i/Tab: back")
+    if out_path is not None:
+        body = list(out_lines or [])
+        out_start = timing.get("out_line_start") if timing is not None else None
+        out_end = timing.get("out_line_end") if timing is not None else None
+        if isinstance(out_start, int) and isinstance(out_end, int) and out_end >= out_start:
+            hdr.append(f"Range: lines {out_start}-{out_end} of {_shorten_home_path(out_path)}")
+            body = body[max(0, out_start - 1) : out_end]
+        else:
+            hdr.append("Range: (no output)")
+            body = ["(no output)"]
+        shown_path = out_path
+        footer.extend(["e(dit)/o(utput)", "s(cript)"])
+    else:
+        body = script_lines[max(0, line_no - 1) : end_no]
+        shown_path = script_path
+        footer.append("e(dit)/s(cript)" if can_edit else "")
+    if has_meta:
+        footer.append("m(eta)")
+    footer.append("Esc: back")
     return _build_part_screen(
         label,
         op_no,
         total,
         None,
-        script_lines[max(0, line_no - 1) : end_no],
+        body,
         cols,
         rows,
         scroll_top,
         can_edit=can_edit,
-        title=f"PART {op_no}/{total} · {label}",
+        title=f"PART {op_no}/{total} · {label} · {_shorten_home_path(shown_path)}",
         header_kv=hdr,
-        footer_tail=footer,
+        footer_tail=[f for f in footer if f],
     )
 
 
@@ -2768,7 +2823,7 @@ def _build_part_screen(
         hdr_kv.append(f"Range: lines {entry.get('line_start')}-{entry.get('line_end')} of {label}")
     header_rows: list[str] = [title_line]
     for hline in hdr_kv:
-        colored = _colorize_kv_line(_expand_tabs(hline), bright_stats=True)
+        colored = _colorize_kv_line(_expand_tabs(hline), bright=True)
         for wline in _wrap_box_line(colored, max_content_w):
             header_rows.append(wline)
     div_char = "─" if _supports_utf8() else "-"
@@ -2784,7 +2839,7 @@ def _build_part_screen(
     if footer_tail is None:
         if can_edit:
             tail.append("e(dit) bundle")
-        tail.append("Esc/q/i: back")
+        tail.append("Esc: back")
     return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, tail)
 
 
@@ -2851,7 +2906,7 @@ def _format_info_header_lines(
         lines.append(f"Date: {hdr_map['date']}")
 
     for raw_k, val in hdr_items:
-        if raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or not val:
+        if raw_k.lower() in HIDDEN_SESSION_HEADER_KEYS or raw_k.lower() in FULLSCREEN_HIDDEN_HEADER_KEYS or not val:
             continue
         lines.append(f"{raw_k}: {val}")
 
@@ -2865,36 +2920,14 @@ def _format_info_header_lines(
     return lines
 
 
-def _format_info_operation_timings(
-    op_timings: list[dict[str, object]],
-    *,
-    total_duration_ms: int | None = None,
-    failed_step: int | None = None,
-    rc: int | None = None,
-) -> list[str]:
-    if not op_timings:
+def _format_safety_warning_lines(findings: list[dict[str, object]], max_width: int) -> list[str]:
+    if not findings:
         return []
-    sum_ms = sum(max(0, int(item.get("duration_ms") or 0)) for item in op_timings)
-    denom_ms = total_duration_ms if (total_duration_ms is not None and total_duration_ms > 0) else sum_ms
-    raw_lines: list[str] = []
-    for item in op_timings:
-        step_num = item.get("step")
-        tag = str(item.get("tag") or "exec")
-        desc = str(item.get("desc") or "").strip()
-        try:
-            dur_ms = max(0, int(item.get("duration_ms") or 0))
-        except (TypeError, ValueError):
-            dur_ms = 0
-        pct = (100.0 * dur_ms / denom_ms) if denom_ms > 0 else 0.0
-        dur_str = format_duration(dur_ms / 1000.0)
-        is_failed = rc is not None and rc != 0 and failed_step is not None and step_num == failed_step
-        fail_lbl = " (failed)" if is_failed else ""
-        desc_part = f"  {desc}" if desc else ""
-        raw_lines.append(f"  {step_num}. [{tag}]  {dur_str} ({pct:.1f}%){fail_lbl}{desc_part}")
-    colored = _colorize_operation_lines(raw_lines)
-    if _use_color():
-        colored = [ln.replace(" (failed)", f" {_WARN_COLOR}(failed){_ANSI_RESET}") for ln in colored]
-    return colored
+    whdr = f"  Safety warnings ({len(findings)}):"
+    out: list[str] = [f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr]
+    warn_items = [(str(f.get("category") or "warn"), str(f.get("snippet") or "")) for f in findings]
+    out.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_width, indent="    ")))
+    return out
 
 
 def _format_info_plan_section(
@@ -2941,12 +2974,83 @@ def _format_info_plan_section(
     else:
         out.append("  (no detected operations)")
     findings = [f for f in (plan_obj.get("findings") or []) if isinstance(f, dict)]
-    if findings:
-        whdr = f"  Safety warnings ({len(findings)}):"
-        out.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
-        warn_items = [(str(f.get("category") or "warn"), str(f.get("snippet") or "")) for f in findings]
-        out.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_width, indent="    ")))
+    out.extend(_format_safety_warning_lines(findings, max_width))
     return out
+
+
+def _total_stats_entry(data: bytes) -> dict[str, object]:
+    s = count_tokens(data)
+    return {k: int(s[k]) for k in ("lines", "chars", "gpt", "claude")}
+
+
+def _render_operation_table(
+    ops: list[dict[str, object]],
+    total: dict[str, object],
+    max_width: int,
+    *,
+    edited: bool,
+    failed_step: int | None,
+) -> list[str]:
+    lines = _colorize_bundle_lines(
+        format_operation_table_lines(ops, total, max_width=max_width, edited=edited, failed_step=failed_step)
+    )
+    if _use_color():
+        lines = [ln.replace(" (failed)", f" {_WARN_COLOR}(failed){_ANSI_RESET}") for ln in lines]
+    return lines
+
+
+def _format_output_breakdown(
+    op_timings: list[dict[str, object]],
+    out_path: Path,
+    *,
+    total_ms: int | None,
+    failed_step: int | None,
+    edited: bool,
+    max_width: int,
+) -> list[str]:
+    try:
+        data = out_path.read_bytes()
+    except OSError:
+        data = b""
+    ops = [dict(op) for op in op_timings]
+    total = _total_stats_entry(data)
+    total["duration_ms"] = (
+        total_ms if total_ms is not None else sum(max(0, int(op.get("duration_ms") or 0)) for op in ops)
+    )
+    return _render_operation_table(ops, total, max_width, edited=edited, failed_step=failed_step)
+
+
+def _script_operation_metrics(steps: list[dict[str, object]], script_text: str) -> list[dict[str, object]]:
+    script_lines = script_text.splitlines()
+    total_chars = max(1, len(script_text))
+    ops: list[dict[str, object]] = []
+    for st in steps:
+        first = int(st.get("line") or 0)
+        last = int(st.get("end_line") or first)
+        chunk = "\n".join(script_lines[max(0, first - 1) : last]) + "\n"
+        s = count_tokens(chunk.encode("utf-8"))
+        ops.append(
+            {
+                **st,
+                "lines": int(s["lines"]),
+                "chars": int(s["chars"]),
+                "gpt": int(s["gpt"]),
+                "claude": int(s["claude"]),
+                "share_pct": round(100.0 * int(s["chars"]) / total_chars, 1),
+            }
+        )
+    return ops
+
+
+def _format_script_breakdown(
+    steps: list[dict[str, object]], script_path: Path, *, edited: bool, max_width: int
+) -> list[str]:
+    try:
+        data = script_path.read_bytes()
+    except OSError:
+        return []
+    ops = _script_operation_metrics(steps, data.decode("utf-8", "replace"))
+    return _render_operation_table(ops, _total_stats_entry(data), max_width, edited=edited, failed_step=None)
 
 
 def _collect_info_report(
@@ -3042,6 +3146,11 @@ def _collect_info_report(
                 body_sections.extend(warnings_sec)
             if not body_sections:
                 body_sections = ["(no bundle parts)"]
+            meta_kv.append(f"Bundle: {bpath}")
+            if orig_b.is_file():
+                meta_kv.append(f"Bundle-Orig: {orig_b}")
+            if resolved_sdir is not None and (resolved_sdir / "meta.json").is_file():
+                meta_kv.append(f"Meta: {resolved_sdir / 'meta.json'}")
             return _align_kv_lines([*hdr_lines, *meta_kv]), body_sections
 
     orig_script = _orig_backup_path(resolved_script) if resolved_script is not None else None
@@ -3080,54 +3189,35 @@ def _collect_info_report(
             if orig0.is_file():
                 meta_kv.append(f"Original: {orig0}")
 
-    primary_path = out_path if (out_path is not None and out_path.is_file()) else resolved_script
-    if primary_path is None and resolved_sdir is not None and (resolved_sdir / "0").is_file():
-        primary_path = resolved_sdir / "0"
-    primary_stats = stats_line(primary_path) if primary_path is not None else None
-    dur_str = format_duration(duration_s) if duration_s is not None else None
-    stat_parts: list[str] = []
-    if primary_stats:
-        stat_parts.append(primary_stats)
-    elif kind == "START STEP" and summary and summary.get("meta"):
-        stat_parts.append(str(summary["meta"]))
-    if dur_str:
-        stat_parts.append(dur_str)
     any_edited = bool(edited if edited is not None else (out_edited or script_edited))
-    if stat_parts:
-        joined = " · ".join(stat_parts)
-        meta_kv.append(f"Stats: {joined} (edited)" if any_edited else f"Stats: {joined}")
-    elif any_edited:
-        meta_kv.append("Stats: (edited)")
-
-    if resolved_script is not None and out_path is not None and resolved_script.is_file() and out_path.is_file():
-        sc_st = stats_line(resolved_script)
-        if sc_st:
-            meta_kv.append(f"Script-Stats: {sc_st}{' (edited)' if script_edited else ''}")
 
     body_sections = []
-    if op_timings:
-        total_ms = int(step_meta["duration_ms"]) if isinstance(step_meta.get("duration_ms"), (int, float)) else None
-        thdr = f"Operations ({len(op_timings)} timed):"
-        body_sections.append(f"{_KEY_COLOR}{thdr}{_ANSI_RESET}" if _use_color() else thdr)
+    step_ops = _info_operation_steps(resolved_script, resolved_sdir, label)
+    total_ms = int(round(duration_s * 1000.0)) if duration_s is not None else None
+    if kind != "START STEP" and op_timings and out_path is not None and out_path.is_file():
         body_sections.extend(
-            _format_info_operation_timings(
-                op_timings, total_duration_ms=total_ms, failed_step=failed_step, rc=rc
+            _format_output_breakdown(
+                op_timings,
+                out_path,
+                total_ms=total_ms,
+                failed_step=failed_step if (rc is not None and rc != 0) else None,
+                edited=any_edited,
+                max_width=max_content_w,
             )
+        )
+    elif step_ops and resolved_script is not None:
+        body_sections.extend(
+            _format_script_breakdown(step_ops, resolved_script, edited=any_edited, max_width=max_content_w)
         )
 
     if kind == "START STEP":
-        if summary:
+        warn_lines = _format_safety_warning_lines(
+            [f for f in (findings or []) if isinstance(f, dict)], max_content_w
+        )
+        if warn_lines:
             if body_sections:
                 body_sections.append("")
-            cur_plan = {
-                "meta": summary.get("meta", ""),
-                "work_dir": summary.get("work_dir", str(get_work_dir(resolved_sdir))),
-                "operations": summary.get("operations") or [],
-                "operation_groups": summary.get("operation_groups") or [],
-                "operation_steps": summary.get("operation_steps") or [],
-                "findings": findings or [],
-            }
-            body_sections.extend(_format_info_plan_section("Operations:", cur_plan, max_content_w))
+            body_sections.extend(warn_lines)
         if note.strip():
             if body_sections:
                 body_sections.append("")
@@ -3146,21 +3236,6 @@ def _collect_info_report(
                 )
             except OSError:
                 pass
-    elif resolved_script is not None and (
-        (orig_script is not None and orig_script.is_file()) or resolved_script.is_file()
-    ):
-        plan_src = orig_script if (orig_script is not None and orig_script.is_file()) else resolved_script
-        try:
-            plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
-            w_eff = Path(wdir) if wdir else get_work_dir(resolved_sdir)
-            pre_plan = analyze_script(plan_text, work_dir=w_eff, label=label, check_syntax=False)
-            if body_sections:
-                body_sections.append("")
-            body_sections.extend(
-                _format_info_plan_section(f"Pre-execution Plan ({plan_src.name}):", pre_plan, max_content_w)
-            )
-        except OSError:
-            pass
 
     if not body_sections and resolved_sdir is not None and (resolved_sdir / "0").is_file():
         fn_load = globals().get("load_session_bundle_plan")
@@ -3227,7 +3302,7 @@ def _build_info_screen(
         orig_o = _orig_file_backup_path(out_path) if out_path is not None else None
         is_edited = bool(edited if edited is not None else (_is_file_edited(out_path, orig_o) or _is_file_edited(resolved_script, orig_sc)))
 
-    base_title = f"INFO · {label}" if label else f"INFO · {kind}"
+    base_title = f"{kind} · {label}" if (label and label != kind) else kind
     short_path = _shorten_home_path(primary_path) if primary_path is not None else ""
     panel_title = f"{base_title} · {short_path}" if short_path else base_title
     if is_edited:
@@ -3255,7 +3330,7 @@ def _build_info_screen(
     )
     header_rows: list[str] = [title_line]
     for hline in hdr_kv:
-        colored = _colorize_kv_line(_expand_tabs(hline), bright_stats=True)
+        colored = _colorize_kv_line(_expand_tabs(hline), bright=True)
         for wline in _wrap_box_line(colored, max_content_w):
             header_rows.append(wline)
     div_char = "─" if _supports_utf8() else "-"
@@ -3267,12 +3342,10 @@ def _build_info_screen(
         for wline in _wrap_box_line(_expand_tabs(bline), max_content_w):
             all_items.append(wline)
 
-    if kind == "START SESSION":
-        selectable = _find_selectable_part_rows(all_items)
-    elif kind in _STEP_INFO_KINDS:
-        selectable = _find_selectable_operation_rows(all_items)
-    else:
-        selectable = []
+    is_table_view = kind == "START SESSION" or (
+        kind in _STEP_INFO_KINDS and resolved_script is not None and resolved_script.is_file()
+    )
+    selectable = _find_selectable_part_rows(all_items) if is_table_view else []
     selected_row_idx: int | None = None
     if part_cursor is not None and selectable:
         for pno, r_idx in selectable:
@@ -3288,6 +3361,7 @@ def _build_info_screen(
     has_edit = edit_target is not None and edit_target.is_file()
 
     footer_tail: list[str] = []
+    meta_file = _info_meta_path(kind, resolved_sdir, resolved_script, out_path)
     if selected_row_idx is not None:
         scroll_hint = "Up/Down j/k: select part"
         footer_tail.append("Enter: open part")
@@ -3305,11 +3379,13 @@ def _build_info_screen(
         if allow_overwrite:
             footer_tail.append("O(verwrite)" if has_output else "o(verwrite)")
         footer_tail.append("v(iew)")
+        if meta_file is not None:
+            footer_tail.append("m(eta)")
         if selectable or (kind == "START SESSION" and _info_part_total(resolved_sdir, out_path) > 0):
             footer_tail.append("Tab: parts")
         if allow_copy:
             footer_tail.append("Enter: copy")
-        footer_tail.append("Esc/q/i: back")
+        footer_tail.append("Esc: back")
 
     viewport_rows = max(1, rows - len(header_rows) - 1)
     if selected_row_idx is not None:
@@ -3319,7 +3395,15 @@ def _build_info_screen(
             scroll_top = selected_row_idx - viewport_rows + 1
 
     return _compose_pager_frame(
-        header_rows, all_items, cols, rows, scroll_top, footer_tail, scroll_hint=scroll_hint
+        header_rows,
+        all_items,
+        cols,
+        rows,
+        scroll_top,
+        footer_tail,
+        scroll_hint=scroll_hint,
+        position_label=f"Part {part_cursor}/{len(selectable)}" if selected_row_idx is not None else None,
+        always_hint=selected_row_idx is not None,
     )
 
 
@@ -3560,15 +3644,26 @@ def _show_info_fullscreen(
             elif key in ("back", "esc", "tab"):
                 return row_no, None
 
+    def _open_meta(target: Path | None) -> None:
+        if target is None or not target.is_file():
+            return
+        tty_w.write("\033[?25h\033[?1049l")
+        tty_w.flush()
+        try:
+            open_script_in_editor(target, tty_r, tty_w)
+        finally:
+            tty_w.write("\033[?1049h\033[?25l")
+            tty_w.flush()
+
     def _open_operation_viewer(initial_no: int) -> tuple[int, dict[str, object] | None]:
         script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
         if script is None or not script.is_file():
             return initial_no, None
-        timings = op_timings
-        if timings is None:
-            ops_meta = read_step_meta(script.parent).get("operations")
-            timings = [x for x in ops_meta if isinstance(x, dict)] if isinstance(ops_meta, list) else []
-        timing_by_step = {int(t["step"]): t for t in timings if isinstance(t.get("step"), int)}
+        timing_by_step = {
+            int(t["step"]): t for t in _step_op_timings(op_timings, script) if isinstance(t.get("step"), int)
+        }
+        use_out = kind != "START STEP" and out_path is not None and out_path.is_file()
+        meta_file = _info_meta_path(kind, resolved_sdir, script, out_path)
         op_no = initial_no
         op_scroll = 0
         while True:
@@ -3581,6 +3676,12 @@ def _show_info_fullscreen(
                 script_lines = script.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 script_lines = []
+            out_lines: list[str] | None = None
+            if use_out and out_path is not None:
+                try:
+                    out_lines = out_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    out_lines = []
             cols, rows = _term_size()
             is_failed = rc is not None and rc != 0 and failed_step == op_no
             frame, op_scroll, vp_rows = _build_operation_screen(
@@ -3596,6 +3697,9 @@ def _show_info_fullscreen(
                 rows,
                 op_scroll,
                 can_edit=True,
+                out_path=out_path if use_out else None,
+                out_lines=out_lines,
+                has_meta=meta_file is not None,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -3611,8 +3715,11 @@ def _show_info_fullscreen(
             elif key == "prev_part":
                 op_no = max(1, op_no - 1)
                 op_scroll = 0
-            elif key in ("edit", "script"):
-                cb_edit = _edit_artifact(script)
+            elif key == "meta":
+                _open_meta(meta_file)
+            elif key in ("edit", "output", "script"):
+                target = out_path if (use_out and key in ("edit", "output") and out_path is not None) else script
+                cb_edit = _edit_artifact(target)
                 op_scroll = 0
                 if cb_edit and cb_edit.get("reject_msg"):
                     return op_no, cb_edit
@@ -3631,7 +3738,9 @@ def _show_info_fullscreen(
             if kind == "START SESSION":
                 part_total = _info_part_total(resolved_sdir, out_path)
             elif kind in _STEP_INFO_KINDS and has_script:
-                part_total = len(_info_operation_steps(resolved_script, resolved_sdir, label))
+                part_total = _step_part_total(
+                    kind, resolved_script, resolved_sdir, label, op_timings, has_output=has_output
+                )
             else:
                 part_total = 0
             if part_cursor is not None:
@@ -3716,6 +3825,8 @@ def _show_info_fullscreen(
                     return {"action": "overwrite", "edited": any_edited}
             elif key == "overwrite" and allow_overwrite:
                 return {"action": "overwrite", "edited": any_edited}
+            elif key == "meta":
+                _open_meta(_info_meta_path(kind, resolved_sdir, resolved_script, out_path))
             elif key == "view":
                 report_txt = _build_plain_info_report(
                     title_kind=kind,
