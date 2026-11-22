@@ -1,14 +1,4 @@
-# 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
-
-- Depends on: D3
-- Bump: `MINOR`
-- In `src/config.py`, define canonical `CHILD_PAGER_ENV_VARS = ("PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER", "SYSTEMD_PAGER", "BAT_PAGER", "AWS_PAGER", "PSQL_PAGER", "DELTA_PAGER")` and add `get_setting("pager")` reading `RUN_BLOCK_PAGER` (default `"cat"`; values `"0"`, `"false"`, `"no"`, `"off"`, `"inherit"`, `"keep"`, `"passthrough"` return `""` to preserve the parent environment's pager variables unchanged).
-- In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run_block`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
-- Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
-- Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
-- Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
-
-# 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
+# 🔵 [WIP] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
 - Depends on: F57, B8, F81, F86
 - Harden `_reassemble_split_payload()`, `cmd_normal()`, and `cmd_fix()` in `src/runner.py` against broken or duplicated blocks:
@@ -21,9 +11,41 @@
 - Add code-context snippets (`+-2` lines) and escaping hints on `SyntaxError` / `IndentationError` in `--fix` (`cmd_fix()`) and shell/heredoc syntax failures (`_validate_step_script_syntax()` in `src/runner.py`, `src/safety.py`).
 - Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `README.md`, `tests/test_runner.py`, `tests/test_ui.py`.
 
+# 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
+
+- Depends on: D3
+- Bump: `MINOR`
+- In `src/config.py`, define canonical `CHILD_PAGER_ENV_VARS = ("PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER", "SYSTEMD_PAGER", "BAT_PAGER", "AWS_PAGER", "PSQL_PAGER", "DELTA_PAGER")` and add `get_setting("pager")` reading `RUN_BLOCK_PAGER` (default `"cat"`; values `"0"`, `"false"`, `"no"`, `"off"`, `"inherit"`, `"keep"`, `"passthrough"` return `""` to preserve the parent environment's pager variables unchanged).
+- In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run_block`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
+- Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
+- Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
+- Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
+
+# 🎯 [NEXT] B14: Fix fullscreen i(nfo) meta hotkey in START SESSION part viewer, END STEP table refresh on out edit, and progress line range edge cases
+
+- Depends on: F86 -> F74
+- Bump: `PATCH`
+- Add `m(eta)` hotkey handling and footer hint (`m(eta)`) to `_open_part_viewer()` and `_build_part_screen()` in `src/ui.py` (resolving `<session>/meta.json` via `_info_meta_path("START SESSION", resolved_sdir, None, out_path)`) so `START SESSION` `PART N/M` and `BUNDLE R/M` subviews open `<session>/meta.json` consistently with step `PART k/N` views.
+- Recompute per-operation `share_pct` against current `total["chars"]` (and refresh operation/slice metrics when `block.sh` or `<step>/out` is modified) in `_format_output_breakdown()` and `_open_operation_viewer()` (`src/ui.py`) so the `END STEP` breakdown table and operation viewer stay aligned after in-place edits.
+- Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
+- Target files: `src/runner.py:_clean_out_text.._ProgressLineFilter`, `src/ui.py:_step_op_timings.._format_output_breakdown`, `src/ui.py:_show_info_fullscreen`, `tests/test_runner.py:test_f30_numbered_block_plan_and_live_progress_execution..test_f49_block_and_operation_durations_and_sub_items`, `tests/test_ui.py:test_f54_end_drops_steps_and_info_viewer..test_f77_borderless_info_home_shortened_title_prompt_and_tab_cursor`.
+
+# 🎯 [NEXT] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
+
+- Depends on: F74 -> B14
+- Bump: `PATCH`
+- Split `src/ui.py` (>4,100 lines) into three single-responsibility modules under `src/`:
+  - `src/ui.py`: terminal/ANSI/UTF-8 and display-width primitives, token counting and stats formatting (`count_tokens()`, `format_stats()`), and box-drawing card layout/rendering (`_wrap_box_line()`, `_clamp_body_rows()`, `_render_block()`, `format_safety_box()`, `build_box_body_lines()`, `format_clipboard_box()`).
+  - `src/ui_info.py`: fullscreen `i(nfo)` inspector, pager navigation/frame composition, bundle/operation breakdown tables, and `PART N/M`, `BUNDLE R/M`, and step operation `PART k/N` subviews (`_parse_pager_line()`..`_show_bundle_details_fullscreen()`).
+  - `src/ui_prompt.py`: `/dev/tty` lifecycle, `SIGWINCH` debounce watcher, editor launch and `.orig` backups, clipboard command resolution/copying, and interactive confirmation/clipboard prompts (`open_tty()`..`confirm_execution()`, `resolve_clipboard_target()`..`copy_file_to_clipboard()`, `offer_clipboard_copy()`).
+- Update `MODULE_ORDER` in `build.py`, rebuild `./run_block`, and update module boundary documentation in `AGENTS.md`.
+- Rename all remaining ticket-prefixed unit test methods (`test_f<N>_*` and `test_b<N>_*`) across `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py` to descriptive domain-behavior names.
+- Target files: `build.py`, `src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `AGENTS.md`, `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`.
+
 # 🎯 [NEXT] F84: Add run_block -r / --run [session] full-reply editor mode with automatic block extraction, repair, and step inference
 
-- Depends on: F83, F74
+- Depends on: F83
+- Depends on: F74 -> B14 -> F92
 - Add `run_block -r [session]` / `run_block --run [session]` in `src/cli.py`, `src/header.py`, `src/runner.py`, and `src/ui.py` to ingest a complete model reply (chat prose + code block) without manual block extraction or fence fixing:
   - Input acquisition: when `stdin` is a TTY, open a temporary file in the user's editor (`$VISUAL` / `$EDITOR` via the editor helper in `src/ui.py`) where the user pastes the full model reply and saves; when `stdin` is piped (e.g. `wl-paste | run_block -r` or `pbpaste | run_block -r`), read the full reply directly from `stdin`.
   - Block extraction & repair engine (`extract_reply_block()` in `src/runner.py`): locate the executable `run_block [<session>/<step>] <<'RUN_BLOCK' ... RUN_BLOCK` or `run_block --fix [<session>/<target>] <<'RUN_FIX' ... RUN_FIX` block (or fenced code block when `[session]` is supplied) inside the full reply, reassemble fences split by inner triple backticks, repair missing/indented closing terminators, deduplicate repeated blocks, and prefer the final actionable block over inline prose examples.
@@ -33,7 +55,8 @@
 
 # 🎯 [NEXT] D10: Design built-in API agent mode in run_block (single run_block tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
 
-- Depends on: F85, F86, F89, D6, D9, F74, F82, F84
+- Depends on: F85, F86, F89, D6, D9, F82
+- Depends on: F74 -> B14 -> F92 -> F84
 - Design candidate for `role=design` adding a built-in LLM API agent transport mode directly inside `run_block` (preserving `c(opy)` clipboard workflow and `run_block -r` full-reply paste mode as fallbacks, and remaining directly runnable via `todo_md <ID> | agents_bundle | run_block`):
   1. Model profiles and secret isolation: configure provider profiles (Anthropic Messages, OpenAI-compatible, local models) and load API keys (env / macOS Keychain / config) in memory while stripping secret env vars from child `run_block` executions (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
   2. Single polymorphic `run_block` tool & resilient reply recovery:
@@ -112,17 +135,3 @@
   - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/cli.py`), integrated with `D6` sandbox/revert policies and `F70` token/cache usage accounting.
 - Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
-
-# ⚪ [NEW] B14: Fix fullscreen i(nfo) meta hotkey in START SESSION part viewer, END STEP table refresh on out edit, and progress line range edge cases
-
-- Bump: `PATCH`
-- Add `m(eta)` hotkey handling and footer hint (`m(eta)`) to `_open_part_viewer()` and `_build_part_screen()` in `src/ui.py` so `START SESSION` `PART N/M` and `BUNDLE R/M` subviews open `<session>/meta.json` consistently with step `PART k/N` views.
-- Recompute per-operation `share_pct` (and slice metrics when `<step>/out` is modified) in `_format_output_breakdown()` (`src/ui.py`) and keep `_open_operation_viewer()` operation list aligned with the displayed `END STEP` breakdown table when `block.sh` or `out` is edited.
-- Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` stay aligned with cleaned `<step>/out`.
-
-# ⚪ [NEW] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
-
-- Depends on: B14
-- Bump: `PATCH`
-- Split `src/ui.py` (>4,100 lines) into cohesive modules under `src/` (separating ANSI/box primitives and inline TUI cards, fullscreen `i(nfo)` pager/part/operation inspector, and interactive prompt/clipboard orchestration) while keeping `build.py` assembly order and `AGENTS.md` module boundaries updated.
-- Rename remaining ticket-prefixed unit test methods (`test_f51_*`, `test_f52_*`, `test_f53_*`, `test_f54_*`, `test_f77_*`, etc.) across `tests/test_*.py` to domain-behavior names.
