@@ -1,3 +1,7 @@
+# ✅ [DONE] F91: Refresh stale Target files symbol slices in F90 and F86 after the bundle_plan.py split — *2026-11-22, Removed stale src/bundle_plan.py symbol slices from F90 and F86 after F89 split*
+
+After the F89 split, the Target files bullets of F90 and F86 still name symbol slices such as src/bundle_plan.py:format_bundle_summary_lines..cmd_bundle_plan and src/bundle_plan.py:_format_tok_pair..format_bundle_parts_lines. Those symbols now live in src/bundle_view.py, so todo_md warns 'symbol slice not found' and preloads less context for these tasks. Symbol slices in Target files go stale whenever a module is split, so dependent tasks need their file references re-pointed or made more refactor-tolerant.
+
 # ✅ [DONE] F89: Split bundle_plan.py by responsibility into bundle_parse.py, bundle_plan.py, and bundle_view.py — *2026-11-22*
 
 - Depends on: F87, B13
