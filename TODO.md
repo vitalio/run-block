@@ -17,9 +17,44 @@
 - Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
 - Target files: `src/runner.py:_clean_out_text.._ProgressLineFilter`, `src/ui.py:_step_op_timings.._format_output_breakdown`, `src/ui.py:_show_info_fullscreen`, `tests/test_runner.py:test_f30_numbered_block_plan_and_live_progress_execution..test_f49_block_and_operation_durations_and_sub_items`, `tests/test_ui.py:test_f54_end_drops_steps_and_info_viewer..test_f77_borderless_info_home_shortened_title_prompt_and_tab_cursor`.
 
+# 🎯 [NEXT] F94: Show standard session headers and clean step/duration summary in END SESSION and SESSION COMPLETED cards
+
+- Depends on: B14
+- Bump: `PATCH`
+- In `render_end_session_card()` (`src/runner.py`), prepend standard session
+  header lines via `format_session_header_lines(label=name, sdir=sdir)`
+  (`Session`, `Workdir`, `Sandbox` when active, and exposed bundle headers such
+  as `Role`, `Task`, `Title`), separated by a blank line from the session
+  completion summary block.
+- In `_guard_completed_session()` (`src/runner.py`), prepend
+  `format_session_header_lines(label=label, sdir=sdir)` separated by a blank
+  line from `Completed:` and `Note:` in the `SESSION COMPLETED` confirmation
+  box (matching `STEP ALREADY EXISTS` and `MISSING PREVIOUS STEP`).
+- Replace the noisy two-line `Steps:` + `Results: X ok, Y failed, Z --fix, W
+  renumbered` format in `_session_stats_lines()` (`src/runner.py`) with a
+  concise summary:
+  - `Steps: <total> (<non-zero outcomes> · <non-zero modifiers>)` (for example
+    `Steps: 15 (15 ok)` or `Steps: 21 (11 ok, 10 failed · 2 fix)`), omitting
+    zero-count outcomes and zero-count modifiers (`fix`, `renumbered`) and
+    using `fix` instead of `--fix`.
+  - Order timestamps chronologically (`Started:` before `Completed:`) and show
+    wall-clock session elapsed time alongside total script execution time in
+    `Duration:` when `started_at` and `completed_at` are present (for example
+    `Duration: 25m 1s (1m 20s exec)`, falling back to `Duration: <exec>` when
+    timestamps are absent or equal).
+  - Keep `Note: <completed_note>` at the end of the summary block, and in
+    headless mode (`run_block --done -y`) print `[<session>] END SESSION`
+    followed by the non-empty header and summary lines without duplicating
+    `Session:`.
+- Update unit tests in `tests/test_runner.py` to verify standard headers
+  (`Workdir`, `Role`, `Task`, `Title`), blank-line separation, the new
+  `Steps:` / `Duration:` / `Started:` / `Completed:` layout, and
+  `SESSION COMPLETED` headers.
+- Target files: `src/runner.py:_session_stats_lines.._guard_completed_session`, `src/runner.py:cmd_info`, `tests/test_runner.py:test_f42_done_stats_card_and_list_badge..test_f42_completed_session_interactive_confirmation`, `tests/test_runner.py:test_f79_deferred_end_and_start_session_cards_and_clipboard_handoff`.
+
 # 🎯 [NEXT] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
 
-- Depends on: F74 -> B14
+- Depends on: B14 -> F94
 - Bump: `PATCH`
 - Split `src/ui.py` (>4,100 lines) into three single-responsibility modules under `src/`:
   - `src/ui.py`: terminal/ANSI/UTF-8 and display-width primitives, token counting and stats formatting (`count_tokens()`, `format_stats()`), and box-drawing card layout/rendering (`_wrap_box_line()`, `_clamp_body_rows()`, `_render_block()`, `format_safety_box()`, `build_box_body_lines()`, `format_clipboard_box()`).
@@ -123,6 +158,17 @@
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/cli.py`), integrated with `D6` sandbox/revert policies and `F70` token/cache usage accounting.
 - Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
 
+# ⚪ [NEW] B15: Fix --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, and AssertionError root-cause hints
+
+- Depends on: F74
+Follow-up findings from F74 review:
+- `src/runner.py:_propose_anchor_repair`, `src/runner.py:cmd_fix`: `_propose_anchor_repair()` matches and replaces the missing anchor via `fix_code.count(repr(old)) == 1` and `fix_code.replace(repr(old), repr(new_old), 1)`, which fails when `old` is written with double quotes, triple quotes, or other literal forms in `fix_code`; additionally, invoking `prompt_yes_no_box("NOT RUN", ...)` before `not_run_exit()` displays two consecutive `NOT RUN` prompts when the user declines repair (and `i(nfo)` in the first prompt runs before `<step>/out` or `<step>/fix.py` exists).
+- `src/runner.py:cmd_fix`, `src/runner.py:_looks_like_shell_script`: `cmd_fix()` checks `_looks_like_shell_script(fix_code)` only when `validate_fix_ast(fix_code)` fails, so shell commands that happen to parse as valid Python AST expressions (`ls -la`, `cd /tmp`, `pwd`, `git`) bypass shell detection and fail with `NameError` during `exec()` instead of reporting the shell-script hint (or offering interactive execution as `<session>/<next_step>`).
+- `src/runner.py:_reassemble_split_payload`: stopping at the first heredoc terminator, dropping duplicate trailing blocks/prose, and stripping nested `SPLIT_HEADER_RE` wrappers only run when the first non-empty line on `stdin` matches `SPLIT_HEADER_RE`; when the local shell consumes the outer `run_block <s/n> <<'RUN_BLOCK'` line before piping `stdin`, an indented inner terminator followed by a duplicate block or prose falls through the `if not m:` branch without truncation.
+- `src/ui.py:_traceback_root_cause`, `src/ui.py:_extract_last_error_line`: `_traceback_root_cause()` searches for `AssertionError: '<needle>' not found in ...` matches only in `lines[:tb_idx]` (ignoring the haystack text embedded in the `AssertionError` message itself when output was captured in memory), and `_extract_last_error_line()` truncates `cause` by character index (`cause[: max_len - 3]`) rather than `char_width()`.
+- `src/runner.py:_fix_anchor_values`, `src/runner.py:cmd_fix`: `_fix_anchor_values()` inspects only `text.count/replace/find/index` calls (missing `assert old in text` and `re.sub(old, new, text)` anchors), and `next_seq_ref` in `cmd_fix()` uses `int(base_step) + 1` instead of `next_free_step(sdir, min_step=int(base_step) + 1)`.
+
 # ⚪ [NEW] F93: Split src/runner.py by responsibility
 
+- Depends on: F94, B15
 src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
