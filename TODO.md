@@ -157,6 +157,12 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`).
 - Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
 
+# ⚪ [NEW] F95: Drop Windows and PowerShell support (install.ps1, agents/blocks/pwsh.md, windows-latest CI) and accept export-driven preamble headers
+
+- Align `run_block` with `todo_flow` `docs/adr/0003-task-targeted-bundle-architecture-and-atomic-rule-taxonomy.md`:
+  - In `src/bundle_parse.py`, display all non-transport (`not is_bundle_transport_header`), non-hidden preamble headers emitted by `agents_bundle` `export` directives even when `Bundle-Expose` is omitted (while keeping backward compatibility when `Bundle-Expose` is present), and recognize `Bundle-Name` as a transport header.
+  - Drop Windows and PowerShell support: remove `install.ps1`, `agents/blocks/pwsh.md`, Windows/PowerShell execution branches, and `windows-latest` from `.github/workflows/ci.yml`.
+
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
 - Depends on: F79, F83, F88
