@@ -1,10 +1,10 @@
 # 🎯 [NEXT] B13: Keep <session>/0 free of raw boundary markers during and after START SESSION editor (_edit_artifact)
 
-- Fix `_edit_artifact()` in `src/ui.py:3423-3466` so opening the editor (`e`) on `START SESSION` (`<session>/0` when `0.raw` exists) never leaves raw `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers inside `<session>/0`:
+- Fix `_edit_artifact()` in `src/ui.py` so opening the editor (`e`) on `START SESSION` (`<session>/0` when `0.raw` exists) never leaves raw `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers inside `<session>/0`:
   - Stage `0.raw` into a temporary file (or restore `before_clean_bytes` inside a `try ... finally:` guard whenever the editor exits without saving changes or is interrupted by an exception/signal) so `<session>/0` on disk is never left overwritten with `0.raw` if the editor is still open, copied externally, or aborted.
   - When the user saves edits to the raw bundle stage, write the updated raw text to `0.raw` and immediately invoke `refresh_bundle_plan_meta(resolved_sdir, target)` / `_apply_edit_callbacks(target)` so `<session>/0` is always written with stripped clean text and `<session>/meta.json` `bundle_plan` stays in sync.
-- Add a regression test in `tests/test_bundle.py:2090-2136` verifying that editing `START SESSION` when `0.raw` exists (both when unchanged/aborted and when modified) always leaves `<session>/0` free of `<!-- bundle:<nonce>:` markers while preserving raw markers in `0.raw`.
-- Target files: `src/ui.py:3405-3470`, `src/bundle_plan.py:1001-1040`, `tests/test_bundle.py:2090-2136`.
+- Add a regression test in `tests/test_bundle.py` verifying that editing `START SESSION` when `0.raw` exists (both when unchanged/aborted and when modified) always leaves `<session>/0` free of `<!-- bundle:<nonce>:` markers while preserving raw markers in `0.raw`.
+- Target files: `src/ui.py:_apply_edit_callbacks.._edit_artifact`, `src/bundle_plan.py:refresh_bundle_plan_meta`, `tests/test_bundle.py:TestBundle.test_bundle_raw_markup_preservation_on_edit_and_sandbox_off_omission..TestBundle.test_bundle_fragment_dedup_and_overlap_warnings`.
 
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
@@ -16,9 +16,19 @@
 - Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
 - Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
 
+# 🎯 [NEXT] F89: Split bundle_plan.py by responsibility into bundle_parse.py, bundle_plan.py, and bundle_view.py
+
+- Depends on: F87, B13
+- Split `src/bundle_plan.py` into three cohesive modules (~550–650 lines each) aligned with `AGENTS.md` layering (separating pure header/fragment parsing and warning analysis from plan state/reconciliation and tree/table rendering):
+  - `src/bundle_parse.py` (`BUNDLE_BOUNDARY_HEADER`..`analyze_bundle_warnings`): Bundle Input Protocol header constants and filters (`BUNDLE_*_HEADER`, `SUPPORTED_BUNDLE_PROTOCOLS`, `TASK_CONTEXT_KINDS`, `extract_bundle_transport_headers()`, `get_bundle_boundary()`, `get_bundle_protocol()`, `filter_exposed_headers()`), embedded terminal block rule and prompt injection (`_strip_rule_description()`, `get_embedded_block_rule()`, `_has_embedded_block_rule()`, `inject_embedded_block_rule()`, `normalize_prompt_text()`, `_append_to_unframed_prompt_tail()`, `inject_embedded_prompt()`), section metadata inference (`_infer_section_meta()`), payload normalization, fragment deduplication (`_dedupe_fragments()`), overlap detection (`_detect_fragment_overlaps()`), and warning analysis (`analyze_bundle_warnings()`).
+  - `src/bundle_plan.py` (`_part_chars`..`refresh_bundle_plan_meta` and `_enrich_bundle_plan`..`load_session_bundle_plan`): `bundle_plan` data model, provenance chain helpers (`_part_chars()`, `_resolve_part_chain()`, `_join_chain_label()`, `_child_rel_label()`, `_recompute_share_pct()`), 1-based line range assignment and `--part N` extraction (`_collapse_blank_runs()`, `_assign_part_ranges()`, `_body_line_offset()`, `_shift_part_ranges()`, `parse_part_option()`, `extract_bundle_part()`, `format_part_header()`), plan construction and header reconciliation (`reconcile_bundle_plan()`, `group_bundle_parts()`, `_build_bundle_plan()`, `_split_section_fallback()`, `_collect_unframed_parts()`, `parse_bundle_fragments()`), and `<session>/meta.json` persistence (`refresh_bundle_plan_meta()`, `_enrich_bundle_plan()`, `load_session_bundle_plan()`).
+  - `src/bundle_view.py` (`_format_tok_pair`..`format_bundle_warning_items` and `format_bundle_plan_text`..`cmd_bundle_plan`): provenance tree construction (`_format_tok_pair()`, `_new_tree_node()`, `_add_part_to_node()`, `_build_bundle_tree()`), heavy-row threshold classification (`HEAVY_*`, `_heavy_level()`, `_parse_tok_hi()`, `bundle_row_heavy_level()`), hierarchical table row collection and rendering (`_tree_connector()`, `_make_table_row()`, `_part_extras_suffix()`, `_collect_hierarchy_rows()`, `_render_bundle_table()`, `format_bundle_summary_lines()`, `format_bundle_parts_lines()`, `format_bundle_group_items()`, `format_bundle_part_items()`, `format_bundle_warning_items()`), and `--bundle-plan` text/CLI output (`format_bundle_plan_text()`, `cmd_bundle_plan()`).
+- Update `MODULE_ORDER` in `build.py` (`"bundle_parse.py"`, `"bundle_plan.py"`, `"bundle_view.py"`), update `AGENTS.md` Architecture & Module Boundaries and Bundle Input Protocol sections, rebuild `./run_block` via `python3 build.py`, and verify that all existing unit tests in `tests/test_bundle.py`, `tests/test_ui.py`, and `tests/test_cli.py` pass without symbol regression.
+- Target files: `build.py`, `src/bundle_plan.py:BUNDLE_BOUNDARY_HEADER.._strip_rule_description`, `src/bundle_plan.py:analyze_bundle_warnings.._resolve_part_chain`, `src/bundle_plan.py:refresh_bundle_plan_meta.._build_bundle_tree`, `src/bundle_plan.py:format_bundle_warning_items..cmd_bundle_plan`, `src/bundle_parse.py`, `src/bundle_view.py`.
+
 # 🎯 [NEXT] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys
 
-- Depends on: F81, B8, F87, B13
+- Depends on: F81, B8, F87, B13, F89
 - Bump: `MINOR`
 - Replace generic `INFO · <label> · <~path>` fullscreen title bar in `_build_info_screen()` (`src/ui.py:3190-3324`) with the card title (`<CARD TITLE> · <label> · <~path>`, e.g. `END STEP · s229/2 · ~/.local/state/run_block/s229/2/out`, `START SESSION · s229/0 · ~/.local/state/run_block/s229/0`, `START STEP · s229/2 · ~/.local/state/run_block/s229/2/block.sh`, with `(edited)` suffix when modified).
 - Unify fullscreen header keys and bright styling across `START SESSION`, `START STEP`, `END STEP`, and other cards (`_format_info_header_lines()`, `_collect_info_report()`, `_colorize_kv_line()` in `src/ui.py:1443-1465`, `src/ui.py:2813-3180`):
@@ -28,7 +38,7 @@
   - Render all fullscreen header lines in uniform readable brightness without dimming (`\x1b[2m`) `Workdir:`, `Sandbox:`, `Output:`, `Fix:`, or header keys.
 - Track per-operation output line ranges and token/size metrics in `_ProgressLineFilter` and `run_script()` (`src/runner.py:389-602`, `src/runner.py:850-1035`):
   - Record 1-based `out_line_start` and `out_line_end` into the cleaned `<session>/<step>/out` file (plus `lines`, `chars`, `bytes`, `gpt`, `claude`, `share_pct`) for each executed operation in `<session>/<step>/meta.json` (`operations` list), alongside `step`, `tag`, `desc`, `duration_ms`, and script `line`..`end_line`.
-- Render a unified tabular breakdown with top/bottom `[total]` rows in fullscreen `END STEP` and `START STEP` (`_collect_info_report()`, `_format_info_operation_timings()`, `_format_info_plan_section()` in `src/ui.py:2868-3180` and table helpers in `src/bundle_plan.py:1187-1438`):
+- Render a unified tabular breakdown with top/bottom `[total]` rows in fullscreen `END STEP` and `START STEP` (`_collect_info_report()`, `_format_info_operation_timings()`, `_format_info_plan_section()` in `src/ui.py:2868-3180` and table helpers in `src/bundle_view.py` / `src/bundle_plan.py` `_format_tok_pair`..`format_bundle_parts_lines`):
   - In `END STEP`, replace the old `Operations (N timed):` list and duplicate `Pre-execution Plan (block.sh):` section with a unified output breakdown table (`#  %  CHARS  LINES  ~TOK  TIME  KIND  SOURCE`) showing each operation's share of `<step>/out`, character/line/token counts, execution duration, `[tag]`, and command description (with `(failed)` marker on the failing operation and heavy-row highlighting), bracketed by top and bottom `100.0%` `[total]` rows (including total step output stats, total duration, operation count, and `(edited)` suffix when modified).
   - In `START STEP`, render the pre-execution operation breakdown table (`#  %  CHARS  LINES  ~TOK  KIND  SOURCE`) with top and bottom `[total]` rows and optional `Safety warnings`.
 - Open the selected operation's captured step output from `<step>/out` on `Tab` -> `Enter` in `END STEP` (`_open_operation_viewer()`, `_build_operation_screen()` in `src/ui.py:2623-2712`, `src/ui.py:3558-3616`):
@@ -37,7 +47,7 @@
 - Add `m(eta)` hotkey and clean up fullscreen footer hints (`_parse_pager_line()`, `_read_pager_key()`, `_compose_pager_frame()`, `_build_info_screen()`, `_show_info_fullscreen()` in `src/ui.py:2400-2585`, `src/ui.py:3286-3324`, `src/ui.py:3663-3746`):
   - Support `m(eta)` (`m`/`M` in raw TTY mode and `m`/`meta` in line mode) across all fullscreen views to open `<session>/meta.json` (in `START SESSION`) or `<session>/<step>/meta.json` (in step cards), while keeping `e(dit)` and `o(utput)` as synonyms for editing `<step>/out` in `END STEP` and `s(cript)` for `block.sh`.
   - Omit `Lines 1-N/N` and `Up/Down j/k PgUp/PgDn: scroll` from the footer bar when all body rows fit within a single viewport (`total_items <= viewport_rows`), show scroll position only when `total_items > viewport_rows`, show `Part <k>/<N>` in `Tab` cursor mode, and shorten the footer back hint to `Esc: back` (while keeping `Esc`, `q`, and `i` active as back keys).
-- Target files: `src/runner.py:389-602`, `src/runner.py:850-1035`, `src/bundle_plan.py:1187-1438`, `src/ui.py:1443-1572`, `src/ui.py:2400-3770`, `README.md`, `tests/test_ui.py:1800-2027`, `tests/test_runner.py:1350-1508`.
+- Target files: `src/runner.py:389-602`, `src/runner.py:850-1035`, `src/bundle_view.py:_format_tok_pair..format_bundle_parts_lines`, `src/bundle_plan.py:_format_tok_pair..format_bundle_parts_lines`, `src/ui.py:1443-1572`, `src/ui.py:2400-3770`, `README.md`, `tests/test_ui.py:1800-2027`, `tests/test_runner.py:1350-1508`.
 
 # 🎯 [NEXT] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors
 
@@ -64,7 +74,7 @@
 
 # 🎯 [NEXT] D10: Design built-in API agent mode in run_block (single run_block tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
 
-- Depends on: F85, F86, D6, D9, F74, F82, F84
+- Depends on: F85, F86, F89, D6, D9, F74, F82, F84
 - Design candidate for `role=design` adding a built-in LLM API agent transport mode directly inside `run_block` (preserving `c(opy)` clipboard workflow and `run_block -r` full-reply paste mode as fallbacks, and remaining directly runnable via `todo_md <ID> | agents_bundle | run_block`):
   1. Model profiles and secret isolation: configure provider profiles (Anthropic Messages, OpenAI-compatible, local models) and load API keys (env / macOS Keychain / config) in memory while stripping secret env vars from child `run_block` executions (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
   2. Single polymorphic `run_block` tool & resilient reply recovery:
@@ -79,12 +89,13 @@
      - Keep intra-session step history strictly append-only across turns (advancing the trailing `cache_control` breakpoint to the latest `<session>/<step>/out` turn) and use threshold/chunked context compaction rather than per-turn sliding-window truncation so prior step prefixes remain cache-valid across consecutive steps.
      - Record provider cache metrics (`cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) in `<session>/chat.json` and surface cache hit statistics in `Stats:` across `END STEP` and `END SESSION`.
   6. Stdlib-first HTTP/SSE streaming client (`urllib.request`) with no required third-party dependencies, coordinating with `D9` and `D3` / `F85` (`GIT_PAGER=cat`).
-- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `AGENTS.md`, `docs/adr/`.
+- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `AGENTS.md`, `docs/adr/`.
 
 # ⚪ [NEW] F72: Rename project to run-block and CLI utility to rxb
 
+- Depends on: F89
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `rxb` (updating embedded block rules, protocol markers, and env vars/compatibility aliases per the ecosystem rename design).
-- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/safety.py`, `src/ui.py`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
+- Target files: `build.py`, `install.sh`, `install.ps1`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/safety.py`, `src/ui.py`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
 - Acceptance criteria: `build.py` outputs `rxb`, `install.sh`/`install.ps1` install `rxb` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `rxb`, and `python3 -m unittest discover -s tests` passes.
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
@@ -131,7 +142,7 @@
 - Extend the pre-flight stdlib `~lo–hi tokens` estimator in `src/ui.py` (`count_tokens()`, `format_stats()`) and `src/bundle_plan.py` (`analyze_bundle_plan()`) with model-aware token accounting once `D10` specifies the built-in LLM API agent mode:
   - Keep fast offline stdlib heuristic estimation for pre-flight TUI cards (`START SESSION`, `START STEP`, `END STEP`, `--bundle-plan`) before a request is sent to the model.
   - Record exact post-turn token usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) returned by the provider API response in `<session>/chat.json` and `<session>/meta.json`, and surface optional provider `count_tokens` / profile-tuned pre-flight estimates when an API profile is active.
-- Target files: `src/ui.py`, `src/bundle_plan.py`, `src/runner.py`, `tests/test_ui.py`, `tests/test_bundle.py`, `tests/test_runner.py`.
+- Target files: `src/ui.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `tests/test_ui.py`, `tests/test_bundle.py`, `tests/test_runner.py`.
 
 # ⚪ [NEW] F88: Implement built-in LLM API agent mode in run_block (single run_block tool, TUI loop, prompt caching, and key isolation)
 
@@ -141,9 +152,4 @@
   - Stdlib `urllib.request` HTTP/SSE streaming client, single polymorphic `run_block` tool schema (`edits`, `script`, `fix_target`, `done`, `done_note`), and fallback reply extraction via `extract_reply_block()`.
   - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/cli.py`), integrated with `D6` sandbox/revert policies and `F70` token/cache usage accounting.
-- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
-
-# ⚪ [NEW] F89: Split bundle_plan.py by responsibility
-
-- `src/bundle_plan.py` has grown to about 1800 lines and mixes the header filter, fragment parser, warning analyzer, plan reconciliation, and table rendering, exceeding the modular cohesion guideline (split above about 1000 lines).
-- Impact: new bundle diagnostics such as fragment dedup and overlap detection keep landing in the same oversized module, making parser and rendering changes harder to review.
+- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
