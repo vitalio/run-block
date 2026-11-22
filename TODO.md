@@ -1,13 +1,3 @@
-# 🔵 [WIP] F87: Deduplicate identical or contained bundle fragments and warn on partial text overlaps in bundle plan
-
-- Implement Runner-level content deduplication and partial text overlap detection in `src/bundle_plan.py` per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
-  - Add a helper `_normalize_part_payload_lines(part_lines: list[str]) -> list[str]` that strips a leading `===== ... =====` section/command header line and trims leading/trailing blank lines.
-  - In `parse_bundle_fragments()` (`src/bundle_plan.py:927-1002`), when `boundary` markers are present, compare each non-empty fragment's normalized payload lines against earlier accepted fragments:
-    - If a fragment's normalized payload is 100% identical to an earlier fragment (e.g., `include AGENTS.md` and `$ cat AGENTS.md`, or a duplicate rule/file), or if its normalized payload (`>= 3` non-empty lines) is a contiguous sub-slice of an earlier fragment's normalized payload, omit the duplicate fragment from `stripped_lines` / `raw_parts` so `<session>/0` does not contain duplicate text, and record a `fragment_deduped` warning in `plan["warnings"]` referencing the kept part index and saved line/token counts.
-  - In `analyze_bundle_warnings()` (`src/bundle_plan.py:400-505`), detect partial contiguous text overlaps across remaining non-empty fragments: when two fragments share a contiguous block of `>= 5` non-empty normalized lines (and `>= 200` characters) that is not a full duplicate, emit a `fragment_overlap` warning (`severity: "warn"`, `part_index`, `part_name`, `overlap_with`, `shared_lines`, `shared_chars`, and `message` showing `#<earlier_idx>`, shared line count, and overlap percentage).
-  - Add unit tests in `tests/test_bundle.py:2050-2136` covering 100% duplicate removal (`include` vs `cmd`), contiguous sub-slice containment removal, and partial overlap warning generation (`fragment_overlap`).
-- Target files: `src/bundle_plan.py:390-510`, `src/bundle_plan.py:815-1010`, `tests/test_bundle.py:2050-2136`.
-
 # 🎯 [NEXT] B13: Keep <session>/0 free of raw boundary markers during and after START SESSION editor (_edit_artifact)
 
 - Fix `_edit_artifact()` in `src/ui.py:3423-3466` so opening the editor (`e`) on `START SESSION` (`<session>/0` when `0.raw` exists) never leaves raw `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers inside `<session>/0`:
@@ -152,3 +142,8 @@
   - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/cli.py`), integrated with `D6` sandbox/revert policies and `F70` token/cache usage accounting.
 - Target files: `src/config.py`, `src/bundle.py`, `src/bundle_plan.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
+
+# ⚪ [NEW] F89: Split bundle_plan.py by responsibility
+
+- `src/bundle_plan.py` has grown to about 1800 lines and mixes the header filter, fragment parser, warning analyzer, plan reconciliation, and table rendering, exceeding the modular cohesion guideline (split above about 1000 lines).
+- Impact: new bundle diagnostics such as fragment dedup and overlap detection keep landing in the same oversized module, making parser and rendering changes harder to review.

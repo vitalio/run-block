@@ -1,3 +1,13 @@
+# ✅ [DONE] F87: Deduplicate identical or contained bundle fragments and warn on partial text overlaps in bundle plan — *2026-11-22*
+
+- Implement Runner-level content deduplication and partial text overlap detection in `src/bundle_plan.py` per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
+  - Add a helper `_normalize_part_payload_lines(part_lines: list[str]) -> list[str]` that strips a leading `===== ... =====` section/command header line and trims leading/trailing blank lines.
+  - In `parse_bundle_fragments()` (`src/bundle_plan.py:927-1002`), when `boundary` markers are present, compare each non-empty fragment's normalized payload lines against earlier accepted fragments:
+    - If a fragment's normalized payload is 100% identical to an earlier fragment (e.g., `include AGENTS.md` and `$ cat AGENTS.md`, or a duplicate rule/file), or if its normalized payload (`>= 3` non-empty lines) is a contiguous sub-slice of an earlier fragment's normalized payload, omit the duplicate fragment from `stripped_lines` / `raw_parts` so `<session>/0` does not contain duplicate text, and record a `fragment_deduped` warning in `plan["warnings"]` referencing the kept part index and saved line/token counts.
+  - In `analyze_bundle_warnings()` (`src/bundle_plan.py:400-505`), detect partial contiguous text overlaps across remaining non-empty fragments: when two fragments share a contiguous block of `>= 5` non-empty normalized lines (and `>= 200` characters) that is not a full duplicate, emit a `fragment_overlap` warning (`severity: "warn"`, `part_index`, `part_name`, `overlap_with`, `shared_lines`, `shared_chars`, and `message` showing `#<earlier_idx>`, shared line count, and overlap percentage).
+  - Add unit tests in `tests/test_bundle.py:2050-2136` covering 100% duplicate removal (`include` vs `cmd`), contiguous sub-slice containment removal, and partial overlap warning generation (`fragment_overlap`).
+- Target files: `src/bundle_plan.py:390-510`, `src/bundle_plan.py:815-1010`, `tests/test_bundle.py:2050-2136`.
+
 # ✅ [DONE] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps — *2026-11-22*
 
 - Depends on: F83, F82

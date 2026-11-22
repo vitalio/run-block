@@ -2132,5 +2132,64 @@ class TestBundle(RunBlockTestCase):
         self.assertLess(len(clean_initial), len(raw_initial))
 
 
+    def test_bundle_fragment_dedup_and_overlap_warnings(self):
+        nonce = "bnd_dedup"
+        base = [f"base line {k} " + "x" * 40 for k in range(8)]
+        own = ["own line a", "own line b"]
+
+        def part(meta: str, lines: list[str]) -> str:
+            return f"<!-- bundle:{nonce}:part {meta} -->\n" + "\n".join(lines) + f"\n<!-- bundle:{nonce}:end -->\n"
+
+        file_meta = '{"kind":"file","name":"AGENTS.md"}'
+        body = (
+            part(file_meta, base)
+            + part('{"kind":"cmd","name":"cat AGENTS.md"}', ["===== $ cat AGENTS.md ====="] + base)
+            + part('{"kind":"file","name":"slice"}', base[2:5])
+            + part('{"kind":"file","name":"mixed"}', own + base[0:6])
+            + part('{"kind":"prompt","name":"Prompt"}', ["Do the task"])
+        )
+        clean, plan = self.mod.parse_bundle_fragments(body, boundary=nonce)
+        self.assertEqual([p["name"] for p in plan["parts"]], ["AGENTS.md", "mixed", "Prompt"])
+        self.assertEqual(plan["part_count"], 3)
+        self.assertNotIn("cat AGENTS.md", clean)
+        self.assertEqual(clean.count(base[7]), 1)
+        self.assertEqual(clean.count(base[0]), 2)
+        self.assertIn("own line a", self.mod.extract_bundle_part(plan, clean, 2)[1])
+
+        def by_code(p):
+            out = {}
+            for w in p["warnings"]:
+                out.setdefault(w["code"], []).append(w)
+            return out
+
+        codes = by_code(plan)
+        deduped = codes["fragment_deduped"]
+        self.assertEqual([(w["part_index"], w["saved_lines"]) for w in deduped], [(1, 9), (1, 3)])
+        for w in deduped:
+            with self.subTest(removed=w["removed_name"]):
+                self.assertIn("#1", w["message"])
+                self.assertGreater(w["saved_gpt"], 0)
+        (overlap,) = codes["fragment_overlap"]
+        self.assertEqual(
+            (overlap["part_index"], overlap["overlap_with"], overlap["shared_lines"]), (2, 1, 6)
+        )
+        self.assertGreaterEqual(overlap["shared_chars"], 200)
+        self.assertIn("#1", overlap["message"])
+        self.assertIn("%", overlap["message"])
+
+        # Header part shifts every part reference in warnings
+        shifted = self.mod.reconcile_bundle_plan(plan, "Role: work\n\n" + clean + "\n")
+        shifted_codes = by_code(shifted)
+        self.assertEqual([w["part_index"] for w in shifted_codes["fragment_deduped"]], [2, 2])
+        (s_overlap,) = shifted_codes["fragment_overlap"]
+        self.assertEqual((s_overlap["part_index"], s_overlap["overlap_with"]), (3, 2))
+
+        # Contained fragments below the minimum line count are kept
+        small_body = part(file_meta, base) + part('{"kind":"file","name":"tiny"}', base[2:4])
+        _, small = self.mod.parse_bundle_fragments(small_body, boundary=nonce)
+        self.assertEqual([p["name"] for p in small["parts"]], ["AGENTS.md", "tiny"])
+        self.assertNotIn("fragment_deduped", by_code(small))
+
+
 if __name__ == "__main__":
     unittest.main()

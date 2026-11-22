@@ -137,3 +137,10 @@ rules are loaded via `.agents_bundle`.
 - Analyzer & diagnostics: Keep bundle parsing, size/error/secret diagnostics,
   and `--bundle-plan` output in a dedicated module (`src/bundle_plan.py`),
   reusing `src/safety.py` secret detection without duplicating patterns.
+- Fragment dedup and overlap: `parse_bundle_fragments()` drops duplicate or
+  contained boundary fragments via `_dedupe_fragments()` before ranges are
+  assigned, so `<session>/0`, `bundle_plan` ranges, and `0.raw` re-parsing
+  stay consistent; `fragment_deduped` warnings carry pre-header part indices
+  and `reconcile_bundle_plan()` shifts both `part_index` and `overlap_with`.
+  `analyze_bundle_warnings()` emits `fragment_overlap` through
+  `_detect_fragment_overlaps()` using `OVERLAP_MIN_LINES` / `OVERLAP_MIN_CHARS`.
