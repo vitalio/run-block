@@ -1,3 +1,11 @@
+# ❌ [CANCELED] F70: Support model-aware token counting once model API integration is added — *Consolidated provider API token/cache usage accounting into D10 and F88*
+
+- Depends on: D10
+- Extend the pre-flight stdlib `~lo–hi tokens` estimator in `src/ui.py` (`count_tokens()`, `format_stats()`) and `src/bundle_plan.py` (`analyze_bundle_plan()`) with model-aware token accounting once `D10` specifies the built-in LLM API agent mode:
+  - Keep fast offline stdlib heuristic estimation for pre-flight TUI cards (`START SESSION`, `START STEP`, `END STEP`, `--bundle-plan`) before a request is sent to the model.
+  - Record exact post-turn token usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) returned by the provider API response in `<session>/chat.json` and `<session>/meta.json`, and surface optional provider `count_tokens` / profile-tuned pre-flight estimates when an API profile is active.
+- Target files: `src/ui.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `tests/test_ui.py`, `tests/test_bundle.py`, `tests/test_runner.py`.
+
 # ✅ [DONE] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors — *2026-11-22*
 
 - Depends on: F57, B8, F81, F86

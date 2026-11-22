@@ -17,6 +17,23 @@
 - Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
 - Target files: `src/runner.py:_clean_out_text.._ProgressLineFilter`, `src/ui.py:_step_op_timings.._format_output_breakdown`, `src/ui.py:_show_info_fullscreen`, `tests/test_runner.py:test_f30_numbered_block_plan_and_live_progress_execution..test_f49_block_and_operation_durations_and_sub_items`, `tests/test_ui.py:test_f54_end_drops_steps_and_info_viewer..test_f77_borderless_info_home_shortened_title_prompt_and_tab_cursor`.
 
+# 🎯 [NEXT] D10: Design built-in API agent mode in run_block (single run_block tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
+
+- Depends on: F86, F89, F82, F74
+- Design candidate for `role=design` adding a built-in LLM API agent transport mode directly inside `run_block` (preserving `c(opy)` clipboard workflow and `run_block -r` full-reply paste mode as fallbacks, and remaining directly runnable via `todo_md <ID> | agents_bundle | run_block`):
+  1. Model profiles and secret isolation: configure provider profiles (Anthropic Messages, OpenAI-compatible, local models) and load API keys (env / macOS Keychain / config) in memory while stripping secret env vars from child `run_block` executions (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
+  2. Single polymorphic `run_block` tool & resilient reply recovery:
+     - Register a single `run_block` tool with `disable_parallel_tool_use: true` / `parallel_tool_calls: false` accepting structured `edits: [{path, old, new}]` (atomic in-memory anchor + syntax validation before disk write, strict `Workdir` path boundary enforcement, pre-execution diff preview in `START STEP` / `i(nfo)`, and `difflib` anchor repair from `F74`), `script` (batch `bash`/`pwsh` commands without heredoc/fence wrappers or manual step numbers), optional `fix_target`, and optional `done` / `done_note`.
+     - Reuse the reply extraction and repair pipeline from `F84` (`extract_reply_block()` in `src/runner.py`) to automatically strip accidental Markdown/heredoc wrappers inside `script`, deduplicate or queue unexpected multi-block responses, auto-resolve `<session>/<next_step>`, convert misplaced bash scripts in `fix_target` into sequential steps, and fall back to extracting blocks from plain text replies when a model responds without a tool call; support interactive terminal replies when the model asks a question without emitting a block.
+  3. Safety & sandbox integration: integrate with existing `src/safety.py` static checks and OS sandbox policies (`nonet` / `strict`), keeping advanced workspace drift/revert policies decoupled in `D4` -> `D6`.
+  4. TUI integration in `START SESSION`, `START STEP`, `END STEP`, and `END SESSION` (`src/ui.py`): replace default `Enter`/`Y` action with `Send to model (<profile>)` while keeping `c(opy)` for clipboard mode, render model reasoning/commentary and structured `edits` diffs directly inside `START STEP`, and persist conversation transcript and exact provider token/cache usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) in `<session>/chat.json` and `<session>/meta.json` (keeping fast offline stdlib heuristic estimation for pre-flight TUI cards).
+  5. Prompt caching & prefix stability (cross-session and intra-session) on top of `Bundle-Protocol: 1` (`F82`):
+     - Split `<session>/0` using `bundle_plan` fragment boundaries (`src/bundle_plan.py`, `format_start_bundle()` in `src/bundle.py`) so static `===== Rules =====` (`kind: "rule"`, with invariant rules first and `[if role=...]` / `[if transport=api]` last) and static project instructions (`AGENTS.md`) form an immutable cacheable prefix (`system` prompt / leading `cache_control` breakpoint), while per-session headers (`Session`, `Next-Block`, `Date`, `Role`, `Task`, `Title`), dynamic command outputs (`kind: "cmd"`), file includes (`kind: "include"`), `task`/`context` fragments, and `===== Prompt =====` (`kind: "prompt"`) go into the initial `user` message.
+     - Keep intra-session step history strictly append-only across turns (advancing the trailing `cache_control` breakpoint to the latest `<session>/<step>/out` turn) and use threshold/chunked context compaction rather than per-turn sliding-window truncation so prior step prefixes remain cache-valid across consecutive steps.
+     - Surface provider token and cache hit statistics in `Stats:` across `END STEP` and `END SESSION`.
+  6. Stdlib-first HTTP/SSE streaming client (`urllib.request`) with no required third-party dependencies, coordinating with `F85` (`GIT_PAGER=cat`).
+- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `AGENTS.md`, `docs/adr/`.
+
 # 🎯 [NEXT] F94: Show standard session headers and clean step/duration summary in END SESSION and SESSION COMPLETED cards
 
 - Depends on: B14
@@ -54,7 +71,7 @@
 
 # 🎯 [NEXT] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
 
-- Depends on: B14 -> F94
+- Depends on: B14
 - Bump: `PATCH`
 - Split `src/ui.py` (>4,100 lines) into three single-responsibility modules under `src/`:
   - `src/ui.py`: terminal/ANSI/UTF-8 and display-width primitives, token counting and stats formatting (`count_tokens()`, `format_stats()`), and box-drawing card layout/rendering (`_wrap_box_line()`, `_clamp_body_rows()`, `_render_block()`, `format_safety_box()`, `build_box_body_lines()`, `format_clipboard_box()`).
@@ -74,26 +91,6 @@
   - Automatic session & step resolution: resolve target `<session>` from the explicit CLI `[session]` argument, the extracted block header, or `_find_latest_session()` for the current `Workdir`, and automatically derive the next sequential step number via `next_free_step(sdir)` (auto-renumbering stale or mismatched step numbers without manual editing).
   - Model reasoning display & persistence: extract the model's prose commentary preceding the block, persist it in `<session>/<step>/meta.json` (or `plan.md`), and render a compact commentary/reasoning section at the top of the `START STEP` (`BLOCK PLAN`) card in `src/ui.py` so the same reply-ingestion pipeline serves both web-chat (`-r`) and built-in API transport (`D10`).
 - Target files: `src/cli.py`, `src/header.py`, `src/runner.py`, `src/ui.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_ui.py`.
-
-# 🎯 [NEXT] D10: Design built-in API agent mode in run_block (single run_block tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
-
-- Depends on: F85, F86, F89, D6, D9, F82
-- Depends on: F74 -> B14 -> F92 -> F84
-- Design candidate for `role=design` adding a built-in LLM API agent transport mode directly inside `run_block` (preserving `c(opy)` clipboard workflow and `run_block -r` full-reply paste mode as fallbacks, and remaining directly runnable via `todo_md <ID> | agents_bundle | run_block`):
-  1. Model profiles and secret isolation: configure provider profiles (Anthropic Messages, OpenAI-compatible, local models) and load API keys (env / macOS Keychain / config) in memory while stripping secret env vars from child `run_block` executions (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
-  2. Single polymorphic `run_block` tool & resilient reply recovery:
-     - Register a single `run_block` tool with `disable_parallel_tool_use: true` / `parallel_tool_calls: false` accepting structured `edits: [{path, old, new}]` (atomic in-memory anchor + syntax validation before disk write, strict `Workdir` path boundary enforcement, pre-execution diff preview in `START STEP` / `i(nfo)`, and `difflib` anchor repair from `F74`), `script` (batch `bash`/`pwsh` commands without heredoc/fence wrappers or manual step numbers), optional `fix_target`, and optional `done` / `done_note`.
-     - Reuse the reply extraction and repair pipeline from `F84` (`extract_reply_block()` in `src/runner.py`) to automatically strip accidental Markdown/heredoc wrappers inside `script`, deduplicate or queue unexpected multi-block responses, auto-resolve `<session>/<next_step>`, convert misplaced bash scripts in `fix_target` into sequential steps, and fall back to extracting blocks from plain text replies when a model responds without a tool call; support interactive terminal replies when the model asks a question without emitting a block.
-  3. Defense-in-depth against prompt injection & destructive commands (coordinating with `D6`):
-     - Combine deterministic static AST/policy blocks in `src/safety.py` (hard deny on `rm -rf /`, `rm -rf ~`, outside-`Workdir` writes, or `.git/hooks` tampering), default `nonet` / `strict` OS sandbox with per-step interactive permission grants in `START STEP` (one-step network or sibling `.todo_projects` directory access via `s(andbox)`), and fast pre-step git working-tree snapshots (`git stash create`) for instant rollback.
-     - Support an optional context-isolated AI safety auditor hook (via `RUN_BLOCK_APPROVE_CMD` / secondary fast model profile) triggered on high-risk or non-allowlisted shell scripts: pass only the task title, role, `edits`, and candidate `script` (excluding chat history and untrusted file contents that could carry prompt injections) to verify alignment before presenting `START STEP`.
-  4. TUI integration in `START SESSION`, `START STEP`, `END STEP`, and `END SESSION` (`src/ui.py`): replace default `Enter`/`Y` action with `Send to model (<profile>)` while keeping `c(opy)` for clipboard mode, render model reasoning/commentary and structured `edits` diffs directly inside `START STEP`, and persist conversation transcript/token usage in `<session>/chat.json` (unblocking `F70` and `F88`).
-  5. Prompt caching & prefix stability (cross-session and intra-session) on top of `Bundle-Protocol: 1` (`F82`):
-     - Split `<session>/0` using `bundle_plan` fragment boundaries (`src/bundle_plan.py`, `format_start_bundle()` in `src/bundle.py`) so static `===== Rules =====` (`kind: "rule"`, with invariant rules first and `[if role=...]` / `[if transport=api]` last) and static project instructions (`AGENTS.md`) form an immutable cacheable prefix (`system` prompt / leading `cache_control` breakpoint), while per-session headers (`Session`, `Next-Block`, `Date`, `Role`, `Task`, `Title`), dynamic command outputs (`kind: "cmd"`), file includes (`kind: "include"`), `task`/`context` fragments, and `===== Prompt =====` (`kind: "prompt"`) go into the initial `user` message.
-     - Keep intra-session step history strictly append-only across turns (advancing the trailing `cache_control` breakpoint to the latest `<session>/<step>/out` turn) and use threshold/chunked context compaction rather than per-turn sliding-window truncation so prior step prefixes remain cache-valid across consecutive steps.
-     - Record provider cache metrics (`cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) in `<session>/chat.json` and surface cache hit statistics in `Stats:` across `END STEP` and `END SESSION`.
-  6. Stdlib-first HTTP/SSE streaming client (`urllib.request`) with no required third-party dependencies, coordinating with `D9` and `D3` / `F85` (`GIT_PAGER=cat`).
-- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `AGENTS.md`, `docs/adr/`.
 
 # ⚪ [NEW] F72: Rename project to run-block and CLI utility to rxb
 
@@ -133,31 +130,6 @@
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
 
-# ⚪ [NEW] D9: Design machine-readable runner contract (--json step output and plan/execute handshake)
-
-- Depends on: F79, F83
-- Design contract to let the built-in API transport (`D10`) or an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
-- Align with `F83` step outcome metadata in `<session>/<step>/meta.json` (`outcome`: `ok`/`failed`/`syntax-error`/`not-run`/`aborted`/`saved`, `exit_code`, `duration_ms`, `reason`, `fix_target`) and evaluate structured `--json` execution output for `<session>/<step>` (including safety findings, auto-repair/renumber notes, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` handshake, structured file-edit specifications (`edits: [{path, old, new}]`), and child environment sanitization (`scrub_child_env`) so LLM API keys never leak into executed step scripts.
-- Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
-
-# ⚪ [NEW] F70: Support model-aware token counting once model API integration is added
-
-- Depends on: D10
-- Extend the pre-flight stdlib `~lo–hi tokens` estimator in `src/ui.py` (`count_tokens()`, `format_stats()`) and `src/bundle_plan.py` (`analyze_bundle_plan()`) with model-aware token accounting once `D10` specifies the built-in LLM API agent mode:
-  - Keep fast offline stdlib heuristic estimation for pre-flight TUI cards (`START SESSION`, `START STEP`, `END STEP`, `--bundle-plan`) before a request is sent to the model.
-  - Record exact post-turn token usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) returned by the provider API response in `<session>/chat.json` and `<session>/meta.json`, and surface optional provider `count_tokens` / profile-tuned pre-flight estimates when an API profile is active.
-- Target files: `src/ui.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `tests/test_ui.py`, `tests/test_bundle.py`, `tests/test_runner.py`.
-
-# ⚪ [NEW] F88: Implement built-in LLM API agent mode in run_block (single run_block tool, TUI loop, prompt caching, and key isolation)
-
-- Depends on: D10 -> F70
-- Implement the built-in LLM API agent mode in `run_block` per `D10` so `todo_md <ID> | agents_bundle | run_block` (or standalone `run_block`) can drive multi-step agent sessions directly over provider APIs while preserving `c(opy)` clipboard and `run_block -r` workflows:
-  - Provider profiles, API key loading, and child environment secret scrubbing (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
-  - Stdlib `urllib.request` HTTP/SSE streaming client, single polymorphic `run_block` tool schema (`edits`, `script`, `fix_target`, `done`, `done_note`), and fallback reply extraction via `extract_reply_block()`.
-  - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
-  - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/cli.py`), integrated with `D6` sandbox/revert policies and `F70` token/cache usage accounting.
-- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
-
 # ⚪ [NEW] B15: Fix --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, and AssertionError root-cause hints
 
 - Depends on: F74
@@ -172,3 +144,22 @@ Follow-up findings from F74 review:
 
 - Depends on: F94, B15
 src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
+
+# ⚪ [NEW] F88: Implement built-in LLM API agent mode in run_block (single run_block tool, TUI loop, prompt caching, and key isolation)
+
+- Depends on: D10, F85
+- Depends on: B14 -> F92 -> F84
+- Implement the built-in LLM API agent mode in `run_block` per `D10` so `todo_md <ID> | agents_bundle | run_block` (or standalone `run_block`) can drive multi-step agent sessions directly over provider APIs while preserving `c(opy)` clipboard and `run_block -r` workflows:
+  - Provider profiles, API key loading, and child environment secret scrubbing (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
+  - Stdlib `urllib.request` HTTP/SSE streaming client, single polymorphic `run_block` tool schema (`edits`, `script`, `fix_target`, `done`, `done_note`), and fallback reply extraction via `extract_reply_block()`.
+  - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
+  - Exact post-turn provider token and cache usage accounting (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) recorded in `<session>/chat.json` and `<session>/meta.json` and surfaced in `Stats:` across `END STEP` and `END SESSION` while preserving offline stdlib pre-flight estimation (`count_tokens()`, `format_stats()`).
+  - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`).
+- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
+
+# ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
+
+- Depends on: F79, F83, F88
+- Design contract to let an external API/TUI/IDE client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
+- Align with `F83` step outcome metadata in `<session>/<step>/meta.json` (`outcome`: `ok`/`failed`/`syntax-error`/`not-run`/`aborted`/`saved`, `exit_code`, `duration_ms`, `reason`, `fix_target`) and `D10`/`F88` in-process step structures to evaluate structured `--json` execution output for `<session>/<step>` (including safety findings, auto-repair/renumber notes, and clean `[sN/k]` LLM payload) and a two-phase `plan -> approve -> execute` CLI handshake for external clients.
+- Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
