@@ -1,3 +1,12 @@
+# 🎯 [NEXT] F96: Align context-bundle-protocol parser and prompt-note merger with canonical 4 fragment kinds (rule, file, cmd, prompt)
+
+- Depends on: F95
+- Remove producer-specific `task` and `context` fragment kind assumptions from `run_block` so `context-bundle-protocol` uses the 4 canonical fragment kinds (`rule`, `file`, `cmd`, `prompt`):
+  - In `src/bundle_parse.py`, normalize legacy `"include"` -> `"file"` and `"task"` / `"context"` -> `"prompt"`, and check `kind == "prompt"` (plus legacy `"task"`, `"context"`) for `fragment_empty` warnings so any empty prompt fragment from an upstream producer warns cleanly.
+  - In `src/bundle_parse.py` (`append_note_to_raw_bundle()` and `_dedupe_fragments()`) and `src/bundle_plan.py` (`refresh_bundle_plan_after_edit()`), distinguish upstream/bundle prompt fragments (which carry a non-empty `chain`, such as `chain: ["todo_md"]` or `chain: [".agents_bundle"]`) from the user's root session prompt fragment (`chain: []`, `name: "Prompt"`): allow deduplication on upstream/bundle prompt fragments with non-empty `chain`, and when appending a user `p(rompt)` note, merge only into a trailing root user prompt fragment (`chain: []`) and otherwise append a new `{"kind": "prompt", "name": "Prompt"}` fragment.
+  - Update `tests/test_bundle.py`, `README.md`, and `AGENTS.md`.
+- Target files: `src/bundle_parse.py`, `src/bundle_plan.py`, `tests/test_bundle.py`, `README.md`.
+
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3
