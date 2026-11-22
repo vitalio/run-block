@@ -1,3 +1,12 @@
+# ✅ [DONE] F90: Always render full Parts table in --bundle-plan (remove Summary/--full) and wrap --help to 100 columns — *2026-11-22*
+
+- Depends on: F89
+- Remove the collapsed `Summary` table and `--full` CLI flag from `--bundle-plan` (`format_bundle_plan_text()`, `cmd_bundle_plan()`, and `src/cli.py`): always render the single expanded `Parts (<N>):` hierarchy table (`format_bundle_parts_lines()`), and update the session bundle fallback in `_collect_info_report()` (`src/ui.py`) and `format_bundle_summary_lines()` callers to use `format_bundle_parts_lines()`.
+- Replace the raw docstring `(__doc__ or "").format(...)` help output in `src/header.py` and `usage_text()` (`src/config.py`) with table-driven `--help` rendering (matching `todo_md` and `vitalio/agents-rules:stack/cli`): compute each section's description column after expanding `{prog}` and `{base_dir}`, align all descriptions and wrapped continuation lines to that column, and keep every `-h`/`--help` line at most 100 columns wide (prose at 80 columns).
+- Remove `[--full]` from `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `src/header.py`, and `README.md`, and rebuild `./run_block` via `python3 build.py`.
+- Update unit tests in `tests/test_bundle.py` and `tests/test_cli.py` to verify that `--bundle-plan` renders the full `Parts (<N>):` table by default, rejects `--full`, and keeps every `--help` line `<= 100` columns with aligned description columns.
+- Target files: `src/header.py`, `src/config.py:usage_text`, `src/cli.py`, `src/bundle_view.py:format_bundle_summary_lines..cmd_bundle_plan`, `src/ui.py:3160-3180`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py:745-1315`, `tests/test_cli.py`.
+
 # ✅ [DONE] F91: Refresh stale Target files symbol slices in F90 and F86 after the bundle_plan.py split — *2026-11-22, Removed stale src/bundle_plan.py symbol slices from F90 and F86 after F89 split*
 
 After the F89 split, the Target files bullets of F90 and F86 still name symbol slices such as src/bundle_plan.py:format_bundle_summary_lines..cmd_bundle_plan and src/bundle_plan.py:_format_tok_pair..format_bundle_parts_lines. Those symbols now live in src/bundle_view.py, so todo_md warns 'symbol slice not found' and preloads less context for these tasks. Symbol slices in Target files go stale whenever a module is split, so dependent tasks need their file references re-pointed or made more refactor-tolerant.

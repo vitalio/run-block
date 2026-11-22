@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_plan(sys.stdin.read())
     if args and args[0] == "--bundle-plan":
         if prompt_args:
-            _reject_prompt_for("--bundle-plan", f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]")
+            _reject_prompt_for("--bundle-plan", f"{prog} --bundle-plan [<session>] [--json] [--part N]")
         return cmd_bundle_plan(args[1:])
     if args and args[0] == "--clean":
         if prompt_args:

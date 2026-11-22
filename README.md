@@ -184,12 +184,12 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   headings, and wraps unlabeled plain text under `===== Prompt =====`.
   `Sandbox: off` is omitted from `<session>/0` and clipboard output while
   remaining visible inside `i(nfo)`.
-- **Boundary markers & hierarchical `Summary` / `Parts` tables**: When
+- **Boundary markers & hierarchical `Parts` table**: When
   `Bundle-Boundary: <nonce>` is present, `<!-- bundle:<nonce>:part {...} -->` /
   `<!-- bundle:<nonce>:end -->` markers are parsed into per-part metrics and
   stripped from `<session>/0` (keeping raw markers in `<session>/0.raw` for
   `e(dit)`, and falling back to `===== ... =====` sections when no boundary is
-  set). The `Summary` / `Parts` tables (`i(nfo)` and `--bundle-plan`) show `%`,
+  set). The `Parts` table (`i(nfo)` and `--bundle-plan`) shows `%`,
   `CHARS`, `LINES`, `~TOK`, `KIND`, and `SOURCE` columns bracketed by top and
   bottom `100.0%` `[total]` rows, with sequential dim row numbers `1..M`,
   `chain`-indented `[bundle]` / `[rule]` tree shares, and automatic highlights
@@ -217,7 +217,7 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   (`stdout` receives the part text; `stderr` receives a one-line summary):
 
 ```bash
-run_block --bundle-plan s1 --full
+run_block --bundle-plan s1
 run_block --bundle-plan s1 --json
 run_block --show s1 --part 1
 run_block --bundle-plan s1 --part 2
@@ -253,7 +253,7 @@ run_block --bundle-plan s1 --part 2
 | `<command> \| run_block [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
 | `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode; also reopens a completed session) |
 | `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
-| `run_block --bundle-plan [<session>] [--json] [--full] [--part N]` | Summarize bundle parts and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
+| `run_block --bundle-plan [<session>] [--json] [--part N]` | Print the `Parts (<N>):` table and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
 | `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
 | `run_block --retry [-y] [session[/step]]` | Re-run a block, or the latest block of a session when only `<session>` is given (default: latest block overall) |
 | `run_block --list`, `-l [session \| --filter TEXT]` | List sessions with block count, size, UTC timestamp, `Workdir`/`Role`/`Task` headers, the last step outcome (`ok (<duration>)`, `exit <rc> (<duration>)`, `syntax-error (exit <rc>)`, `not-run`, `aborted`, `saved`) and `next: <session>/<step>` for open sessions (`[DONE]` marks completed sessions without `next:`); `--filter TEXT` keeps only sessions whose name or any header value contains `TEXT` (case-insensitive) |

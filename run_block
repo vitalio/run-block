@@ -1,36 +1,6 @@
 #!/usr/bin/env python3
 # run_block-repo: vitalio/run_block
-"""Usage:
-  {prog}                           Start a rule-only session on TTY stdin (or read bundle from piped stdin)
-  <command> | {prog}                 Start a new session from stdin context bundle into {base_dir}/<session>/0
-  {prog} [-y] <session>/<step>       Run block from stdin (-y/--yes: non-interactive headless mode, also reopens a completed session)
-  {prog} --plan                      Analyze script from stdin and print JSON execution & safety plan
-  {prog} --bundle-plan [opts] [sess] Summarize bundle parts/warnings from stdin or session (--json, --full, --part N)
-  {prog} --fix [-y] <session>/<ref>  Patch <ref> script via Python on stdin and run as <ref>_N
-  {prog} --retry [-y] [session/step] Re-run the last block of a session or <session>/<step>
-  {prog} --list | -l [session]       List sessions/blocks: last step, next free step ([DONE] = completed)
-  {prog} --list --filter TEXT        List only sessions whose name or headers contain TEXT
-  {prog} --done [session] [-m NOTE]  Mark session completed and print END SESSION summary (later blocks ask to reopen)
-  {prog} --show [session/step]       Show script, output, and (edited) backup notes of a block or <session>/0
-  {prog} --show [session] --part N   Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)
-  {prog} --show <ref> --script|--out Print only a block's script or only its output
-  {prog} --info [session]            Show path, size, headers, and all blocks of a session
-  {prog} --sandbox [MODE] [session]  Show or set session sandbox mode (off, strict, nonet)
-  {prog} --clean [opts] [session...] Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)
-  {prog} -p | --prompt TEXT          Embed repeatable prompt text into the started session bundle (===== Prompt =====)
-  {prog} --start [opts]              Start session from stdin or rule-only on TTY (--session NAME, --sandbox MODE, --force, -p/--prompt TEXT)
-  {prog} --update [--force]          Self-update {prog} from GitHub (vitalio/run_block)
-  {prog} --check-update              Check if a newer version is available
-  {prog} -V | --version              Print version and exit 0
-  {prog} -h | --help                 Print this usage and exit 0
-
-Environment:
-  RUN_BLOCK_CWD=auto|cwd|PATH        Working directory (auto prefers piped/session Workdir, project root, or $PWD)
-  RUN_BLOCK_PROGRESS=0               Disable live step progress markers during interactive runs
-  RUN_BLOCK_BUNDLE_MAX_TOKENS=100000 Warn when total bundle exceeds token budget (0 disables)
-  RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000 Warn when a single bundle part exceeds token limit (0 disables)
-  VISUAL / EDITOR                    Editor/viewer for e(dit), s(cript), o(utput), and v(iew) inside i(nfo) (keeps *.orig backups)
-"""
+"""Safe, sequential terminal block execution protocol for AI coding agents."""
 from __future__ import annotations
 
 if __doc__ is None:
@@ -66,11 +36,56 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.31.1"
+VERSION = "0.31.2"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
-EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
-EMBEDDED_RULE_PWSH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@\'\ngit status -sb\n\'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@\'`, `\'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `\'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--full] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n\'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
+EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
+EMBEDDED_RULE_PWSH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@\'\ngit status -sb\n\'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@\'`, `\'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `\'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n\'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
+
+
+HELP_USAGE = (
+    "{prog} [options] [<session>/<step>]",
+    "<command> | {prog} [options]",
+)
+
+HELP_COMMANDS = (
+    ("{prog}", "Start a rule-only session on TTY stdin (or read a bundle from piped stdin)"),
+    ("<command> | {prog}", "Start a new session from a stdin context bundle into {base_dir}/<session>/0"),
+    ("{prog} [-y] <session>/<step>", "Run the block from stdin (-y/--yes: non-interactive headless mode, also reopens a completed session)"),
+    ("{prog} --plan", "Analyze the script from stdin and print the JSON execution and safety plan"),
+    ("{prog} --bundle-plan [sess]", "Print the Parts table and warnings of a bundle from stdin or session (--json, --part N)"),
+    ("{prog} --fix [-y] <session>/<ref>", "Patch <ref> script via Python on stdin and run as <ref>_N"),
+    ("{prog} --retry [-y] [session/step]", "Re-run the last block of a session or <session>/<step>"),
+    ("{prog} --list | -l [session]", "List sessions/blocks: last step, next free step ([DONE] = completed)"),
+    ("{prog} --list --filter TEXT", "List only sessions whose name or headers contain TEXT"),
+    ("{prog} --done [session] [-m NOTE]", "Mark session completed and print END SESSION summary (later blocks ask to reopen)"),
+    ("{prog} --show [session/step]", "Show script, output, and (edited) backup notes of a block or <session>/0"),
+    ("{prog} --show <session> --part N", "Print only part N of <session>/0 (1-based part index, see --bundle-plan --json)"),
+    ("{prog} --show <ref> --script|--out", "Print only a block's script or only its output"),
+    ("{prog} --info [session]", "Show path, size, headers, and all blocks of a session"),
+    ("{prog} --sandbox [MODE] [session]", "Show or set session sandbox mode (off, strict, nonet)"),
+    ("{prog} --clean [opts] [session...]", "Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)"),
+    ("{prog} --start [opts]", "Start a session from stdin or rule-only on TTY (--session NAME, --force)"),
+    ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/run_block)"),
+    ("{prog} --check-update", "Check if a newer version is available"),
+)
+
+HELP_OPTIONS = (
+    ("-y, --yes, --headless", "Non-interactive headless mode without prompts; also reopens a completed session"),
+    ("-p, --prompt TEXT", "Embed repeatable prompt text into the started session bundle (===== Prompt =====)"),
+    ("--sandbox [MODE]", "Set the sandbox mode for the run or started session (off, strict, nonet); bare flag means strict"),
+    ("--no-sandbox", "Same as --sandbox off"),
+    ("-V, --version", "Print version and exit 0"),
+    ("-h, --help", "Print this usage and exit 0"),
+)
+
+HELP_ENV = (
+    ("RUN_BLOCK_CWD=auto|cwd|PATH", "Working directory (auto prefers piped/session Workdir, project root, or $PWD)"),
+    ("RUN_BLOCK_PROGRESS=0", "Disable live step progress markers during interactive runs"),
+    ("RUN_BLOCK_BUNDLE_MAX_TOKENS=100000", "Warn when total bundle exceeds token budget (0 disables)"),
+    ("RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000", "Warn when a single bundle part exceeds token limit (0 disables)"),
+    ("VISUAL / EDITOR", "Editor/viewer for e(dit), s(cript), o(utput), and v(iew) inside i(nfo) (keeps *.orig backups)"),
+)
 
 
 def prog_name() -> str:
@@ -273,10 +288,35 @@ def default_base_dir(prog: str | None = None) -> Path:
 BASE_DIR = default_base_dir()
 
 
+HELP_MAX_COLS = 100
+HELP_MAX_LABEL_COL = 48
+
+
+def _help_section(title: str, rows: tuple, fmt: dict) -> list[str]:
+    labels = [label.format(**fmt) for label, _ in rows]
+    col = min(max(len(x) for x in labels) + 4, HELP_MAX_LABEL_COL)
+    width = HELP_MAX_COLS - col
+    lines = [title]
+    for label, (_, desc) in zip(labels, rows):
+        wrapped = textwrap.wrap(desc.format(**fmt), width=width, break_long_words=True, break_on_hyphens=False) or [""]
+        head = "  " + label
+        if len(head) + 2 <= col:
+            lines.append((head.ljust(col) + wrapped[0]).rstrip())
+            rest = wrapped[1:]
+        else:
+            lines.append(head)
+            rest = wrapped
+        lines.extend(" " * col + w for w in rest)
+    return lines
+
+
 def usage_text() -> str:
     prog = prog_name()
-    bdir = default_base_dir(prog)
-    return (__doc__ or "").format(prog=prog, base_dir=bdir)
+    fmt = {"prog": prog, "base_dir": default_base_dir(prog)}
+    out = ["Usage:"] + ["  " + s.format(**fmt) for s in HELP_USAGE]
+    for title, rows in (("Commands:", HELP_COMMANDS), ("Options:", HELP_OPTIONS), ("Environment:", HELP_ENV)):
+        out += ["", *_help_section(title, rows, fmt)]
+    return "\n".join(out) + "\n"
 
 
 def _git_toplevel() -> Path | None:
@@ -5274,7 +5314,7 @@ def _info_table_rows(sdir: Path | None, bundle_path: Path | None) -> tuple[dict[
     plan = fn_load(sdir, bundle_path)
     if not isinstance(plan, dict):
         return None, []
-    all_rows = fn_rows(plan, details=True)
+    all_rows = fn_rows(plan)
     numbered = [r for r in all_rows if isinstance(r, dict) and str(r.get("num_str") or "").isdigit()]
     return plan, numbered
 
@@ -5848,13 +5888,13 @@ def _collect_info_report(
         if callable(fn_load):
             s_plan = fn_load(resolved_sdir, resolved_sdir / "0")
             if isinstance(s_plan, dict):
-                fn_sum = globals().get("format_bundle_summary_lines")
-                sum_lines = fn_sum(s_plan, max_width=max_content_w) if callable(fn_sum) else []
-                if sum_lines:
+                fn_parts = globals().get("format_bundle_parts_lines")
+                part_lines = fn_parts(s_plan, max_width=max_content_w) if callable(fn_parts) else []
+                if part_lines:
                     p_cnt = int(s_plan.get("part_count") or 0)
-                    shdr = f"Session Bundle Summary ({p_cnt} part{'s' if p_cnt != 1 else ''}):"
+                    shdr = f"Session Bundle Parts ({p_cnt}):"
                     body_sections.append(f"{_KEY_COLOR}{shdr}{_ANSI_RESET}" if _use_color() else shdr)
-                    body_sections.extend(_colorize_bundle_lines(sum_lines))
+                    body_sections.extend(_colorize_bundle_lines(part_lines))
 
     if not body_sections:
         body_sections = ["(no additional details)"]
@@ -8122,22 +8162,17 @@ def _make_table_row(
     }
 
 
-def _part_extras_suffix(p: dict[str, object], *, include_ms: bool = True) -> str:
+def _part_extras_suffix(p: dict[str, object]) -> str:
     extras: list[str] = []
     rc_val = p.get("rc")
-    if isinstance(rc_val, int) and (include_ms or rc_val != 0):
+    if isinstance(rc_val, int):
         extras.append(f"rc={rc_val}")
-    if include_ms and "ms" in p:
+    if "ms" in p:
         extras.append(f"{p['ms']}ms")
     return f" ({', '.join(extras)})" if extras else ""
 
 
-def _collect_hierarchy_rows(
-    plan: dict[str, object],
-    *,
-    details: bool,
-    edited: bool = False,
-) -> list[dict[str, object]]:
+def _collect_hierarchy_rows(plan: dict[str, object], *, edited: bool = False) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     parts = [dict(p) for p in (plan.get("parts") or []) if isinstance(p, dict)]
     hdr = plan.get("header")
@@ -8175,7 +8210,7 @@ def _collect_hierarchy_rows(
         t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
         raw_lbl = _part_label(p)
         lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
-        lbl += _part_extras_suffix(p, include_ms=details)
+        lbl += _part_extras_suffix(p)
         idx_val = p.get("index")
         p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
         rows.append(
@@ -8208,7 +8243,7 @@ def _collect_hierarchy_rows(
             p_kind = str(p.get("kind") or "part")
             if p_kind == "rule":
                 p_kind = "bundle"
-            lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
+            lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p)
             idx_val = p.get("index")
             p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
             rows.append(
@@ -8246,15 +8281,14 @@ def _collect_hierarchy_rows(
                 part_indices=node_indices,
             )
         )
-        if details or has_children:
-            child_items: list[tuple[str, dict[str, object]]] = list(node.get("items") or [])  # type: ignore[arg-type]
-            next_anc = ([*ancestors_more, not is_last] if is_last is not None else [])
-            for c_idx, (c_type, c_obj) in enumerate(child_items):
-                c_last = c_idx == len(child_items) - 1
-                if c_type == "node":
-                    _emit_node(c_obj, next_anc, c_last, depth + 1)
-                else:
-                    _emit_part(c_obj, str(node["name"]), next_anc, c_last, depth + 1)
+        child_items: list[tuple[str, dict[str, object]]] = list(node.get("items") or [])  # type: ignore[arg-type]
+        next_anc = ([*ancestors_more, not is_last] if is_last is not None else [])
+        for c_idx, (c_type, c_obj) in enumerate(child_items):
+            c_last = c_idx == len(child_items) - 1
+            if c_type == "node":
+                _emit_node(c_obj, next_anc, c_last, depth + 1)
+            else:
+                _emit_part(c_obj, str(node["name"]), next_anc, c_last, depth + 1)
 
     for it_type, it_obj in _build_bundle_tree(parts):
         if it_type == "node":
@@ -8323,12 +8357,8 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
     return out
 
 
-def format_bundle_summary_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
-    return _render_bundle_table(_collect_hierarchy_rows(plan, details=False, edited=edited), max_width=max_width)
-
-
 def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
-    return _render_bundle_table(_collect_hierarchy_rows(plan, details=True, edited=edited), max_width=max_width)
+    return _render_bundle_table(_collect_hierarchy_rows(plan, edited=edited), max_width=max_width)
 
 
 def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
@@ -8396,12 +8426,7 @@ def format_bundle_warning_items(plan: dict[str, object]) -> list[tuple[str, str]
         if w.get("message")
     ]
 
-def format_bundle_plan_text(
-    plan: dict[str, object],
-    *,
-    full: bool = False,
-    session: str | None = None,
-) -> str:
+def format_bundle_plan_text(plan: dict[str, object], *, session: str | None = None) -> str:
     protocol = str(plan.get("protocol") or "empty")
     part_cnt = int(plan.get("part_count") or 0)
     lines_cnt = int(plan.get("lines") or 0)
@@ -8413,17 +8438,11 @@ def format_bundle_plan_text(
         f"Bundle Plan ({hdr_target}, protocol: {protocol}):",
         f"Total: {lines_cnt} line{'s' if lines_cnt != 1 else ''} · {_human_chars(chars_cnt)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({part_cnt} part{'s' if part_cnt != 1 else ''})",
     ]
-    sum_lines = format_bundle_summary_lines(plan, max_width=120)
-    if sum_lines:
+    part_lines = format_bundle_parts_lines(plan, max_width=120)
+    if part_lines:
         out_lines.append("")
-        out_lines.append(f"Summary ({part_cnt} part{'s' if part_cnt != 1 else ''}):")
-        out_lines.extend(sum_lines)
-    if full:
-        part_lines = format_bundle_parts_lines(plan, max_width=120)
-        if part_lines:
-            out_lines.append("")
-            out_lines.append(f"Parts ({part_cnt}):")
-            out_lines.extend(part_lines)
+        out_lines.append(f"Parts ({part_cnt}):")
+        out_lines.extend(part_lines)
     warn_items = format_bundle_warning_items(plan)
     if warn_items:
         out_lines.append("")
@@ -8434,24 +8453,21 @@ def format_bundle_plan_text(
 
 def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
     prog = prog_name()
-    usage = f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]"
+    usage = f"{prog} --bundle-plan [<session>] [--json] [--part N]"
     argv, part_no = parse_part_option(argv, usage)
     as_json = False
-    full = False
     session_arg: str | None = None
     for a in argv:
         if a == "--json":
             as_json = True
-        elif a == "--full":
-            full = True
         elif a.startswith("-"):
             raise SystemExit(f"{prog}: usage: {usage}")
         elif session_arg is None:
             session_arg = a
         else:
             raise SystemExit(f"{prog}: usage: {usage}")
-    if part_no is not None and (as_json or full):
-        raise SystemExit(f"{prog}: --part cannot be combined with --json or --full")
+    if part_no is not None and as_json:
+        raise SystemExit(f"{prog}: --part cannot be combined with --json")
 
     plan: dict[str, object] | None = None
     plan_text: str | None = None
@@ -8501,7 +8517,7 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
             payload["session"] = session_arg
         sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     else:
-        sys.stdout.write(format_bundle_plan_text(plan, full=full, session=session_arg))
+        sys.stdout.write(format_bundle_plan_text(plan, session=session_arg))
     sys.stdout.flush()
     return 0
 
@@ -11209,7 +11225,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_plan(sys.stdin.read())
     if args and args[0] == "--bundle-plan":
         if prompt_args:
-            _reject_prompt_for("--bundle-plan", f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]")
+            _reject_prompt_for("--bundle-plan", f"{prog} --bundle-plan [<session>] [--json] [--part N]")
         return cmd_bundle_plan(args[1:])
     if args and args[0] == "--clean":
         if prompt_args:

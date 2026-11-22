@@ -198,10 +198,35 @@ def default_base_dir(prog: str | None = None) -> Path:
 BASE_DIR = default_base_dir()
 
 
+HELP_MAX_COLS = 100
+HELP_MAX_LABEL_COL = 48
+
+
+def _help_section(title: str, rows: tuple, fmt: dict) -> list[str]:
+    labels = [label.format(**fmt) for label, _ in rows]
+    col = min(max(len(x) for x in labels) + 4, HELP_MAX_LABEL_COL)
+    width = HELP_MAX_COLS - col
+    lines = [title]
+    for label, (_, desc) in zip(labels, rows):
+        wrapped = textwrap.wrap(desc.format(**fmt), width=width, break_long_words=True, break_on_hyphens=False) or [""]
+        head = "  " + label
+        if len(head) + 2 <= col:
+            lines.append((head.ljust(col) + wrapped[0]).rstrip())
+            rest = wrapped[1:]
+        else:
+            lines.append(head)
+            rest = wrapped
+        lines.extend(" " * col + w for w in rest)
+    return lines
+
+
 def usage_text() -> str:
     prog = prog_name()
-    bdir = default_base_dir(prog)
-    return (__doc__ or "").format(prog=prog, base_dir=bdir)
+    fmt = {"prog": prog, "base_dir": default_base_dir(prog)}
+    out = ["Usage:"] + ["  " + s.format(**fmt) for s in HELP_USAGE]
+    for title, rows in (("Commands:", HELP_COMMANDS), ("Options:", HELP_OPTIONS), ("Environment:", HELP_ENV)):
+        out += ["", *_help_section(title, rows, fmt)]
+    return "\n".join(out) + "\n"
 
 
 def _git_toplevel() -> Path | None:

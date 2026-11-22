@@ -751,7 +751,7 @@ class TestBundle(RunBlockTestCase):
             ],
             "warnings": [],
         }
-        lines = self.mod.format_bundle_summary_lines(plan, max_width=100)
+        lines = self.mod.format_bundle_parts_lines(plan, max_width=100)
         text = "\n".join(lines)
         self.assertRegex(lines[0], r"^\s+% +CHARS +LINES +~TOK +KIND +SOURCE$")
         self.assertNotIn("#", lines[0])
@@ -928,7 +928,7 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("rc=2", tty_out)
         self.assertIn("Skipped clipboard copy.", tty_out)
 
-        # 3. run_block --bundle-plan CLI: session mode, --full, --json, stdin mode, legacy 0 fallback, and errors
+        # 3. run_block --bundle-plan CLI: session mode, rejected --full, --json, stdin mode, legacy 0 fallback, and errors
         import json
         r_bp_sess = self._run(
             [str(SCRIPT), "--bundle-plan", "s1"],
@@ -940,9 +940,11 @@ class TestBundle(RunBlockTestCase):
         )
         self.assertEqual(r_bp_sess.returncode, 0, r_bp_sess.stderr)
         self.assertIn("Bundle Plan (s1, protocol: boundary):", r_bp_sess.stdout)
-        self.assertIn("Summary (7 parts):", r_bp_sess.stdout)
+        self.assertIn("Parts (7):", r_bp_sess.stdout)
+        self.assertNotIn("Summary (", r_bp_sess.stdout)
+        self.assertIn("failing_cmd", r_bp_sess.stdout)
+        self.assertIn("rc=2", r_bp_sess.stdout)
         self.assertIn("Warnings (6):", r_bp_sess.stdout)
-        self.assertNotIn("Parts (7):", r_bp_sess.stdout)
 
         r_bp_full = self._run(
             [str(SCRIPT), "--bundle-plan", "--full", "s1"],
@@ -952,10 +954,8 @@ class TestBundle(RunBlockTestCase):
             env=env_thresh,
             check=False,
         )
-        self.assertEqual(r_bp_full.returncode, 0, r_bp_full.stderr)
-        self.assertIn("Parts (7):", r_bp_full.stdout)
-        self.assertIn("failing_cmd", r_bp_full.stdout)
-        self.assertIn("rc=2", r_bp_full.stdout)
+        self.assertNotEqual(r_bp_full.returncode, 0)
+        self.assertIn("usage:", r_bp_full.stderr)
 
         r_bp_json = self._run(
             [str(SCRIPT), "--bundle-plan", "s1", "--json"],
@@ -972,7 +972,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(len(j_sess["warnings"]), 6)
 
         r_bp_stdin = self._run(
-            [str(SCRIPT), "--bundle-plan", "--json", "--full"],
+            [str(SCRIPT), "--bundle-plan", "--json"],
             input=bundle_warn,
             capture_output=True,
             text=True,
@@ -994,7 +994,7 @@ class TestBundle(RunBlockTestCase):
             encoding="utf-8",
         )
         r_bp_leg = self._run(
-            [str(SCRIPT), "--bundle-plan", "s_legacy", "--full"],
+            [str(SCRIPT), "--bundle-plan", "s_legacy"],
             capture_output=True,
             text=True,
             cwd=str(proj),
@@ -1239,7 +1239,7 @@ class TestBundle(RunBlockTestCase):
         assert plan1 is not None
         self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_group_items(plan1)))
         self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_part_items(plan1)))
-        sum1_text = "\n".join(self.mod.format_bundle_summary_lines(plan1, max_width=100))
+        sum1_text = "\n".join(self.mod.format_bundle_parts_lines(plan1, max_width=100))
         self.assertIn("[header]  Headers & spacing", sum1_text)
         self.assertNotIn("vitalio/run_block: vitalio/run_block:", sum1_text)
         self.assertIn("vitalio/run_block:blocks/bash", sum1_text)
@@ -1259,7 +1259,7 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("└─ bundleA:r2", det_box)
 
         # Narrow terminal wraps ONLY the description column cleanly
-        narrow_lines = self.mod.format_bundle_summary_lines(plan1, max_width=64)
+        narrow_lines = self.mod.format_bundle_parts_lines(plan1, max_width=64)
         for ln in narrow_lines:
             self.assertLessEqual(self.mod.display_width(ln), 64, ln)
         self.assertTrue(any(ln.startswith("  " + " " * 30) for ln in narrow_lines))
@@ -1292,7 +1292,7 @@ class TestBundle(RunBlockTestCase):
         enriched = self.mod._enrich_bundle_plan(legacy_plan)
         self.assertEqual(enriched["chars"], 40)
         self.assertEqual(enriched["parts"][0]["chars"], 20)
-        leg_sum = "\n".join(self.mod.format_bundle_summary_lines(enriched, max_width=100))
+        leg_sum = "\n".join(self.mod.format_bundle_parts_lines(enriched, max_width=100))
         self.assertIn("[cmd]     root_cmd", leg_sum)
         self.assertIn("[bundle]  g:item", leg_sum)
 
@@ -2013,7 +2013,7 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("[total]   6 parts (edited)", table_lines[1])
         self.assertEqual(table_lines[1], table_lines[-1])
         self.assertEqual(self.mod.bundle_row_heavy_level(table_lines[1]), "")
-        h_rows = self.mod._collect_hierarchy_rows(plan, details=True, edited=True)
+        h_rows = self.mod._collect_hierarchy_rows(plan, edited=True)
         self.assertEqual([r["num_str"] for r in h_rows], ["", "1", "2", "3", "4", "5", "6", "7", "8", ""])
         self.assertEqual(
             [r["part_indices"] for r in h_rows[1:-1]],

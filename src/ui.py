@@ -2593,7 +2593,7 @@ def _info_table_rows(sdir: Path | None, bundle_path: Path | None) -> tuple[dict[
     plan = fn_load(sdir, bundle_path)
     if not isinstance(plan, dict):
         return None, []
-    all_rows = fn_rows(plan, details=True)
+    all_rows = fn_rows(plan)
     numbered = [r for r in all_rows if isinstance(r, dict) and str(r.get("num_str") or "").isdigit()]
     return plan, numbered
 
@@ -3167,13 +3167,13 @@ def _collect_info_report(
         if callable(fn_load):
             s_plan = fn_load(resolved_sdir, resolved_sdir / "0")
             if isinstance(s_plan, dict):
-                fn_sum = globals().get("format_bundle_summary_lines")
-                sum_lines = fn_sum(s_plan, max_width=max_content_w) if callable(fn_sum) else []
-                if sum_lines:
+                fn_parts = globals().get("format_bundle_parts_lines")
+                part_lines = fn_parts(s_plan, max_width=max_content_w) if callable(fn_parts) else []
+                if part_lines:
                     p_cnt = int(s_plan.get("part_count") or 0)
-                    shdr = f"Session Bundle Summary ({p_cnt} part{'s' if p_cnt != 1 else ''}):"
+                    shdr = f"Session Bundle Parts ({p_cnt}):"
                     body_sections.append(f"{_KEY_COLOR}{shdr}{_ANSI_RESET}" if _use_color() else shdr)
-                    body_sections.extend(_colorize_bundle_lines(sum_lines))
+                    body_sections.extend(_colorize_bundle_lines(part_lines))
 
     if not body_sections:
         body_sections = ["(no additional details)"]

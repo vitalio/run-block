@@ -8,15 +8,6 @@
 - Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
 - Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
 
-# 🎯 [NEXT] F90: Always render full Parts table in --bundle-plan (remove Summary/--full) and wrap --help to 100 columns
-
-- Depends on: F89
-- Remove the collapsed `Summary` table and `--full` CLI flag from `--bundle-plan` (`format_bundle_plan_text()`, `cmd_bundle_plan()`, and `src/cli.py`): always render the single expanded `Parts (<N>):` hierarchy table (`format_bundle_parts_lines()`), and update the session bundle fallback in `_collect_info_report()` (`src/ui.py`) and `format_bundle_summary_lines()` callers to use `format_bundle_parts_lines()`.
-- Replace the raw docstring `(__doc__ or "").format(...)` help output in `src/header.py` and `usage_text()` (`src/config.py`) with table-driven `--help` rendering (matching `todo_md` and `vitalio/agents-rules:stack/cli`): compute each section's description column after expanding `{prog}` and `{base_dir}`, align all descriptions and wrapped continuation lines to that column, and keep every `-h`/`--help` line at most 100 columns wide (prose at 80 columns).
-- Remove `[--full]` from `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `src/header.py`, and `README.md`, and rebuild `./run_block` via `python3 build.py`.
-- Update unit tests in `tests/test_bundle.py` and `tests/test_cli.py` to verify that `--bundle-plan` renders the full `Parts (<N>):` table by default, rejects `--full`, and keeps every `--help` line `<= 100` columns with aligned description columns.
-- Target files: `src/header.py`, `src/config.py:usage_text`, `src/cli.py`, `src/bundle_view.py:format_bundle_summary_lines..cmd_bundle_plan`, `src/ui.py:3160-3180`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py:745-1315`, `tests/test_cli.py`.
-
 # 🎯 [NEXT] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys
 
 - Depends on: F81, B8, F87, B13, F89, F90

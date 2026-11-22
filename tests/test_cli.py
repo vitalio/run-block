@@ -57,6 +57,35 @@ class TestCli(RunBlockTestCase):
         r_lazy = subprocess.run([sys.executable, "-c", lazy_check], capture_output=True, text=True, check=False)
         self.assertEqual(r_lazy.returncode, 0, msg=f"stdout:\n{r_lazy.stdout}\nstderr:\n{r_lazy.stderr}")
 
+    def test_help_layout_width_and_alignment(self):
+        import re
+
+        r = self._run_subprocess([str(SCRIPT), "-h"])
+        self._assert_ok(r)
+        self.assertNotIn("--full", r.stdout)
+        sections: dict[str, list[str]] = {}
+        current = ""
+        for ln in r.stdout.splitlines():
+            self.assertLessEqual(len(ln), 100, ln)
+            if ln and not ln.startswith(" "):
+                current = ln
+                sections[current] = []
+            elif ln and current:
+                sections[current].append(ln)
+        self.assertEqual(list(sections), ["Usage:", "Commands:", "Options:", "Environment:"])
+        for title in ("Commands:", "Options:", "Environment:"):
+            with self.subTest(section=title):
+                cols = set()
+                for ln in sections[title]:
+                    m = re.match(r"^  \S.*?\S {2,}(?=\S)", ln)
+                    if m:
+                        cols.add(m.end())
+                self.assertEqual(len(cols), 1, cols)
+                col = cols.pop()
+                for ln in sections[title]:
+                    if not re.match(r"^  \S", ln):
+                        self.assertEqual(len(ln) - len(ln.lstrip(" ")), col, ln)
+
     def test_help_lists_session_inspection_flags(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
         self._assert_ok(r)

@@ -140,22 +140,17 @@ def _make_table_row(
     }
 
 
-def _part_extras_suffix(p: dict[str, object], *, include_ms: bool = True) -> str:
+def _part_extras_suffix(p: dict[str, object]) -> str:
     extras: list[str] = []
     rc_val = p.get("rc")
-    if isinstance(rc_val, int) and (include_ms or rc_val != 0):
+    if isinstance(rc_val, int):
         extras.append(f"rc={rc_val}")
-    if include_ms and "ms" in p:
+    if "ms" in p:
         extras.append(f"{p['ms']}ms")
     return f" ({', '.join(extras)})" if extras else ""
 
 
-def _collect_hierarchy_rows(
-    plan: dict[str, object],
-    *,
-    details: bool,
-    edited: bool = False,
-) -> list[dict[str, object]]:
+def _collect_hierarchy_rows(plan: dict[str, object], *, edited: bool = False) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     parts = [dict(p) for p in (plan.get("parts") or []) if isinstance(p, dict)]
     hdr = plan.get("header")
@@ -193,7 +188,7 @@ def _collect_hierarchy_rows(
         t_pfx = _tree_connector(ancestors_more, is_last) if is_last is not None else ""
         raw_lbl = _part_label(p)
         lbl = _child_rel_label(parent_name, raw_lbl) if parent_name else raw_lbl
-        lbl += _part_extras_suffix(p, include_ms=details)
+        lbl += _part_extras_suffix(p)
         idx_val = p.get("index")
         p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
         rows.append(
@@ -226,7 +221,7 @@ def _collect_hierarchy_rows(
             p_kind = str(p.get("kind") or "part")
             if p_kind == "rule":
                 p_kind = "bundle"
-            lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p, include_ms=details)
+            lbl = _join_chain_label([str(node["name"])], _part_label(p)) + _part_extras_suffix(p)
             idx_val = p.get("index")
             p_indices = [idx_val] if isinstance(idx_val, int) and idx_val > 0 else []
             rows.append(
@@ -264,15 +259,14 @@ def _collect_hierarchy_rows(
                 part_indices=node_indices,
             )
         )
-        if details or has_children:
-            child_items: list[tuple[str, dict[str, object]]] = list(node.get("items") or [])  # type: ignore[arg-type]
-            next_anc = ([*ancestors_more, not is_last] if is_last is not None else [])
-            for c_idx, (c_type, c_obj) in enumerate(child_items):
-                c_last = c_idx == len(child_items) - 1
-                if c_type == "node":
-                    _emit_node(c_obj, next_anc, c_last, depth + 1)
-                else:
-                    _emit_part(c_obj, str(node["name"]), next_anc, c_last, depth + 1)
+        child_items: list[tuple[str, dict[str, object]]] = list(node.get("items") or [])  # type: ignore[arg-type]
+        next_anc = ([*ancestors_more, not is_last] if is_last is not None else [])
+        for c_idx, (c_type, c_obj) in enumerate(child_items):
+            c_last = c_idx == len(child_items) - 1
+            if c_type == "node":
+                _emit_node(c_obj, next_anc, c_last, depth + 1)
+            else:
+                _emit_part(c_obj, str(node["name"]), next_anc, c_last, depth + 1)
 
     for it_type, it_obj in _build_bundle_tree(parts):
         if it_type == "node":
@@ -341,12 +335,8 @@ def _render_bundle_table(rows: list[dict[str, object]], max_width: int, indent: 
     return out
 
 
-def format_bundle_summary_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
-    return _render_bundle_table(_collect_hierarchy_rows(plan, details=False, edited=edited), max_width=max_width)
-
-
 def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120, *, edited: bool = False) -> list[str]:
-    return _render_bundle_table(_collect_hierarchy_rows(plan, details=True, edited=edited), max_width=max_width)
+    return _render_bundle_table(_collect_hierarchy_rows(plan, edited=edited), max_width=max_width)
 
 
 def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
@@ -414,12 +404,7 @@ def format_bundle_warning_items(plan: dict[str, object]) -> list[tuple[str, str]
         if w.get("message")
     ]
 
-def format_bundle_plan_text(
-    plan: dict[str, object],
-    *,
-    full: bool = False,
-    session: str | None = None,
-) -> str:
+def format_bundle_plan_text(plan: dict[str, object], *, session: str | None = None) -> str:
     protocol = str(plan.get("protocol") or "empty")
     part_cnt = int(plan.get("part_count") or 0)
     lines_cnt = int(plan.get("lines") or 0)
@@ -431,17 +416,11 @@ def format_bundle_plan_text(
         f"Bundle Plan ({hdr_target}, protocol: {protocol}):",
         f"Total: {lines_cnt} line{'s' if lines_cnt != 1 else ''} · {_human_chars(chars_cnt)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({part_cnt} part{'s' if part_cnt != 1 else ''})",
     ]
-    sum_lines = format_bundle_summary_lines(plan, max_width=120)
-    if sum_lines:
+    part_lines = format_bundle_parts_lines(plan, max_width=120)
+    if part_lines:
         out_lines.append("")
-        out_lines.append(f"Summary ({part_cnt} part{'s' if part_cnt != 1 else ''}):")
-        out_lines.extend(sum_lines)
-    if full:
-        part_lines = format_bundle_parts_lines(plan, max_width=120)
-        if part_lines:
-            out_lines.append("")
-            out_lines.append(f"Parts ({part_cnt}):")
-            out_lines.extend(part_lines)
+        out_lines.append(f"Parts ({part_cnt}):")
+        out_lines.extend(part_lines)
     warn_items = format_bundle_warning_items(plan)
     if warn_items:
         out_lines.append("")
@@ -452,24 +431,21 @@ def format_bundle_plan_text(
 
 def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
     prog = prog_name()
-    usage = f"{prog} --bundle-plan [<session>] [--json] [--full] [--part N]"
+    usage = f"{prog} --bundle-plan [<session>] [--json] [--part N]"
     argv, part_no = parse_part_option(argv, usage)
     as_json = False
-    full = False
     session_arg: str | None = None
     for a in argv:
         if a == "--json":
             as_json = True
-        elif a == "--full":
-            full = True
         elif a.startswith("-"):
             raise SystemExit(f"{prog}: usage: {usage}")
         elif session_arg is None:
             session_arg = a
         else:
             raise SystemExit(f"{prog}: usage: {usage}")
-    if part_no is not None and (as_json or full):
-        raise SystemExit(f"{prog}: --part cannot be combined with --json or --full")
+    if part_no is not None and as_json:
+        raise SystemExit(f"{prog}: --part cannot be combined with --json")
 
     plan: dict[str, object] | None = None
     plan_text: str | None = None
@@ -519,6 +495,6 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
             payload["session"] = session_arg
         sys.stdout.write(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
     else:
-        sys.stdout.write(format_bundle_plan_text(plan, full=full, session=session_arg))
+        sys.stdout.write(format_bundle_plan_text(plan, session=session_arg))
     sys.stdout.flush()
     return 0
