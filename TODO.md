@@ -18,9 +18,18 @@
 - Update `MODULE_ORDER` in `build.py` (`"bundle_parse.py"`, `"bundle_plan.py"`, `"bundle_view.py"`), update `AGENTS.md` Architecture & Module Boundaries and Bundle Input Protocol sections, rebuild `./run_block` via `python3 build.py`, and verify that all existing unit tests in `tests/test_bundle.py`, `tests/test_ui.py`, and `tests/test_cli.py` pass without symbol regression.
 - Target files: `build.py`, `src/bundle_plan.py:BUNDLE_BOUNDARY_HEADER.._strip_rule_description`, `src/bundle_plan.py:analyze_bundle_warnings.._resolve_part_chain`, `src/bundle_plan.py:refresh_bundle_plan_meta.._build_bundle_tree`, `src/bundle_plan.py:format_bundle_warning_items..cmd_bundle_plan`, `src/bundle_parse.py`, `src/bundle_view.py`.
 
+# 🎯 [NEXT] F90: Always render full Parts table in --bundle-plan (remove Summary/--full) and wrap --help to 100 columns
+
+- Depends on: F89
+- Remove the collapsed `Summary` table and `--full` CLI flag from `--bundle-plan` (`format_bundle_plan_text()`, `cmd_bundle_plan()`, and `src/cli.py`): always render the single expanded `Parts (<N>):` hierarchy table (`format_bundle_parts_lines()`), and update the session bundle fallback in `_collect_info_report()` (`src/ui.py`) and `format_bundle_summary_lines()` callers to use `format_bundle_parts_lines()`.
+- Replace the raw docstring `(__doc__ or "").format(...)` help output in `src/header.py` and `usage_text()` (`src/config.py`) with table-driven `--help` rendering (matching `todo_md` and `vitalio/agents-rules:stack/cli`): compute each section's description column after expanding `{prog}` and `{base_dir}`, align all descriptions and wrapped continuation lines to that column, and keep every `-h`/`--help` line at most 100 columns wide (prose at 80 columns).
+- Remove `[--full]` from `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `src/header.py`, and `README.md`, and rebuild `./run_block` via `python3 build.py`.
+- Update unit tests in `tests/test_bundle.py` and `tests/test_cli.py` to verify that `--bundle-plan` renders the full `Parts (<N>):` table by default, rejects `--full`, and keeps every `--help` line `<= 100` columns with aligned description columns.
+- Target files: `src/header.py`, `src/config.py:usage_text`, `src/cli.py`, `src/bundle_view.py:format_bundle_summary_lines..cmd_bundle_plan`, `src/bundle_plan.py:format_bundle_summary_lines..cmd_bundle_plan`, `src/ui.py:3160-3180`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py:745-1315`, `tests/test_cli.py`.
+
 # 🎯 [NEXT] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys
 
-- Depends on: F81, B8, F87, B13, F89
+- Depends on: F81, B8, F87, B13, F89, F90
 - Bump: `MINOR`
 - Replace generic `INFO · <label> · <~path>` fullscreen title bar in `_build_info_screen()` (`src/ui.py:3190-3324`) with the card title (`<CARD TITLE> · <label> · <~path>`, e.g. `END STEP · s229/2 · ~/.local/state/run_block/s229/2/out`, `START SESSION · s229/0 · ~/.local/state/run_block/s229/0`, `START STEP · s229/2 · ~/.local/state/run_block/s229/2/block.sh`, with `(edited)` suffix when modified).
 - Unify fullscreen header keys and bright styling across `START SESSION`, `START STEP`, `END STEP`, and other cards (`_format_info_header_lines()`, `_collect_info_report()`, `_colorize_kv_line()` in `src/ui.py:1443-1465`, `src/ui.py:2813-3180`):
