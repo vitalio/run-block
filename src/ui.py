@@ -3432,37 +3432,42 @@ def _show_info_fullscreen(
         else:
             orig_p = _orig_file_backup_path(target)
         raw_bundle = (resolved_sdir / "0.raw") if (kind == "START SESSION" and resolved_sdir is not None and target.name == "0") else None
-        use_raw_stage = raw_bundle is not None and raw_bundle.is_file()
-        before_raw_bytes: bytes | None = None
-        if use_raw_stage and raw_bundle is not None:
+        raw_stage_bytes: bytes | None = None
+        if raw_bundle is not None and raw_bundle.is_file():
             try:
-                before_raw_bytes = raw_bundle.read_bytes()
-                target.write_bytes(before_raw_bytes)
+                raw_stage_bytes = raw_bundle.read_bytes()
             except OSError:
-                use_raw_stage = False
-        tty_w.write("\033[?25h\033[?1049l")
-        tty_w.flush()
-        try:
-            open_script_in_editor(target, tty_r, tty_w)
-        finally:
-            tty_w.write("\033[?1049h\033[?25l")
+                raw_stage_bytes = None
+        with tempfile.TemporaryDirectory(prefix="run_block_edit_") as stage_dir:
+            edit_path = target
+            if raw_stage_bytes is not None:
+                edit_path = Path(stage_dir) / target.name
+                edit_path.write_bytes(raw_stage_bytes)
+            tty_w.write("\033[?25h\033[?1049l")
             tty_w.flush()
-        try:
-            after_edit_bytes: bytes | None = target.read_bytes() if target.is_file() else None
-        except OSError:
-            after_edit_bytes = None
-        if use_raw_stage and raw_bundle is not None and before_raw_bytes is not None:
-            if after_edit_bytes is None or after_edit_bytes == before_raw_bytes:
-                if before_clean_bytes is not None:
-                    target.write_bytes(before_clean_bytes)
-                return None
-            if before_clean_bytes is not None:
-                _write_orig_backup_once(orig_p, before_clean_bytes)
-            return _apply_edit_callbacks(target)
-        if before_clean_bytes is not None and after_edit_bytes is not None and after_edit_bytes != before_clean_bytes:
+            try:
+                open_script_in_editor(edit_path, tty_r, tty_w)
+            finally:
+                tty_w.write("\033[?1049h\033[?25l")
+                tty_w.flush()
+            try:
+                after_edit_bytes: bytes | None = edit_path.read_bytes() if edit_path.is_file() else None
+            except OSError:
+                after_edit_bytes = None
+        before_edit_bytes = raw_stage_bytes if raw_stage_bytes is not None else before_clean_bytes
+        if before_edit_bytes is None or after_edit_bytes is None or after_edit_bytes == before_edit_bytes:
+            return None
+        if before_clean_bytes is not None:
             _write_orig_backup_once(orig_p, before_clean_bytes)
+        if raw_stage_bytes is None:
             return _apply_edit_callbacks(target)
-        return None
+        target.write_bytes(after_edit_bytes)
+        try:
+            return _apply_edit_callbacks(target)
+        except BaseException:
+            if before_clean_bytes is not None:
+                target.write_bytes(before_clean_bytes)
+            raise
 
     def _prompt_artifact(target: Path) -> dict[str, object] | None:
         if not target.is_file():

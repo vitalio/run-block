@@ -2132,6 +2132,86 @@ class TestBundle(RunBlockTestCase):
         self.assertLess(len(clean_initial), len(raw_initial))
 
 
+    def test_start_session_editor_never_exposes_raw_markers_in_bundle(self):
+        import io
+
+        nonce = "bnd_edit_stage"
+        marker = f"bundle:{nonce}"
+        stdin_text = (
+            f"Bundle-Boundary: {nonce}\n"
+            "Role: work\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r1","chain":["pkg"]}} -->\n'
+            "Rule 1 original text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"prompt","name":"Prompt","chain":[]}} -->\n'
+            "===== Prompt =====\n"
+            "Initial prompt text\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        self._assert_ok(self._run(["--start", "--session", "s_stage"], input=stdin_text))
+        sdir = self.tmp / "s_stage"
+        b0 = sdir / "0"
+        b0_raw = sdir / "0.raw"
+        clean_initial = b0.read_text(encoding="utf-8")
+        self.assertIn(marker, b0_raw.read_text(encoding="utf-8"))
+        self.assertNotIn(marker, clean_initial)
+
+        class _KeepOpen(io.StringIO):
+            def close(self):
+                pass
+
+        def show(editor):
+            keys = iter(["edit", "back"])
+            with unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=editor), \
+                 unittest.mock.patch.object(self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys)), \
+                 unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 28)):
+                return self.mod._show_info_fullscreen(
+                    title_kind="START SESSION",
+                    label="s_stage/0",
+                    tty_r=io.StringIO(),
+                    tty_w=_KeepOpen(),
+                    sdir=sdir,
+                    out_path=b0,
+                    edit_target=b0,
+                    allow_copy=True,
+                )
+
+        def unchanged_editor(p, _r, _w):
+            self.assertNotEqual(p, b0)
+            self.assertIn(marker, p.read_text(encoding="utf-8"))
+            self.assertNotIn(marker, b0.read_text(encoding="utf-8"))
+
+        show(unchanged_editor)
+        self.assertEqual(b0.read_text(encoding="utf-8"), clean_initial)
+        self.assertIn(marker, b0_raw.read_text(encoding="utf-8"))
+
+        def interrupted_editor(p, _r, _w):
+            p.write_text("garbage\n", encoding="utf-8")
+            self.assertNotIn(marker, b0.read_text(encoding="utf-8"))
+            raise KeyboardInterrupt
+
+        try:
+            show(interrupted_editor)
+        except KeyboardInterrupt:
+            pass
+        self.assertEqual(b0.read_text(encoding="utf-8"), clean_initial)
+        self.assertIn(marker, b0_raw.read_text(encoding="utf-8"))
+
+        def modifying_editor(p, _r, _w):
+            self.assertNotIn(marker, b0.read_text(encoding="utf-8"))
+            p.write_text(p.read_text(encoding="utf-8").replace("Rule 1 original text", "Rule 1 edited text"), encoding="utf-8")
+
+        show(modifying_editor)
+        after_clean = b0.read_text(encoding="utf-8")
+        after_raw = b0_raw.read_text(encoding="utf-8")
+        self.assertNotIn(marker, after_clean)
+        self.assertIn("Rule 1 edited text", after_clean)
+        self.assertIn(marker, after_raw)
+        self.assertIn("Rule 1 edited text", after_raw)
+        plan = self.mod.load_session_bundle_plan(sdir, b0)
+        assert plan is not None
+        self.assertEqual(plan["protocol"], "boundary")
+
     def test_bundle_fragment_dedup_and_overlap_warnings(self):
         nonce = "bnd_dedup"
         base = [f"base line {k} " + "x" * 40 for k in range(8)]

@@ -1,11 +1,3 @@
-# 🎯 [NEXT] B13: Keep <session>/0 free of raw boundary markers during and after START SESSION editor (_edit_artifact)
-
-- Fix `_edit_artifact()` in `src/ui.py` so opening the editor (`e`) on `START SESSION` (`<session>/0` when `0.raw` exists) never leaves raw `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers inside `<session>/0`:
-  - Stage `0.raw` into a temporary file (or restore `before_clean_bytes` inside a `try ... finally:` guard whenever the editor exits without saving changes or is interrupted by an exception/signal) so `<session>/0` on disk is never left overwritten with `0.raw` if the editor is still open, copied externally, or aborted.
-  - When the user saves edits to the raw bundle stage, write the updated raw text to `0.raw` and immediately invoke `refresh_bundle_plan_meta(resolved_sdir, target)` / `_apply_edit_callbacks(target)` so `<session>/0` is always written with stripped clean text and `<session>/meta.json` `bundle_plan` stays in sync.
-- Add a regression test in `tests/test_bundle.py` verifying that editing `START SESSION` when `0.raw` exists (both when unchanged/aborted and when modified) always leaves `<session>/0` free of `<!-- bundle:<nonce>:` markers while preserving raw markers in `0.raw`.
-- Target files: `src/ui.py:_apply_edit_callbacks.._edit_artifact`, `src/bundle_plan.py:refresh_bundle_plan_meta`, `tests/test_bundle.py:TestBundle.test_bundle_raw_markup_preservation_on_edit_and_sandbox_off_omission..TestBundle.test_bundle_fragment_dedup_and_overlap_warnings`.
-
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3
