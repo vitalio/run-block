@@ -1,4 +1,4 @@
-# 🎯 [NEXT] F87: Deduplicate identical or contained bundle fragments and warn on partial text overlaps in bundle plan
+# 🔵 [WIP] F87: Deduplicate identical or contained bundle fragments and warn on partial text overlaps in bundle plan
 
 - Implement Runner-level content deduplication and partial text overlap detection in `src/bundle_plan.py` per `todo_flow` `docs/adr/0002-context-bundle-protocol-and-self-contained-producers.md`:
   - Add a helper `_normalize_part_payload_lines(part_lines: list[str]) -> list[str]` that strips a leading `===== ... =====` section/command header line and trims leading/trailing blank lines.
@@ -7,6 +7,14 @@
   - In `analyze_bundle_warnings()` (`src/bundle_plan.py:400-505`), detect partial contiguous text overlaps across remaining non-empty fragments: when two fragments share a contiguous block of `>= 5` non-empty normalized lines (and `>= 200` characters) that is not a full duplicate, emit a `fragment_overlap` warning (`severity: "warn"`, `part_index`, `part_name`, `overlap_with`, `shared_lines`, `shared_chars`, and `message` showing `#<earlier_idx>`, shared line count, and overlap percentage).
   - Add unit tests in `tests/test_bundle.py:2050-2136` covering 100% duplicate removal (`include` vs `cmd`), contiguous sub-slice containment removal, and partial overlap warning generation (`fragment_overlap`).
 - Target files: `src/bundle_plan.py:390-510`, `src/bundle_plan.py:815-1010`, `tests/test_bundle.py:2050-2136`.
+
+# 🎯 [NEXT] B13: Keep <session>/0 free of raw boundary markers during and after START SESSION editor (_edit_artifact)
+
+- Fix `_edit_artifact()` in `src/ui.py:3423-3466` so opening the editor (`e`) on `START SESSION` (`<session>/0` when `0.raw` exists) never leaves raw `<!-- bundle:<nonce>:part ... -->` / `<!-- bundle:<nonce>:end -->` markers inside `<session>/0`:
+  - Stage `0.raw` into a temporary file (or restore `before_clean_bytes` inside a `try ... finally:` guard whenever the editor exits without saving changes or is interrupted by an exception/signal) so `<session>/0` on disk is never left overwritten with `0.raw` if the editor is still open, copied externally, or aborted.
+  - When the user saves edits to the raw bundle stage, write the updated raw text to `0.raw` and immediately invoke `refresh_bundle_plan_meta(resolved_sdir, target)` / `_apply_edit_callbacks(target)` so `<session>/0` is always written with stripped clean text and `<session>/meta.json` `bundle_plan` stays in sync.
+- Add a regression test in `tests/test_bundle.py:2090-2136` verifying that editing `START SESSION` when `0.raw` exists (both when unchanged/aborted and when modified) always leaves `<session>/0` free of `<!-- bundle:<nonce>:` markers while preserving raw markers in `0.raw`.
+- Target files: `src/ui.py:3405-3470`, `src/bundle_plan.py:1001-1040`, `tests/test_bundle.py:2090-2136`.
 
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
@@ -20,7 +28,7 @@
 
 # 🎯 [NEXT] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys
 
-- Depends on: F81, B8, F87
+- Depends on: F81, B8, F87, B13
 - Bump: `MINOR`
 - Replace generic `INFO · <label> · <~path>` fullscreen title bar in `_build_info_screen()` (`src/ui.py:3190-3324`) with the card title (`<CARD TITLE> · <label> · <~path>`, e.g. `END STEP · s229/2 · ~/.local/state/run_block/s229/2/out`, `START SESSION · s229/0 · ~/.local/state/run_block/s229/0`, `START STEP · s229/2 · ~/.local/state/run_block/s229/2/block.sh`, with `(edited)` suffix when modified).
 - Unify fullscreen header keys and bright styling across `START SESSION`, `START STEP`, `END STEP`, and other cards (`_format_info_header_lines()`, `_collect_info_report()`, `_colorize_kv_line()` in `src/ui.py:1443-1465`, `src/ui.py:2813-3180`):
