@@ -50,7 +50,7 @@
   (`Workdir`, `Role`, `Task`, `Title`), blank-line separation, the new
   `Steps:` / `Duration:` / `Started:` / `Completed:` layout, and
   `SESSION COMPLETED` headers.
-- Target files: `src/runner.py:_session_stats_lines.._guard_completed_session`, `src/runner.py:cmd_info`, `tests/test_runner.py:test_f42_done_stats_card_and_list_badge..test_f42_completed_session_interactive_confirmation`, `tests/test_runner.py:test_f79_deferred_end_and_start_session_cards_and_clipboard_handoff`.
+- Target files: `src/runner.py:_session_stats_lines.._guard_completed_session`, `src/runner.py:cmd_info`, `tests/test_runner.py:test_f42_done_stats_card_and_list_badge..test_f42_completed_session_interactive_confirmation`, `tests/test_runner.py:test_f79_deferred_end_session_and_start_session_ordering_and_clipboard_handoff..test_f79_deferred_end_session_without_child_keeps_outer_end_step_clipboard`.
 
 # 🎯 [NEXT] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
 
