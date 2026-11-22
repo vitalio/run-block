@@ -2087,6 +2087,44 @@ def _last_nonempty_line(path: Path, skip_prefixes: tuple[str, ...], max_len: int
     return ""
 
 
+_GENERIC_TAIL_RE = re.compile(r"^(?:FAILED\b|OK\b|Ran \d+ test|-{5,}$|={5,}$|make: |Error: Process completed)")
+_TB_FRAME_RE = re.compile(r'^\s+File "([^"]+)", line (\d+)')
+_ASSERT_MISSING_RE = re.compile(r"AssertionError: (['\"])(.+?)\1 not found in")
+
+
+def _traceback_root_cause(raw: str) -> str:
+    """Summarize the last Traceback in captured output as `Exc: msg (file:line)`."""
+    lines = raw.splitlines()
+    tb_idx = -1
+    for i, ln in enumerate(lines):
+        if ln.startswith("Traceback (most recent call last):"):
+            tb_idx = i
+    if tb_idx == -1:
+        return ""
+    loc = ""
+    exc_line = ""
+    for ln in lines[tb_idx + 1 :]:
+        m = _TB_FRAME_RE.match(ln)
+        if m:
+            loc = f"{Path(m.group(1)).name}:{m.group(2)}"
+            continue
+        if ln.startswith((" ", "\t")) or not ln.strip():
+            continue
+        exc_line = ln.strip()
+        break
+    if not exc_line:
+        return ""
+    summary = f"{exc_line} ({loc})" if loc else exc_line
+    m_miss = _ASSERT_MISSING_RE.search(exc_line)
+    if m_miss:
+        needle = m_miss.group(2)
+        pool = [ln.strip() for ln in lines[:tb_idx] if ln.strip()]
+        close = difflib.get_close_matches(needle, pool, n=1, cutoff=0.6)
+        if close:
+            summary += f"; closest: {close[0]}"
+    return summary
+
+
 def _extract_last_error_line(out_path: Path, label: str | None = None, max_width: int | None = None) -> str:
     skip_prefixes: tuple[str, ...] = ()
     if label:
@@ -2101,7 +2139,19 @@ def _extract_last_error_line(out_path: Path, label: str | None = None, max_width
         )
     content_w = max_width if max_width is not None else max(24, _hr_width() - 2)
     max_len = max(24, content_w - 6)
-    return _last_nonempty_line(out_path, skip_prefixes, max_len)
+    last = _last_nonempty_line(out_path, skip_prefixes, max_len)
+    if last and not _GENERIC_TAIL_RE.match(last):
+        return last
+    try:
+        raw = out_path.read_text(encoding="utf-8", errors="replace") if out_path.is_file() else ""
+    except OSError:
+        raw = ""
+    cause = _traceback_root_cause(raw)
+    if not cause:
+        return last
+    if display_width(cause) > max_len:
+        cause = cause[: max(1, max_len - 3)].rstrip() + "..."
+    return cause
 
 
 def _format_end_fix_status(label: str, resolved_sdir: Path | None) -> str:

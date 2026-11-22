@@ -263,9 +263,16 @@ class TestSafety(RunBlockTestCase):
             f"echo missing_end\n"
             f"{F3}\n"
         )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_recovered = self.mod.cmd_normal("s4/2", unclosed_paste, auto_yes=True)
+        self.assertEqual(rc_recovered, 0)
+        out_recovered = (self.tmp / "s4/2/out").read_text(encoding="utf-8")
+        self.assertIn("missing_end", out_recovered)
+
+        truly_unclosed = "run_block s4/3 <<'RUN_BLOCK'\necho never_closed\n"
         buf_unclosed = io.StringIO()
         with contextlib.redirect_stdout(buf_unclosed):
-            rc_unclosed = self.mod.cmd_normal("s4/2", unclosed_paste, auto_yes=True)
+            rc_unclosed = self.mod.cmd_normal("s4/3", truly_unclosed, auto_yes=True)
         self.assertEqual(rc_unclosed, 2)
         self.assertIn("unclosed RUN_BLOCK heredoc", buf_unclosed.getvalue())
 

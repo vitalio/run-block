@@ -141,6 +141,121 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("patched 2_1/block.sh -> 2_2/block.sh", out_s2_f2)
         self.assertIn("fixed_ok", out_s2_f2)
 
+    def test_reassemble_split_payload_first_terminator_and_recovery(self):
+        fn = self.mod._reassemble_split_payload
+        fence = chr(96) * 3
+        hdr = "run_block s1/1 <<'RUN_BLOCK'\n"
+        body = "echo one\n"
+        cases = {
+            "single": hdr + body + "RUN_BLOCK\n",
+            "duplicate": hdr + body + "RUN_BLOCK\n" + hdr + body + "RUN_BLOCK\n",
+            "prose_between": hdr + body + "RUN_BLOCK\nSome prose\n" + hdr + "echo two\nRUN_BLOCK\n",
+            "indented_terminator": hdr + body + "  RUN_BLOCK\n",
+            "terminator_with_fence": hdr + body + "RUN_BLOCK" + fence + "\n",
+            "nested_wrapper": hdr + "run_block s1/2 <<'RUN_BLOCK'\n" + body + "RUN_BLOCK\nRUN_BLOCK\n",
+            "missing_terminator_before_fence": hdr + body + fence + "\n",
+        }
+        for name, payload in cases.items():
+            with self.subTest(case=name):
+                out, err = fn(payload)
+                self.assertIsNone(err)
+                self.assertEqual(out, body)
+        with self.subTest(case="unclosed_without_fence"):
+            out, err = fn(hdr + body)
+            self.assertIsNotNone(err)
+            self.assertIn("unclosed RUN_BLOCK heredoc", err)
+
+    def test_fix_anchor_diagnostic_hints(self):
+        cases = [
+            ("s1", "echo alpha\necho beta\n", "old = 'echo bata\\n'\nassert text.count(old) == 1\n",
+             "Hint: closest match at line 2 (similarity"),
+            ("s2", "echo a\necho b\n", "old = 'echo a\\n\\n'\nassert text.count(old) == 1\n",
+             "Hint: anchor matches once without its trailing newline"),
+            ("s3", "echo a\necho a\n", "old = 'echo a'\nassert text.count(old) == 1\n",
+             "matches 2 times"),
+            ("s4", "echo a\necho b\n", "text.replace('echo a', 'echo c')\n",
+             "result of text.replace(...) is discarded"),
+            ("s5", "echo a\necho b\n", "old = 'zzzzzzzzzzzz'\nassert text.count(old) == 1\n",
+             "emit a fresh s5/2 block instead of --fix"),
+        ]
+        for session, script, fix, expected in cases:
+            with self.subTest(session=session):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(self.mod.cmd_normal(f"{session}/1", script, auto_yes=True), 0)
+                    self.assertEqual(self.mod.cmd_fix(f"{session}/1", fix, auto_yes=True), 2)
+                out = (self.tmp / session / "1_1" / "out").read_text(encoding="utf-8")
+                self.assertIn(expected, out)
+
+    def test_fix_payload_shell_script_and_syntax_context(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", "echo a\n", auto_yes=True), 0)
+            self.assertEqual(self.mod.cmd_fix("s1/1", "git status -sb\necho hi\n", auto_yes=True), 2)
+            self.assertEqual(self.mod.cmd_normal("s2/1", "echo a\n", auto_yes=True), 0)
+            self.assertEqual(self.mod.cmd_fix("s2/1", "old = 'abc\nassert text.count(old) == 1\n", auto_yes=True), 2)
+        out_shell = (self.tmp / "s1" / "1_1" / "out").read_text(encoding="utf-8")
+        self.assertIn("looks like a shell script", out_shell)
+        self.assertIn("fresh s1/2 block", out_shell)
+        out_syn = (self.tmp / "s2" / "1_1" / "out").read_text(encoding="utf-8")
+        self.assertIn("Context (line 1):", out_syn)
+        self.assertIn(">   1 | old = 'abc", out_syn)
+        self.assertIn("Hint: the RUN_FIX heredoc passes text literally", out_syn)
+
+    def test_shell_syntax_error_context_and_hint(self):
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = self.mod.cmd_normal("s1/1", "echo ok\nif true; then\n", auto_yes=True)
+        self.assertNotEqual(rc, 0)
+        out = (self.tmp / "s1" / "1" / "out").read_text(encoding="utf-8")
+        self.assertIn("Context (line 2):", out)
+        self.assertIn(">   2 | if true; then", out)
+        self.assertIn("Hint: check that every heredoc terminator", out)
+        self.assertLess(out.index("Context (line"), out.index("END (syntax error"))
+
+    def test_fix_interactive_anchor_repair(self):
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        script = "echo alpha one\necho beta two\n"
+        fix = "old = 'echo beta twp\\n'\nnew = 'echo gamma\\n'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", script, auto_yes=True), 0)
+            self.assertEqual(self.mod.cmd_normal("s2/1", script, auto_yes=True), 0)
+        seen: list[str] = []
+
+        def fake_run(label, script_path, *a, **kw):
+            seen.append(Path(script_path).read_text(encoding="utf-8"))
+            return 0
+
+        with contextlib.redirect_stdout(_Tty()), \
+                unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=True) as box, \
+                unittest.mock.patch.object(self.mod, "run_script", side_effect=fake_run):
+            rc = self.mod.cmd_fix("s1/1", fix)
+        self.assertEqual(rc, 0)
+        self.assertEqual(box.call_count, 1)
+        self.assertEqual(seen, ["echo alpha one\necho gamma\n"])
+
+        with contextlib.redirect_stdout(io.StringIO()), \
+                unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=True) as box2:
+            rc2 = self.mod.cmd_fix("s2/1", fix, auto_yes=True)
+        self.assertEqual(rc2, 2)
+        box2.assert_not_called()
+
+    def test_fix_anchor_found_in_referenced_repo_file(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "notes.txt").write_text("needle line\n", encoding="utf-8")
+            script = "cat notes.txt\n"
+            fn = self.mod._anchor_in_referenced_file
+            self.assertEqual(fn("needle line", script, Path(td)), "notes.txt")
+            self.assertIsNone(fn("absent text", script, Path(td)))
+            self.assertIsNone(fn("needle line", "echo hi\n", Path(td)))
+            self.assertIsNone(fn("needle line", script, None))
+            fix = "assert text.count('needle line') == 1\n"
+            hints = self.mod._fix_anchor_hints(fix, script, {"text": script}, "s1/2", Path(td))
+            self.assertEqual(len(hints), 1)
+            self.assertIn("exists in notes.txt", hints[0])
+            self.assertIn("fresh s1/2 block", hints[0])
+
     def test_syntax_error_does_not_run(self):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

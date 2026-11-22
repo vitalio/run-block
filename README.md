@@ -104,6 +104,20 @@ Use `--fix <session>/<target>` for small, targeted patches to a failed step
 `<target>_2`, up to `RUN_BLOCK_MAX_FIX_ATTEMPTS`). When a fix requires rewriting
 multiple sections, emit a fresh `<session>/<step+1>` block instead.
 
+When a fix fails, `NOT RUN` appends `Hint:` lines: the closest matching line and
+similarity for a missing anchor, a trailing-newline mismatch, an ambiguous anchor
+(`actual: N == 1`), a discarded `text.replace(...)` / `re.sub(...)` result, an
+anchor that lives in a repository file instead of the script, and a shell script
+passed instead of a Python patch (run it as the next `<session>/<step>`).
+`SyntaxError` output carries a +-2 line code context. In an interactive TTY, a
+single anchor with
+similarity >= 0.85 and a clear margin over the runner-up can be replaced on
+confirmation and re-run immediately; headless `-y` mode never applies fuzzy matches.
+Pasted payloads stop at the first closing terminator, drop nested wrappers and fence
+debris, and recover a missing terminator before a closing fence. `END STEP` takes
+its `Error:` line from the last `Traceback` when the output ends with a generic runner
+tail, and shell syntax errors show a +-2 line context.
+
 ### 4. Complete or chain sessions (`--done`)
 
 ```bash

@@ -127,6 +127,187 @@ def _short_repr(val: object, limit: int = 80) -> str:
     return r
 
 
+def _fix_anchor_values(fix_code: str, ns: dict[str, object]) -> list[str]:
+    """Evaluate the first argument of text.count/replace/find/index calls in a fix."""
+    try:
+        tree = ast.parse(fix_code)
+    except SyntaxError:
+        return []
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "text"
+            and node.func.attr in ("count", "replace", "find", "index")
+            and node.args
+        ):
+            continue
+        try:
+            expr = ast.Expression(body=node.args[0])
+            ast.fix_missing_locations(expr)
+            val = eval(compile(expr, "<fix_anchor>", "eval"), ns)
+        except Exception:
+            continue
+        if isinstance(val, str) and val and val not in found:
+            found.append(val)
+    return found
+
+
+def _closest_anchor(old: str, text: str) -> tuple[float, int, float, str] | None:
+    """Return (score, 1-based line, runner-up score, window) of the best line window."""
+    old_lines = old.strip("\n").splitlines() or [old]
+    lines = text.splitlines()
+    size = len(old_lines)
+    if not lines or len(lines) > 20000:
+        return None
+    target = "\n".join(old_lines)
+    scores = []
+    for i in range(max(1, len(lines) - size + 1)):
+        window = "\n".join(lines[i : i + size])
+        scores.append((difflib.SequenceMatcher(None, target, window).ratio(), i + 1))
+    scores.sort(key=lambda s: (-s[0], s[1]))
+    best_score, best_line = scores[0]
+    runner_up = scores[1][0] if len(scores) > 1 else 0.0
+    window = "\n".join(lines[best_line - 1 : best_line - 1 + size])
+    return best_score, best_line, runner_up, window
+
+
+REPAIR_MIN_SCORE = 0.85
+REPAIR_MIN_MARGIN = 0.05
+
+
+def _propose_anchor_repair(
+    fix_code: str, text: str, ns: dict[str, object], label: str, sdir: Path
+) -> str | None:
+    """Offer to swap a single missing anchor for its unambiguous closest match; return new fix code."""
+    missing = [v for v in _fix_anchor_values(fix_code, ns) if text.count(v) == 0]
+    if len(missing) != 1:
+        return None
+    old = missing[0]
+    close = _closest_anchor(old, text)
+    if close is None:
+        return None
+    score, line_no, runner_up, window = close
+    if score < REPAIR_MIN_SCORE or score - runner_up < REPAIR_MIN_MARGIN:
+        return None
+    new_old = window + ("\n" if old.endswith("\n") else "")
+    if new_old == old or fix_code.count(repr(old)) != 1:
+        return None
+    lines = [
+        f"Anchor not found; closest match at line {line_no} (similarity {score:.2f}):",
+        f"- {old.strip()}",
+        f"+ {window.strip()}",
+    ]
+    if prompt_yes_no_box(
+        "NOT RUN", lines, "Replace anchor with closest match?", default_yes=False, label=label, sdir=sdir
+    ) is not True:
+        return None
+    return fix_code.replace(repr(old), repr(new_old), 1)
+
+
+def _anchor_in_referenced_file(old: str, script_text: str, work_dir: Path | None) -> str | None:
+    """Return a file path named in the script that contains the anchor text, if any."""
+    if work_dir is None:
+        return None
+    for token in dict.fromkeys(re.findall(r"[\w./-]+\.\w+", script_text)):
+        cand = work_dir / token
+        try:
+            if cand.is_file() and cand.stat().st_size < 2_000_000 and old in cand.read_text(encoding="utf-8"):
+                return token
+        except (OSError, UnicodeDecodeError):
+            continue
+    return None
+
+
+def _fix_anchor_hints(
+    fix_code: str, text: str, ns: dict[str, object], next_seq_ref: str, work_dir: Path | None = None
+) -> list[str]:
+    """Concrete `Hint:` lines for common --fix authoring mistakes."""
+    hints: list[str] = []
+    for old in _fix_anchor_values(fix_code, ns):
+        count = text.count(old)
+        if count == 1:
+            continue
+        if count > 1:
+            hints.append(
+                f"Hint: anchor {_short_repr(old, 40)} matches {count} times; "
+                "extend it with surrounding lines so it is unique"
+            )
+            continue
+        stripped = old.rstrip("\n")
+        if stripped != old and text.count(stripped) == 1:
+            hints.append("Hint: anchor matches once without its trailing newline; drop the trailing newline from old")
+            continue
+        repo_file = _anchor_in_referenced_file(old, text, work_dir)
+        if repo_file:
+            hints.append(
+                f"Hint: anchor is not in the target script but exists in {repo_file}; "
+                f"--fix patches only the script, so emit a fresh {next_seq_ref} block that edits that file"
+            )
+            continue
+        close = _closest_anchor(old, text)
+        if close is not None and close[0] >= 0.5:
+            hints.append(
+                f"Hint: closest match at line {close[1]} (similarity {close[0]:.2f}): "
+                f"{_short_repr(close[3].strip(), 60)}"
+            )
+        else:
+            hints.append(
+                f"Hint: anchor {_short_repr(old, 40)} not found in the target script; "
+                f"if the text lives elsewhere, emit a fresh {next_seq_ref} block instead of --fix"
+            )
+    try:
+        tree = ast.parse(fix_code)
+    except SyntaxError:
+        return hints
+    for node in tree.body:
+        if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)):
+            continue
+        func = node.value.func
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)):
+            continue
+        name = f"{func.value.id}.{func.attr}"
+        if name in ("text.replace", "re.sub", "re.subn"):
+            hints.append(f"Hint: line {node.lineno}: result of {name}(...) is discarded; assign it back with text = ...")
+    return hints
+
+
+_SHELL_START_RE = re.compile(
+    r"^(?:#!|set\s+-|cd\s|git\s|python3?\s|echo\s|cat\s|grep\s|awk\s|sed\s|ls\b|todo_md\b|run_block\b"
+    r"|export\s|mkdir\s|sh\s|bash\s)"
+)
+
+
+def _looks_like_shell_script(fix_code: str) -> bool:
+    first = next((ln.strip() for ln in fix_code.splitlines() if ln.strip()), "")
+    return bool(_SHELL_START_RE.match(first)) or "<<'" in fix_code
+
+
+def _fix_syntax_context(fix_code: str) -> list[str]:
+    """Code snippet (+-2 lines) and escaping hint for a --fix payload that fails to parse."""
+    try:
+        ast.parse(fix_code)
+    except SyntaxError as exc:
+        lineno, msg = exc.lineno, exc.msg or ""
+    else:
+        return []
+    lines = fix_code.splitlines()
+    out: list[str] = []
+    if lineno is not None and 1 <= lineno <= len(lines):
+        out.append(f"Context (line {lineno}):")
+        for n in range(max(1, lineno - 2), min(len(lines), lineno + 2) + 1):
+            mark = ">" if n == lineno else " "
+            out.append(f"{mark} {n:>3} | {lines[n - 1]}")
+    if any(k in msg for k in ("unterminated", "continuation", "unicode", "unexpected character", "EOF")):
+        out.append(
+            "Hint: the RUN_FIX heredoc passes text literally; write newlines as \\n inside Python "
+            "string literals and build triple backticks via chr(96) * 3"
+        )
+    return out
+
+
 def _format_fix_exception(
     exc: BaseException, fix_code: str, fix_path: Path, ns: dict[str, object]
 ) -> str:
@@ -703,6 +884,29 @@ def _iter_child_output(fd):
         yield chunk.decode("utf-8", "replace")
 
 
+def _script_syntax_context(script_path: Path, msg: str) -> list[str]:
+    """Code snippet (+-2 lines) and escaping hints for a shell syntax failure."""
+    out: list[str] = []
+    m = re.search(r"line (\d+)", msg) or re.search(r"At line:(\d+)", msg)
+    try:
+        lines = script_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    if m and lines:
+        lineno = min(max(1, int(m.group(1))), len(lines))
+        out.append(f"Context (line {lineno}):")
+        for n in range(max(1, lineno - 2), min(len(lines), lineno + 2) + 1):
+            mark = ">" if n == lineno else " "
+            out.append(f"{mark} {n:>3} | {lines[n - 1]}")
+    low = msg.lower()
+    if "here-document" in low or "unexpected end of file" in low or "unexpected eof" in low:
+        out.append(
+            "Hint: check that every heredoc terminator is alone at column 0, quotes are balanced, "
+            "and no triple backticks or paired dollar signs appear inside the block"
+        )
+    return out
+
+
 def _validate_step_script_syntax(
     label: str,
     script_path: Path,
@@ -740,6 +944,10 @@ def _validate_step_script_syntax(
     )
     start_line = f"[{label}] START\n{renum_note}\n"
     msg = chk.stdout or "syntax check failed\n"
+    ctx_lines = _script_syntax_context(script_path, msg)
+    if ctx_lines:
+        msg = msg if msg.endswith("\n") else msg + "\n"
+        msg += "\n".join(ctx_lines) + "\n"
     end_line = f"[{label}] END (syntax error, exit {chk.returncode})\n"
     if footer_on_fail:
         end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
@@ -1137,6 +1345,11 @@ SPLIT_HEADER_RE = re.compile(
 FENCE_LINE_RE = re.compile(r"^`{3,}[A-Za-z0-9_-]*\s*$")
 
 
+def _is_heredoc_terminator(line: str, delim: str) -> bool:
+    stripped = line.strip()
+    return stripped == delim or bool(re.fullmatch(rf"{re.escape(delim)}\s*`{{3,}}", stripped))
+
+
 def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     """Reconstruct payloads split by chat Markdown fences when inner triple backticks appear."""
     norm = payload.replace("\r\n", "\n")
@@ -1164,34 +1377,29 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
 
     delim = m.group(1)
     body_lines = lines[first_nonempty + 1 :]
-    end_idx = -1
-    for idx in range(len(body_lines) - 1, -1, -1):
-        stripped = body_lines[idx].strip()
-        if stripped == delim or re.fullmatch(rf"{re.escape(delim)}\s*`{{3,}}", stripped):
-            end_idx = idx
-            break
-
+    # Stop at the first terminator so repeated or concatenated blocks never merge.
+    end_idx = next((i for i, ln in enumerate(body_lines) if _is_heredoc_terminator(ln, delim)), -1)
     if end_idx == -1:
-        return (
-            payload,
-            f"unclosed {delim} heredoc on stdin (missing closing '{delim}' terminator — check for split Markdown fences)",
-        )
+        # Recover a missing terminator when the block ends with a closing Markdown fence.
+        nonblank = [i for i, ln in enumerate(body_lines) if ln.strip()]
+        if nonblank and FENCE_LINE_RE.match(body_lines[nonblank[-1]]):
+            end_idx = nonblank[-1]
+        else:
+            return (
+                payload,
+                f"unclosed {delim} heredoc on stdin (missing closing '{delim}' terminator — check for split Markdown fences)",
+            )
 
     inner = body_lines[:end_idx]
-    rebuilt: list[str] = []
-    i = 0
-    while i < len(inner):
-        cur = inner[i]
-        # A split caused by inner triple backticks turns a single line or fence boundary into:
-        #   <prefix>        (or standalone closing ```)
-        #   ```<lang>       (chat UI reopening the next code block)
-        # Strip standalone Markdown fence lines introduced by chat renderer splitting.
-        if FENCE_LINE_RE.match(cur):
-            i += 1
-            continue
-        rebuilt.append(cur)
-        i += 1
+    # Drop accidental nested `run_block <s/n> <<'RUN_BLOCK'` wrapper headers.
+    while True:
+        first = next((i for i, ln in enumerate(inner) if ln.strip()), None)
+        if first is None or not SPLIT_HEADER_RE.match(inner[first]):
+            break
+        inner = inner[first + 1 :]
 
+    # Strip standalone Markdown fence lines introduced by chat renderer splitting.
+    rebuilt = [ln for ln in inner if not FENCE_LINE_RE.match(ln)]
     joined = "\n".join(rebuilt)
     out = (joined + "\n") if joined and not joined.endswith("\n") else joined
     return out, None
@@ -1501,7 +1709,11 @@ def cmd_normal(
 
 
 def cmd_fix(
-    ref: str, fix_code: str, auto_yes: bool = False, sandbox_override: str | None = None
+    ref: str,
+    fix_code: str,
+    auto_yes: bool = False,
+    sandbox_override: str | None = None,
+    _repair: bool = True,
 ) -> int:
     if in_run_block():
         return _reject_nested_step_execution(f"--fix {ref}")
@@ -1573,7 +1785,17 @@ def cmd_fix(
 
     ast_ok, ast_err = validate_fix_ast(fix_code)
     if not ast_ok:
-        return _fail_not_run(f"unsafe construct in --fix ({ast_err})")
+        if _looks_like_shell_script(fix_code):
+            shell_ref = f"{session}/{next_free_step(sdir, min_step=int(base_step) + 1)}"
+            return _fail_not_run(
+                "--fix payload looks like a shell script, not a Python text patch\n"
+                f"Hint: run it as a fresh {shell_ref} block instead of --fix"
+            )
+        reason = f"unsafe construct in --fix ({ast_err})"
+        ctx = _fix_syntax_context(fix_code)
+        if ctx:
+            reason += "\n" + "\n".join(ctx)
+        return _fail_not_run(reason)
 
     direct_script = _find_step_script(sdir, target)
     if direct_script.is_file():
@@ -1591,6 +1813,8 @@ def cmd_fix(
     chosen_orig: str = ""
     chosen_new: str = ""
     primary_err: str | None = None
+    primary_text = ""
+    primary_ns: dict[str, object] = {}
 
     for idx, (cand_step, cand_script) in enumerate(candidates):
         cand_orig = cand_script.read_text(encoding="utf-8")
@@ -1599,6 +1823,8 @@ def cmd_fix(
             "text": cand_orig,
             "re": re,
         }
+        if idx == 0:
+            primary_text, primary_ns = cand_orig, ns
         try:
             exec(compile(fix_code, str(fix_path), "exec"), ns)
         except Exception as exc:
@@ -1621,7 +1847,15 @@ def cmd_fix(
         break
 
     if chosen_step is None or chosen_script is None:
-        return _fail_not_run(primary_err or f"fix made no changes to {primary[1]}")
+        if _repair and not headless and sys.stdout.isatty() and not no_clipboard():
+            repaired = _propose_anchor_repair(fix_code, primary_text, primary_ns, label, sdir)
+            if repaired is not None:
+                return cmd_fix(ref, repaired, auto_yes=auto_yes, sandbox_override=sandbox_override, _repair=False)
+        reason = primary_err or f"fix made no changes to {primary[1]}"
+        hints = _fix_anchor_hints(fix_code, primary_text, primary_ns, next_seq_ref, get_work_dir(sdir))
+        if hints:
+            reason += "\n" + "\n".join(hints)
+        return _fail_not_run(reason)
 
     ext = chosen_script.suffix or _script_ext()
     new_step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)

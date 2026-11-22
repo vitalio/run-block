@@ -23,6 +23,35 @@ except ImportError:
 
 
 class TestUi(RunBlockTestCase):
+    def test_error_line_prefers_traceback_root_cause_over_runner_tail(self):
+        out = self.tmp / "out"
+        out.write_text(
+            "[s1/1] START\n"
+            "Traceback (most recent call last):\n"
+            '  File "/x/tests/test_a.py", line 12, in test_a\n'
+            "    self.assertEqual(rc, 2)\n"
+            "AssertionError: 0 != 2\n"
+            "\n"
+            "Ran 3 tests in 0.1s\n"
+            "FAILED (failures=1)\n"
+            "[s1/1] END (exit 1, 1s)\n",
+            encoding="utf-8",
+        )
+        err = self.mod._extract_last_error_line(out, label="s1/1", max_width=100)
+        self.assertEqual(err, "AssertionError: 0 != 2 (test_a.py:12)")
+        out.write_text(
+            "Hello world line\n"
+            "Traceback (most recent call last):\n"
+            '  File "t.py", line 3, in f\n'
+            "AssertionError: 'Hello wrld' not found in output\n"
+            "FAILED (failures=1)\n",
+            encoding="utf-8",
+        )
+        err2 = self.mod._extract_last_error_line(out, label="s1/1", max_width=120)
+        self.assertIn("closest: Hello world line", err2)
+        out.write_text("boom\n[s1/1] END (exit 1, 1s)\n", encoding="utf-8")
+        self.assertEqual(self.mod._extract_last_error_line(out, label="s1/1"), "boom")
+
     def test_stats_and_clipboard_box(self):
         f = self.tmp / "x.txt"
         f.write_text("hello\n", encoding="utf-8")
