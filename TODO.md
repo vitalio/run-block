@@ -151,6 +151,8 @@ Follow-up findings from F74 review:
 - `src/ui.py:_traceback_root_cause`, `src/ui.py:_extract_last_error_line`: `_traceback_root_cause()` searches for `AssertionError: '<needle>' not found in ...` matches only in `lines[:tb_idx]` (ignoring the haystack text embedded in the `AssertionError` message itself when output was captured in memory), and `_extract_last_error_line()` truncates `cause` by character index (`cause[: max_len - 3]`) rather than `char_width()`.
 - `src/runner.py:_fix_anchor_values`, `src/runner.py:cmd_fix`: `_fix_anchor_values()` inspects only `text.count/replace/find/index` calls (missing `assert old in text` and `re.sub(old, new, text)` anchors), and `next_seq_ref` in `cmd_fix()` uses `int(base_step) + 1` instead of `next_free_step(sdir, min_step=int(base_step) + 1)`.
 
+- `src/cli.py`, `src/runner.py`, `src/header.py`: decouple `-y` / `--yes` (`auto_yes=True`) from `--headless` (`RUN_BLOCK_HEADLESS=1`) so `-y` / `--yes` automatically reopens a completed session and auto-confirms `START STEP` execution while preserving interactive TUI conflict cards (`STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`), `NOT RUN` / `SYNTAX ERROR` / `END STEP` cards, and clipboard copy prompts on a TTY; reserve `--headless` and `RUN_BLOCK_HEADLESS=1` for non-interactive headless output without TUI boxes or prompts.
+
 # ⚪ [NEW] F93: Split src/runner.py by responsibility
 
 - Depends on: F94, B15
