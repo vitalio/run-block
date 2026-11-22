@@ -58,9 +58,9 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("Session: s1\nNext-Block: s1/1\nWorkdir:", bundle1)
         self.assertNotIn("\nSandbox:", bundle1)
         self.assertNotIn("Bundle-Command:", bundle1)
-        self.assertNotIn("Chat-Lang:", bundle1)
-        self.assertNotIn("Role:", bundle1)
-        self.assertNotIn("Task:", bundle1)
+        self.assertIn("Chat-Lang: Russian\n", bundle1)
+        self.assertIn("Role: execute\n", bundle1)
+        self.assertIn("Task: F14\n", bundle1)
         meta1 = self.mod.read_session_meta(self.tmp / "sessions/s1")
         self.assertEqual(
             meta1.get("headers"),
@@ -616,7 +616,33 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(plan["lines"], sum(p["lines"] for p in parts))
         self.assertEqual(plan["chars"], len(b0))
 
-        # 2. Bundle-Expose: * with Bundle-Hide forwards all non-Bundle non-reserved headers except hidden
+        # 2. Export-driven default (no Bundle-Expose) and Bundle-Expose: * forward non-Bundle non-reserved headers
+        exp_default = self.mod.filter_exposed_headers([
+            ("Bundle-Name", "todo_md"),
+            ("Bundle-Command", "todo_md F95 | agents_bundle"),
+            ("Bundle-Protocol", "1"),
+            ("Workdir", "/tmp"),
+            ("Role", "work"),
+            ("Task", "F95"),
+            ("Title", "Drop Windows and accept export headers"),
+        ])
+        self.assertEqual(
+            exp_default,
+            [
+                ("Role", "work"),
+                ("Task", "F95"),
+                ("Title", "Drop Windows and accept export headers"),
+            ],
+        )
+        self.assertEqual(
+            self.mod.get_bundle_name([("Bundle-Name", "todo_md"), ("Task", "F95")]),
+            "todo_md",
+        )
+        self.assertTrue(self.mod.is_bundle_transport_header("Bundle-Name"))
+        self.assertEqual(
+            self.mod.filter_exposed_headers([("Bundle-Expose", "none"), ("Role", "work")]),
+            [],
+        )
         exp_all = self.mod.filter_exposed_headers([
             ("Bundle-Expose", "*"),
             ("Bundle-Hide", "Internal-Id"),
@@ -689,11 +715,12 @@ class TestBundle(RunBlockTestCase):
 
     def test_bundle_protocol_header_and_task_context_fragments(self) -> None:
         nonce = "tcnonce77"
-        hdrs = [("Bundle-Protocol", "1"), ("Bundle-Boundary", nonce), ("Role", "work")]
+        hdrs = [("Bundle-Name", "agents_bundle"), ("Bundle-Protocol", "1"), ("Bundle-Boundary", nonce), ("Role", "work")]
+        self.assertEqual(self.mod.get_bundle_name(hdrs), "agents_bundle")
         self.assertEqual(self.mod.get_bundle_protocol(hdrs), "1")
         self.assertIsNone(self.mod.get_bundle_protocol([("Role", "work")]))
         self.assertEqual(self.mod.get_bundle_boundary(hdrs), nonce)
-        self.assertEqual(self.mod.filter_exposed_headers(hdrs), [])
+        self.assertEqual(self.mod.filter_exposed_headers(hdrs), [("Role", "work")])
 
         # 1. Supported protocol is silent; unsupported protocol warns on stderr
         err_ok = io.StringIO()
@@ -1022,7 +1049,6 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("--bundle-plan", r_help.stdout)
         self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("--bundle-plan", (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8"))
-        self.assertIn("--bundle-plan", (ROOT / "agents/blocks/pwsh.md").read_text(encoding="utf-8"))
 
     def test_f55_hide_bundle_transport_headers_and_clamp_long_title(self):
         proj = self.tmp / "f55_proj"
@@ -1309,39 +1335,24 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn(" B ·", r_bp.stdout)
 
     def test_f66_embedded_block_rules_injection_dedup_and_tty_bare_start(self):
-        # 1. Built ./run_block embeds bash.md and pwsh.md without '# Description:' lines
+        # 1. Built ./run_block embeds bash.md without '# Description:' lines
         built_text = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn('EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"', built_text)
-        self.assertNotIn('EMBEDDED_RULE_PWSH = "__EMBEDDED_RULE_PWSH__"', built_text)
+        self.assertFalse(hasattr(self.mod, "EMBEDDED_RULE_PWSH"))
         self.assertIn("## Terminal blocks (`{cmd:run_block}`)", self.mod.EMBEDDED_RULE_BASH)
-        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", self.mod.EMBEDDED_RULE_PWSH)
         self.assertFalse(self.mod.EMBEDDED_RULE_BASH.startswith("# Description:"))
-        self.assertFalse(self.mod.EMBEDDED_RULE_PWSH.startswith("# Description:"))
 
-        # 2. Shell selection (bash vs pwsh) and prog_name() substitution
-        saved_shell = os.environ.get("RUN_BLOCK_SHELL")
+        # 2. prog_name() substitution in embedded bash rule
         saved_argv0 = self.mod.sys.argv[0]
         try:
             self.mod.sys.argv[0] = "/usr/local/bin/rxb"
-            os.environ["RUN_BLOCK_SHELL"] = "bash"
             rid_bash, rtxt_bash = self.mod.get_embedded_block_rule()
             self.assertEqual(rid_bash, "run_block:blocks/bash")
             self.assertIn("## Terminal blocks (`rxb`)", rtxt_bash)
             self.assertIn("rxb s1/1 <<'RUN_BLOCK'", rtxt_bash)
             self.assertNotIn("{cmd:run_block}", rtxt_bash)
-
-            os.environ["RUN_BLOCK_SHELL"] = "pwsh"
-            rid_pwsh, rtxt_pwsh = self.mod.get_embedded_block_rule()
-            self.assertEqual(rid_pwsh, "run_block:blocks/pwsh")
-            self.assertIn("## Terminal blocks (`rxb`)", rtxt_pwsh)
-            self.assertIn("'@ | rxb s1/1", rtxt_pwsh)
-            self.assertNotIn("{cmd:run_block}", rtxt_pwsh)
         finally:
             self.mod.sys.argv[0] = saved_argv0
-            if saved_shell is None:
-                os.environ.pop("RUN_BLOCK_SHELL", None)
-            else:
-                os.environ["RUN_BLOCK_SHELL"] = saved_shell
 
         proj = self.tmp / "f66_proj"
         proj.mkdir()
@@ -1603,7 +1614,6 @@ class TestBundle(RunBlockTestCase):
             self.assertIn("--part N", r_help.stdout)
         self.assertIn("--part N", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("--part N", (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8"))
-        self.assertIn("--part N", (ROOT / "agents/blocks/pwsh.md").read_text(encoding="utf-8"))
 
     def test_info_part_viewer_and_part_prompt(self):
         nonce = "abc"

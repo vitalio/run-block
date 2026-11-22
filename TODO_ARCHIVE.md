@@ -1,3 +1,10 @@
+# ✅ [DONE] F95: Drop Windows and PowerShell support (install.ps1, agents/blocks/pwsh.md, windows-latest CI) and accept export-driven preamble headers — *2026-11-22, Dropped Windows/PowerShell support (install.ps1, agents/blocks/pwsh.md, pwsh/nt branches) and enabled export-driven preamble headers by default with Bundle-Name transport recognition.*
+
+- Depends on: F82
+- Align `run_block` with `todo_flow` `docs/adr/0003-task-targeted-bundle-architecture-and-atomic-rule-taxonomy.md`:
+  - In `src/bundle_parse.py`, display all non-transport (`not is_bundle_transport_header`), non-hidden preamble headers emitted by `agents_bundle` `export` directives even when `Bundle-Expose` is omitted (while keeping backward compatibility when `Bundle-Expose` is present), and recognize `Bundle-Name` as a transport header.
+  - Drop Windows and PowerShell support: remove `install.ps1` and `agents/blocks/pwsh.md` (plus `EMBEDDED_RULE_PWSH` in `build.py`), remove Windows/PowerShell branches (`_is_powershell()`, `_pwsh_brace_delta()`, `os.name == "nt"`, `pwsh` rule selection) across `src/config.py`, `src/bundle_parse.py`, `src/safety.py`, and tests, and remove `install.ps1` / `windows-latest` from `.github/workflows/ci.yml`.
+
 # ❌ [CANCELED] F70: Support model-aware token counting once model API integration is added — *Consolidated provider API token/cache usage accounting into D10 and F88*
 
 - Depends on: D10

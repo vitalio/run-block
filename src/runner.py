@@ -817,32 +817,20 @@ def _prepare_progress_script(
     step_dir: Path,
     step_lines: list[dict[str, object]],
     shell_bin: str,
-    is_ps: bool,
     work_dir: Path,
 ) -> Path | None:
     if not step_lines:
         return None
-    inst_text = instrument_script_for_progress(
-        script_text, step_lines=step_lines, is_powershell=is_ps
-    )
+    inst_text = instrument_script_for_progress(script_text, step_lines=step_lines)
     if inst_text == script_text:
         return None
-    ext = ".ps1" if is_ps else ".sh"
-    fd, tmp_name = tempfile.mkstemp(prefix=".progress_", suffix=ext, dir=step_dir)
+    fd, tmp_name = tempfile.mkstemp(prefix=".progress_", suffix=".sh", dir=step_dir)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(inst_text)
         os.chmod(tmp_path, 0o600)
-        if is_ps:
-            ps_check = (
-                "$err = $null; "
-                "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-                "if ($err) { exit 1 }"
-            )
-            chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(tmp_path)]
-        else:
-            chk_cmd = [shell_bin, "-n", str(tmp_path)]
+        chk_cmd = [shell_bin, "-n", str(tmp_path)]
         chk = subprocess.run(
             chk_cmd,
             cwd=work_dir,
@@ -913,21 +901,12 @@ def _validate_step_script_syntax(
     out_path: Path,
     work_dir: Path,
     shell_bin: str,
-    is_ps: bool,
     sdir: Path,
     headless: bool = False,
     footer_on_fail: str | None = None,
     renumbered_from: str | None = None,
 ) -> int:
-    if is_ps:
-        ps_check = (
-            "$err = $null; "
-            "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-            "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
-        )
-        chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(script_path)]
-    else:
-        chk_cmd = [shell_bin, "-n", str(script_path)]
+    chk_cmd = [shell_bin, "-n", str(script_path)]
     chk = subprocess.run(
         chk_cmd,
         cwd=work_dir,
@@ -1009,13 +988,8 @@ def run_script(
     work_dir = get_work_dir(sdir)
     sandbox_mode = get_sandbox_mode(sdir, override=sandbox_override)
     shell_bin, _ = get_setting("shell")
-    is_ps = _is_powershell(shell_bin)
     script_text = script_path.read_text(encoding="utf-8")
-    exec_cmd = (
-        [shell_bin, "-NoProfile", "-File", str(script_path)]
-        if is_ps
-        else [shell_bin, str(script_path)]
-    )
+    exec_cmd = [shell_bin, str(script_path)]
 
     rc_syn = _validate_step_script_syntax(
         label,
@@ -1023,7 +997,6 @@ def run_script(
         out_path,
         work_dir,
         shell_bin,
-        is_ps,
         sdir,
         headless=headless,
         footer_on_fail=footer_on_fail,
@@ -1068,7 +1041,6 @@ def run_script(
                 out_path,
                 work_dir,
                 shell_bin,
-                is_ps,
                 sdir,
                 headless=headless,
                 footer_on_fail=footer_on_fail,
@@ -1139,17 +1111,13 @@ def run_script(
     progress_filter: _ProgressLineFilter | None = None
     if use_progress:
         tmp_progress_path = _prepare_progress_script(
-            script_text, step_dir, step_lines, shell_bin, is_ps, work_dir
+            script_text, step_dir, step_lines, shell_bin, work_dir
         )
         if tmp_progress_path is not None:
             step_map = {int(s["step"]): s for s in step_lines if s.get("step")}
             progress_filter = _ProgressLineFilter(step_map, len(step_lines))
             progress_filter.line_base = sum(c.count("\n") for c in log_chunks)
-            exec_cmd = (
-                [shell_bin, "-NoProfile", "-File", str(tmp_progress_path)]
-                if is_ps
-                else [shell_bin, str(tmp_progress_path)]
-            )
+            exec_cmd = [shell_bin, str(tmp_progress_path)]
 
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
@@ -1559,7 +1527,7 @@ def cmd_normal(
         out_path.unlink(missing_ok=True)
         (step_dir / "meta.json").unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
-        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+        for orig_p in (step_dir / "block.orig.sh", step_dir / "out.orig"):
             orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
@@ -1627,7 +1595,7 @@ def cmd_normal(
                 (step_dir / "meta.json").unlink(missing_ok=True)
                 (step_dir / "error").unlink(missing_ok=True)
                 aborted_marker.unlink(missing_ok=True)
-                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "out.orig"):
                     orig_p.unlink(missing_ok=True)
                 overwrite = True
             elif choice == "copy":
@@ -1679,7 +1647,7 @@ def cmd_normal(
                     out_path.unlink(missing_ok=True)
                     (step_dir / "meta.json").unlink(missing_ok=True)
                     aborted_marker.unlink(missing_ok=True)
-                    for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                    for orig_p in (step_dir / "block.orig.sh", step_dir / "out.orig"):
                         orig_p.unlink(missing_ok=True)
             else:
                 return 2
@@ -2005,13 +1973,12 @@ def _bundle_row_desc(sdir: Path) -> str:
 
 def _step_row_desc(sdir: Path, stem: str) -> str:
     step_d = _step_dir(sdir, stem)
-    for name in ("block.sh", "block.ps1"):
-        script = step_d / name
-        if script.is_file():
-            sh_text = script.read_text(encoding="utf-8", errors="replace")
-            summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
-            rows = summary.get("rows") or []
-            return _clip_list_desc("; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else "")
+    script = step_d / "block.sh"
+    if script.is_file():
+        sh_text = script.read_text(encoding="utf-8", errors="replace")
+        summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
+        rows = summary.get("rows") or []
+        return _clip_list_desc("; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else "")
     info = _step_outcome(sdir, stem)
     parts = []
     if info["reason"]:

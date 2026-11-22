@@ -399,7 +399,7 @@ class TestSafety(RunBlockTestCase):
         self.assertEqual([s["line"] for s in steps], [1, 4, 7])
         self.assertEqual(len(summary["operations"]), 3)
 
-        inst = self.mod.instrument_script_for_progress(script, is_powershell=False)
+        inst = self.mod.instrument_script_for_progress(script)
         ok_syn, syn_err, _ = self.mod.check_script_syntax(inst, self.tmp)
         self.assertTrue(ok_syn, syn_err)
         self.assertEqual(inst.count("__RB_STEP__:"), 3)
@@ -436,7 +436,7 @@ class TestSafety(RunBlockTestCase):
         )
         nested_sum = self.mod.summarize_script_actions(nested_script, Path("/tmp/work"))
         self.assertEqual([s["tag"] for s in nested_sum["operation_steps"]], ["exec", "git"])
-        nested_inst = self.mod.instrument_script_for_progress(nested_script, is_powershell=False)
+        nested_inst = self.mod.instrument_script_for_progress(nested_script)
         ok_n, err_n, _ = self.mod.check_script_syntax(nested_inst, self.tmp)
         self.assertTrue(ok_n, err_n)
         self.assertIn("printf '%s\\n' '__RB_STEP__:2'\ngit status -sb", nested_inst)

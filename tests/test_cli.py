@@ -129,10 +129,10 @@ class TestCli(RunBlockTestCase):
         self.assertFalse((ROOT / "src/bundles").exists())
         ab_txt = (ROOT / ".agents_bundle").read_text(encoding="utf-8")
         self.assertNotIn("bundle vitalio/run_block", ab_txt)
+        self.assertFalse((ROOT / "agents/blocks/pwsh.md").exists())
+        self.assertFalse((ROOT / "install.ps1").exists())
         bash_md = (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8")
-        pwsh_md = (ROOT / "agents/blocks/pwsh.md").read_text(encoding="utf-8")
         self.assertIn("## Terminal blocks (`{cmd:run_block}`)", bash_md)
-        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", pwsh_md)
         self.assertIn("ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT)", bash_md)
         self.assertIn("small, targeted patch", bash_md)
         self.assertIn("comparable in size to the original block", bash_md)
@@ -186,49 +186,6 @@ class TestCli(RunBlockTestCase):
         self.assertTrue((bin_dir / "run_term_block").is_file())
         self.assertIn("Installed: run_term_block", r2.stdout)
 
-    def test_powershell_mode_and_agents(self):
-        fake_pwsh = self.tmp / "pwsh"
-        fake_pwsh.write_text(
-            "#!/bin/sh\n"
-            "if [ \"$3\" = \"-Command\" ]; then\n"
-            "  grep -q 'SYNTAX_ERR' \"$5\" && { echo 'ParseError: missing closing brace' >&2; exit 1; }\n"
-            "  exit 0\n"
-            "fi\n"
-            "if [ \"$2\" = \"-File\" ]; then\n"
-            "  sh \"$3\"\n"
-            "  exit $?\n"
-            "fi\n"
-            "exit 0\n",
-            encoding="utf-8",
-        )
-        fake_pwsh.chmod(0o755)
-        os.environ["RUN_BLOCK_SHELL"] = str(fake_pwsh)
-        try:
-            self.assertTrue(self.mod._is_powershell())
-            self.assertEqual(self.mod._script_ext(), ".ps1")
-            pwsh_md = (ROOT / "agents/blocks/pwsh.md").read_text(encoding="utf-8")
-            self.assertIn("powershell", pwsh_md)
-            self.assertIn("'@ | {cmd:run_block} s1/1", pwsh_md)
-            self.assertIn("fresh `pwsh` process", pwsh_md)
-            self.assertIn("small, targeted patch", pwsh_md)
-            self.assertIn("comparable in size to the original block", pwsh_md)
-
-            buf = io.StringIO()
-            with contextlib.redirect_stdout(buf):
-                rc_ok = self.mod.cmd_normal("s1/1", "echo ps1_ran_ok\n")
-                self.assertEqual(rc_ok, 0)
-                self.assertTrue((self.tmp / "s1/1/block.ps1").is_file())
-                rc_err = self.mod.cmd_normal("s1/2", "echo SYNTAX_ERR\n")
-                self.assertNotEqual(rc_err, 0)
-                rc_fix = self.mod.cmd_fix("s1/2", "text = text.replace('SYNTAX_ERR', 'fixed_ps1')\n")
-                self.assertEqual(rc_fix, 0)
-                self.assertTrue((self.tmp / "s1/2_1/block.ps1").is_file())
-                self.assertTrue((self.tmp / "s1/2_1/fix.py").is_file())
-            self.assertIn("ps1_ran_ok", (self.tmp / "s1/1/out").read_text(encoding="utf-8"))
-            self.assertIn("fixed_ps1", (self.tmp / "s1/2_1/out").read_text(encoding="utf-8"))
-        finally:
-            os.environ.pop("RUN_BLOCK_SHELL", None)
-
     def test_clean_sessions_and_build_py_check(self):
         r_bhelp = subprocess.run([sys.executable, str(ROOT / "build.py"), "-h"], capture_output=True, text=True, check=False)
         self.assertEqual(r_bhelp.returncode, 0)
@@ -261,47 +218,20 @@ class TestCli(RunBlockTestCase):
         self.assertEqual([p.name for p in self.tmp.iterdir() if p.is_dir()], [])
 
     def test_persistent_state_dir_and_prune_controls(self):
-        # 1. Default base_dir resolution across POSIX XDG, POSIX fallback, Windows, and RUN_BLOCK_DIR
+        # 1. Default base_dir resolution across POSIX XDG, POSIX fallback, and RUN_BLOCK_DIR
         saved_xdg = os.environ.get("XDG_STATE_HOME")
-        saved_local = os.environ.get("LOCALAPPDATA")
         try:
             os.environ.pop("RUN_BLOCK_DIR", None)
             os.environ["XDG_STATE_HOME"] = str(self.tmp / "xdg_state")
-            with unittest.mock.patch.object(self.mod.os, "name", "posix"):
-                self.assertEqual(
-                    self.mod.default_base_dir("run_block"),
-                    self.tmp / "xdg_state" / "run_block",
-                )
-                os.environ.pop("XDG_STATE_HOME", None)
-                self.assertEqual(
-                    self.mod.default_base_dir("run_block"),
-                    Path.home() / ".local" / "state" / "run_block",
-                )
-
-            from pathlib import PureWindowsPath as _PWP
-
-            class PureWindowsPath(_PWP):
-                def expanduser(self):
-                    return self
-
-                @classmethod
-                def home(cls):
-                    return cls("C:/Users/alice")
-
-            win_local = PureWindowsPath("C:/Users/alice/AppData/Local")
-            win_home = PureWindowsPath.home()
-            with unittest.mock.patch.object(self.mod.os, "name", "nt"), unittest.mock.patch.object(self.mod, "Path", PureWindowsPath):
-                os.environ["LOCALAPPDATA"] = str(win_local)
-                self.assertEqual(
-                    self.mod.get_setting("base_dir", "run_block"),
-                    (str(win_local / "run_block" / "state"), "default"),
-                )
-                os.environ.pop("LOCALAPPDATA", None)
-                self.assertEqual(
-                    self.mod.get_setting("base_dir", "run_block"),
-                    (str(win_home / "AppData" / "Local" / "run_block" / "state"), "default"),
-                )
-
+            self.assertEqual(
+                self.mod.default_base_dir("run_block"),
+                self.tmp / "xdg_state" / "run_block",
+            )
+            os.environ.pop("XDG_STATE_HOME", None)
+            self.assertEqual(
+                self.mod.default_base_dir("run_block"),
+                Path.home() / ".local" / "state" / "run_block",
+            )
             os.environ["RUN_BLOCK_DIR"] = str(self.tmp / "explicit_override")
             self.assertEqual(self.mod.default_base_dir("run_block"), self.tmp / "explicit_override")
         finally:
@@ -310,10 +240,6 @@ class TestCli(RunBlockTestCase):
                 os.environ.pop("XDG_STATE_HOME", None)
             else:
                 os.environ["XDG_STATE_HOME"] = saved_xdg
-            if saved_local is None:
-                os.environ.pop("LOCALAPPDATA", None)
-            else:
-                os.environ["LOCALAPPDATA"] = saved_local
 
         # 2. Sandbox rules keep persistent BASE_DIR read-only even when Workdir is HOME
         home_dir = Path.home().resolve()

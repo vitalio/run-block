@@ -1,9 +1,7 @@
 def open_tty():
-    tty_in_name = "CONIN$" if os.name == "nt" else "/dev/tty"
-    tty_out_name = "CONOUT$" if os.name == "nt" else "/dev/tty"
     return (
-        open(tty_out_name, "w", encoding="utf-8", errors="replace"),
-        open(tty_in_name, "r", encoding="utf-8", errors="replace"),
+        open("/dev/tty", "w", encoding="utf-8", errors="replace"),
+        open("/dev/tty", "r", encoding="utf-8", errors="replace"),
     )
 
 
@@ -2902,10 +2900,9 @@ def _resolve_info_step_script(
     if script_path is not None:
         return script_path
     if out_path is not None and out_path.name in ("out", "error"):
-        for ext in (".sh", ".ps1"):
-            cand = out_path.with_name(f"block{ext}")
-            if cand.is_file():
-                return cand
+        cand = out_path.with_name("block.sh")
+        if cand.is_file():
+            return cand
     if label and "/" in label and resolved_sdir is not None:
         step = label.split("/", 1)[1].strip()
         if step and step != "0":

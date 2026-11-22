@@ -40,7 +40,6 @@ VERSION = "__VERSION__"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"
-EMBEDDED_RULE_PWSH = "__EMBEDDED_RULE_PWSH__"
 
 
 HELP_USAGE = (

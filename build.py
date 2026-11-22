@@ -42,7 +42,6 @@ def _load_embedded_rule(rel_path: str) -> str:
 def assemble_source() -> str:
     ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     bash_rule = _load_embedded_rule("agents/blocks/bash.md")
-    pwsh_rule = _load_embedded_rule("agents/blocks/pwsh.md")
     chunks: list[str] = []
     for item in MODULE_ORDER:
         mod_path = SRC_DIR / item
@@ -50,7 +49,6 @@ def assemble_source() -> str:
         if item == "header.py":
             txt = txt.replace('VERSION = "__VERSION__"', f'VERSION = "{ver}"')
             txt = txt.replace('EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"', f"EMBEDDED_RULE_BASH = {bash_rule!r}")
-            txt = txt.replace('EMBEDDED_RULE_PWSH = "__EMBEDDED_RULE_PWSH__"', f"EMBEDDED_RULE_PWSH = {pwsh_rule!r}")
         chunks.append(txt)
     source = "\n\n\n".join(chunks) + "\n"
     ast.parse(source)

@@ -1,6 +1,7 @@
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
 BUNDLE_EXPOSE_HEADER = "bundle-expose"
 BUNDLE_HIDE_HEADER = "bundle-hide"
+BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
 TASK_CONTEXT_KINDS = ("task", "context")
@@ -12,7 +13,7 @@ OVERLAP_MIN_CHARS = 200
 
 SECTION_HEADER_RE = re.compile(r"^={5,}\s*(.+?)\s*={5,}$")
 TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
-EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/(?:bash|pwsh)$")
+EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/bash$")
 
 
 def _strip_rule_description(raw_text: str) -> str:
@@ -22,14 +23,11 @@ def _strip_rule_description(raw_text: str) -> str:
     return "\n".join(lines).strip("\n")
 
 
-def get_embedded_block_rule(shell_bin: str | None = None) -> tuple[str, str]:
-    is_ps = _is_powershell(shell_bin)
-    rule_id = "run_block:blocks/pwsh" if is_ps else "run_block:blocks/bash"
-    raw = EMBEDDED_RULE_PWSH if is_ps else EMBEDDED_RULE_BASH
-    placeholder = "__EMBEDDED_RULE_PWSH__" if is_ps else "__EMBEDDED_RULE_BASH__"
-    if raw == placeholder:
-        rel = Path("agents/blocks/pwsh.md" if is_ps else "agents/blocks/bash.md")
-        src_path = Path(__file__).resolve().parent.parent / rel
+def get_embedded_block_rule() -> tuple[str, str]:
+    rule_id = "run_block:blocks/bash"
+    raw = EMBEDDED_RULE_BASH
+    if raw == "__EMBEDDED_RULE_BASH__":
+        src_path = Path(__file__).resolve().parent.parent / "agents/blocks/bash.md"
         if src_path.is_file():
             raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
         else:
@@ -80,13 +78,12 @@ def _has_embedded_block_rule(body_text: str, boundary: str | None = None) -> boo
 def inject_embedded_block_rule(
     raw_body: str,
     boundary: str | None = None,
-    shell_bin: str | None = None,
 ) -> str:
     norm_body = (raw_body or "").replace("\r\n", "\n")
     boundary_val = (boundary or "").strip() or None
     if _has_embedded_block_rule(norm_body, boundary=boundary_val):
         return norm_body
-    rule_id, rule_text = get_embedded_block_rule(shell_bin=shell_bin)
+    rule_id, rule_text = get_embedded_block_rule()
     if not rule_text.strip():
         return norm_body
 
@@ -318,6 +315,12 @@ def get_bundle_boundary(headers: list[tuple[str, str]]) -> str | None:
     return val or None
 
 
+def get_bundle_name(headers: list[tuple[str, str]]) -> str | None:
+    transport = extract_bundle_transport_headers(headers)
+    val = transport.get(BUNDLE_NAME_HEADER, "").strip()
+    return val or None
+
+
 def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
     transport = extract_bundle_transport_headers(headers)
     val = transport.get(BUNDLE_PROTOCOL_HEADER, "").strip()
@@ -326,16 +329,17 @@ def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
 
 def filter_exposed_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     transport = extract_bundle_transport_headers(headers)
-    raw_expose = transport.get(BUNDLE_EXPOSE_HEADER, "")
-    if not raw_expose:
-        return []
-    expose_set = _parse_header_filter_tokens(raw_expose)
     hide_set = _parse_header_filter_tokens(transport.get(BUNDLE_HIDE_HEADER, ""))
     if "*" in hide_set or "all" in hide_set:
         return []
-    expose_all = "*" in expose_set or "all" in expose_set
-    if not expose_all and (not expose_set or expose_set == {"none"}):
-        return []
+    if BUNDLE_EXPOSE_HEADER in transport:
+        expose_set = _parse_header_filter_tokens(transport.get(BUNDLE_EXPOSE_HEADER, ""))
+        expose_all = "*" in expose_set or "all" in expose_set
+        if not expose_all and (not expose_set or expose_set == {"none"}):
+            return []
+    else:
+        expose_set = set()
+        expose_all = True
 
     exposed: list[tuple[str, str]] = []
     for k, v in headers:

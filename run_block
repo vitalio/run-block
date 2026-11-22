@@ -36,11 +36,10 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.33.0"
+VERSION = "0.34.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
-EMBEDDED_RULE_PWSH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```powershell\n@\'\ngit status -sb\n\'@ | {cmd:run_block} s1/1\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `powershell` fence. Start the opening fence, `@\'`, `\'@ | {cmd:run_block} ...`, and the closing fence at column 0, each on its own separate line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or `\'@` at column 0 inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat renderers can treat `$ ... $` as inline math; use `chr(36)` or separate lines).\n4. ISOLATED SHELL: Each block runs in a fresh `pwsh` process in `Workdir` (`cd` and shell variables do not persist across blocks).\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, parser check, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```powershell\n@\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n\'@ | {cmd:run_block} --fix s1/1\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
 
 
 HELP_USAGE = (
@@ -90,20 +89,13 @@ HELP_ENV = (
 
 def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run_block"
-    for suf in (".py", ".cmd", ".bat", ".exe"):
-        if raw.lower().endswith(suf) and len(raw) > len(suf):
-            raw = raw[:-len(suf)]
-            break
+    if raw.lower().endswith(".py") and len(raw) > 3:
+        raw = raw[:-3]
     return raw or "run_block"
 
 
 def _os_default_base_dir(prog: str | None = None) -> Path:
     name = prog or prog_name()
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA", "").strip()
-        if local_app:
-            return Path(local_app).expanduser() / name / "state"
-        return Path.home() / "AppData" / "Local" / name / "state"
     xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
     if xdg_state:
         return Path(xdg_state).expanduser() / name
@@ -139,7 +131,7 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
     if key == "shell":
         if os.environ.get("RUN_BLOCK_SHELL"):
             return os.environ["RUN_BLOCK_SHELL"].strip(), "env"
-        return ("pwsh" if os.name == "nt" else "bash"), "default"
+        return "bash", "default"
     if key == "editor":
         if os.environ.get("RUN_BLOCK_EDITOR"):
             return os.environ["RUN_BLOCK_EDITOR"].strip(), "env"
@@ -205,35 +197,20 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
     raise KeyError(f"unknown setting: {key}")
 
 
-def _is_powershell(shell_bin: str | None = None) -> bool:
-    sh = shell_bin if shell_bin is not None else get_setting("shell")[0]
-    name = Path(sh).name.lower()
-    for suf in (".exe", ".cmd", ".bat"):
-        if name.endswith(suf):
-            name = name[:-len(suf)]
-            break
-    return name in ("pwsh", "powershell")
-
-
-def _script_ext(shell_bin: str | None = None) -> str:
-    return ".ps1" if _is_powershell(shell_bin) else ".sh"
+def _script_ext() -> str:
+    return ".sh"
 
 
 def _step_dir(sdir: Path, step: str) -> Path:
     return sdir / step
 
 
-def _find_step_script(sdir: Path, step: str, shell_bin: str | None = None) -> Path:
-    step_d = _step_dir(sdir, step)
-    for ext in (".sh", ".ps1"):
-        p = step_d / f"block{ext}"
-        if p.exists():
-            return p
-    return step_d / f"block{_script_ext(shell_bin)}"
+def _find_step_script(sdir: Path, step: str) -> Path:
+    return _step_dir(sdir, step) / "block.sh"
 
 
 def _orig_backup_path(script_path: Path) -> Path:
-    ext = script_path.suffix or _script_ext()
+    ext = script_path.suffix or ".sh"
     return script_path.with_name(f"block.orig{ext}")
 
 
@@ -242,7 +219,7 @@ def _orig_file_backup_path(target_path: Path) -> Path:
 
 
 _STEP_DIR_RE = re.compile(r"\d+(?:_\d+)?")
-_STEP_ARTIFACTS = ("block.sh", "block.ps1", "fix.py", "out", "error", "aborted", "meta.json")
+_STEP_ARTIFACTS = ("block.sh", "fix.py", "out", "error", "aborted", "meta.json")
 STEP_OUTCOMES = ("ok", "failed", "syntax-error", "not-run", "aborted", "saved")
 
 
@@ -262,11 +239,9 @@ def _iter_session_steps(sdir: Path) -> list[Path]:
 def _iter_session_scripts(sdir: Path) -> list[Path]:
     scripts: list[Path] = []
     for d in _iter_session_steps(sdir):
-        for ext in (".sh", ".ps1"):
-            p = d / f"block{ext}"
-            if p.is_file():
-                scripts.append(p)
-                break
+        p = d / "block.sh"
+        if p.is_file():
+            scripts.append(p)
     return scripts
 
 
@@ -371,6 +346,7 @@ FULLSCREEN_HIDDEN_HEADER_KEYS = frozenset({
     "bundle-boundary",
     "bundle-expose",
     "bundle-hide",
+    "bundle-name",
     "bundle-protocol",
     "chat-lang",
 })
@@ -1255,14 +1231,8 @@ def _has_unquoted_redirect(cmd: str) -> bool:
     return False
 
 
-def _advance_quote_state(
-    line: str,
-    state: str | None,
-    *,
-    is_powershell: bool = False,
-) -> str | None:
+def _advance_quote_state(line: str, state: str | None) -> str | None:
     """Tracks open single/ANSI-C/double quote state across a physical line."""
-    esc = "`" if is_powershell else "\\"
     n = len(line)
     i = 0
     while i < n:
@@ -1270,10 +1240,10 @@ def _advance_quote_state(
         if state is None:
             if ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";|&()"):
                 break
-            if ch == esc:
+            if ch == "\\":
                 i += 2
                 continue
-            if not is_powershell and ch == chr(36) and i + 1 < n and line[i + 1] == "'":
+            if ch == chr(36) and i + 1 < n and line[i + 1] == "'":
                 state = chr(36) + "'"
                 i += 2
                 continue
@@ -1298,7 +1268,7 @@ def _advance_quote_state(
                 state = None
             i += 1
         else:  # state == '"'
-            if ch == esc:
+            if ch == "\\":
                 i += 2
                 continue
             if ch == '"':
@@ -1961,7 +1931,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
     ):
         if bucket:
             rows.append((label, ", ".join(bucket)))
-    sh_tag = "pwsh" if _is_powershell() else "bash"
+    sh_tag = "bash"
     meta = f"{len(non_empty)} line{'s' if len(non_empty) != 1 else ''}"
     if py_blocks:
         meta += f", {sh_tag} + {py_blocks} python block{'s' if py_blocks != 1 else ''}"
@@ -2053,45 +2023,10 @@ def _bash_compound_delta(line: str) -> tuple[int, int, bool]:
     return opens, closes, starts_closer
 
 
-def _pwsh_brace_delta(line: str) -> tuple[int, int, bool]:
-    """Returns (opens, closes, starts_with_closer) for PowerShell braces outside quotes/comments."""
-    in_sq = False
-    in_dq = False
-    escaped = False
-    opens = 0
-    closes = 0
-    first_non_ws = ""
-    for ch in line:
-        if not first_non_ws and not ch.isspace():
-            first_non_ws = ch
-        if escaped:
-            escaped = False
-            continue
-        if ch == "`" and not in_sq:
-            escaped = True
-            continue
-        if ch == "'" and not in_dq:
-            in_sq = not in_sq
-            continue
-        if ch == '"' and not in_sq:
-            in_dq = not in_dq
-            continue
-        if ch == "#" and not in_sq and not in_dq:
-            break
-        if not in_sq and not in_dq:
-            if ch == "{":
-                opens += 1
-            elif ch == "}":
-                closes += 1
-    starts_closer = first_non_ws == "}" or bool(re.match(r"^(?:elseif|else|catch|finally)\b", line.strip(), re.IGNORECASE))
-    return opens, closes, starts_closer
-
-
 def instrument_script_for_progress(
     script_text: str,
     step_lines: list[dict[str, object]] | None = None,
     *,
-    is_powershell: bool | None = None,
     marker_prefix: str = "__RB_STEP__:",
 ) -> str:
     """Returns an instrumented script copy emitting step markers before top-level operations."""
@@ -2109,11 +2044,9 @@ def instrument_script_for_progress(
     if not line_to_step:
         return script_text
 
-    ps_mode = _is_powershell() if is_powershell is None else bool(is_powershell)
     out: list[str] = []
     eof_token: str | None = None
     py_quote: str | None = None
-    ps_here_quote: str | None = None
     in_continuation = False
     quote_state: str | None = None
     depth = 0
@@ -2121,12 +2054,6 @@ def instrument_script_for_progress(
     for idx, raw_line in enumerate(script_text.splitlines(keepends=True), start=1):
         line_no_nl = raw_line.rstrip("\r\n")
         s = line_no_nl.strip()
-
-        if ps_here_quote is not None:
-            out.append(raw_line)
-            if line_no_nl.startswith(ps_here_quote):
-                ps_here_quote = None
-            continue
 
         if eof_token is not None:
             out.append(raw_line)
@@ -2142,86 +2069,58 @@ def instrument_script_for_progress(
 
         if quote_state is not None:
             out.append(raw_line)
-            quote_state = _advance_quote_state(line_no_nl, quote_state, is_powershell=ps_mode)
+            quote_state = _advance_quote_state(line_no_nl, quote_state)
             if quote_state is None:
-                if ps_mode:
-                    in_continuation = line_no_nl.rstrip().endswith("`")
-                else:
-                    in_continuation = _has_trailing_continuation(line_no_nl)
+                in_continuation = _has_trailing_continuation(line_no_nl)
             continue
 
         if in_continuation:
             out.append(raw_line)
-            q_after = _advance_quote_state(line_no_nl, None, is_powershell=ps_mode)
+            q_after = _advance_quote_state(line_no_nl, None)
             if q_after is not None:
                 quote_state = q_after
                 in_continuation = False
                 continue
-            if ps_mode:
-                in_continuation = line_no_nl.rstrip().endswith("`")
-            else:
-                in_continuation = _has_trailing_continuation(line_no_nl)
+            in_continuation = _has_trailing_continuation(line_no_nl)
             continue
 
-        if ps_mode:
-            opens, closes, starts_closer = _pwsh_brace_delta(line_no_nl)
-        else:
-            opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
+        opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
 
         if idx in line_to_step and depth == 0 and not starts_closer:
             step_num = line_to_step[idx]
             indent = line_no_nl[: len(line_no_nl) - len(line_no_nl.lstrip(" \t"))]
-            if ps_mode:
-                out.append(f"{indent}Write-Output '{marker_prefix}{step_num}'\n")
-            else:
-                out.append(f"{indent}printf '%s\\n' '{marker_prefix}{step_num}'\n")
+            out.append(f"{indent}printf '%s\\n' '{marker_prefix}{step_num}'\n")
 
         out.append(raw_line)
 
         if not s or s.startswith("#"):
             continue
 
-        if ps_mode:
-            if s.endswith("@'") and not s.startswith("#"):
-                ps_here_quote = "'@"
-                continue
-            if s.endswith('@"') and not s.startswith("#"):
-                ps_here_quote = '"@'
-                continue
-            q_after = _advance_quote_state(line_no_nl, None, is_powershell=True)
-            if q_after is not None:
-                quote_state = q_after
+        m_py = PY_HEREDOC_START_RE.search(s)
+        if m_py:
+            eof_token = m_py.group(1)
+            depth = max(0, depth + opens - closes)
+            continue
+        m_pyc = PY_DASH_C_START_RE.match(s)
+        if m_pyc:
+            q_ch, rest = m_pyc.group(1), m_pyc.group(2)
+            if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
+                py_quote = q_ch
                 depth = max(0, depth + opens - closes)
                 continue
-            if line_no_nl.rstrip().endswith("`"):
-                in_continuation = True
-                continue
-        else:
-            m_py = PY_HEREDOC_START_RE.search(s)
-            if m_py:
-                eof_token = m_py.group(1)
-                depth = max(0, depth + opens - closes)
-                continue
-            m_pyc = PY_DASH_C_START_RE.match(s)
-            if m_pyc:
-                q_ch, rest = m_pyc.group(1), m_pyc.group(2)
-                if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
-                    py_quote = q_ch
-                    depth = max(0, depth + opens - closes)
-                    continue
-            m_sh = SHELL_HEREDOC_START_RE.search(s)
-            if m_sh:
-                eof_token = m_sh.group(1)
-                depth = max(0, depth + opens - closes)
-                continue
-            q_after = _advance_quote_state(line_no_nl, None, is_powershell=False)
-            if q_after is not None:
-                quote_state = q_after
-                depth = max(0, depth + opens - closes)
-                continue
-            if _has_trailing_continuation(line_no_nl):
-                in_continuation = True
-                continue
+        m_sh = SHELL_HEREDOC_START_RE.search(s)
+        if m_sh:
+            eof_token = m_sh.group(1)
+            depth = max(0, depth + opens - closes)
+            continue
+        q_after = _advance_quote_state(line_no_nl, None)
+        if q_after is not None:
+            quote_state = q_after
+            depth = max(0, depth + opens - closes)
+            continue
+        if _has_trailing_continuation(line_no_nl):
+            in_continuation = True
+            continue
 
         depth = max(0, depth + opens - closes)
 
@@ -2381,22 +2280,12 @@ def scan_script_risks(script_text: str) -> list[dict[str, object]]:
 def check_script_syntax(script_text: str, work_dir: Path | None = None) -> tuple[bool, str | None, int]:
     wdir = work_dir if work_dir is not None else get_work_dir()
     shell_bin, _ = get_setting("shell")
-    is_ps = _is_powershell(shell_bin)
-    ext = ".ps1" if is_ps else ".sh"
-    fd, tmp_name = tempfile.mkstemp(prefix="rb_chk_", suffix=ext)
+    fd, tmp_name = tempfile.mkstemp(prefix="rb_chk_", suffix=".sh")
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(script_text)
-        if is_ps:
-            ps_check = (
-                "$err = $null; "
-                "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-                "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
-            )
-            chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(tmp_path)]
-        else:
-            chk_cmd = [shell_bin, "-n", str(tmp_path)]
+        chk_cmd = [shell_bin, "-n", str(tmp_path)]
         chk = subprocess.run(
             chk_cmd,
             cwd=wdir,
@@ -2731,11 +2620,9 @@ def build_sandbox_exec(
 
 
 def open_tty():
-    tty_in_name = "CONIN$" if os.name == "nt" else "/dev/tty"
-    tty_out_name = "CONOUT$" if os.name == "nt" else "/dev/tty"
     return (
-        open(tty_out_name, "w", encoding="utf-8", errors="replace"),
-        open(tty_in_name, "r", encoding="utf-8", errors="replace"),
+        open("/dev/tty", "w", encoding="utf-8", errors="replace"),
+        open("/dev/tty", "r", encoding="utf-8", errors="replace"),
     )
 
 
@@ -5634,10 +5521,9 @@ def _resolve_info_step_script(
     if script_path is not None:
         return script_path
     if out_path is not None and out_path.name in ("out", "error"):
-        for ext in (".sh", ".ps1"):
-            cand = out_path.with_name(f"block{ext}")
-            if cand.is_file():
-                return cand
+        cand = out_path.with_name("block.sh")
+        if cand.is_file():
+            return cand
     if label and "/" in label and resolved_sdir is not None:
         step = label.split("/", 1)[1].strip()
         if step and step != "0":
@@ -6919,6 +6805,7 @@ def offer_clipboard_copy(
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
 BUNDLE_EXPOSE_HEADER = "bundle-expose"
 BUNDLE_HIDE_HEADER = "bundle-hide"
+BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
 TASK_CONTEXT_KINDS = ("task", "context")
@@ -6930,7 +6817,7 @@ OVERLAP_MIN_CHARS = 200
 
 SECTION_HEADER_RE = re.compile(r"^={5,}\s*(.+?)\s*={5,}$")
 TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
-EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/(?:bash|pwsh)$")
+EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/bash$")
 
 
 def _strip_rule_description(raw_text: str) -> str:
@@ -6940,14 +6827,11 @@ def _strip_rule_description(raw_text: str) -> str:
     return "\n".join(lines).strip("\n")
 
 
-def get_embedded_block_rule(shell_bin: str | None = None) -> tuple[str, str]:
-    is_ps = _is_powershell(shell_bin)
-    rule_id = "run_block:blocks/pwsh" if is_ps else "run_block:blocks/bash"
-    raw = EMBEDDED_RULE_PWSH if is_ps else EMBEDDED_RULE_BASH
-    placeholder = "__EMBEDDED_RULE_PWSH__" if is_ps else "__EMBEDDED_RULE_BASH__"
-    if raw == placeholder:
-        rel = Path("agents/blocks/pwsh.md" if is_ps else "agents/blocks/bash.md")
-        src_path = Path(__file__).resolve().parent.parent / rel
+def get_embedded_block_rule() -> tuple[str, str]:
+    rule_id = "run_block:blocks/bash"
+    raw = EMBEDDED_RULE_BASH
+    if raw == "__EMBEDDED_RULE_BASH__":
+        src_path = Path(__file__).resolve().parent.parent / "agents/blocks/bash.md"
         if src_path.is_file():
             raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
         else:
@@ -6998,13 +6882,12 @@ def _has_embedded_block_rule(body_text: str, boundary: str | None = None) -> boo
 def inject_embedded_block_rule(
     raw_body: str,
     boundary: str | None = None,
-    shell_bin: str | None = None,
 ) -> str:
     norm_body = (raw_body or "").replace("\r\n", "\n")
     boundary_val = (boundary or "").strip() or None
     if _has_embedded_block_rule(norm_body, boundary=boundary_val):
         return norm_body
-    rule_id, rule_text = get_embedded_block_rule(shell_bin=shell_bin)
+    rule_id, rule_text = get_embedded_block_rule()
     if not rule_text.strip():
         return norm_body
 
@@ -7236,6 +7119,12 @@ def get_bundle_boundary(headers: list[tuple[str, str]]) -> str | None:
     return val or None
 
 
+def get_bundle_name(headers: list[tuple[str, str]]) -> str | None:
+    transport = extract_bundle_transport_headers(headers)
+    val = transport.get(BUNDLE_NAME_HEADER, "").strip()
+    return val or None
+
+
 def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
     transport = extract_bundle_transport_headers(headers)
     val = transport.get(BUNDLE_PROTOCOL_HEADER, "").strip()
@@ -7244,16 +7133,17 @@ def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
 
 def filter_exposed_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
     transport = extract_bundle_transport_headers(headers)
-    raw_expose = transport.get(BUNDLE_EXPOSE_HEADER, "")
-    if not raw_expose:
-        return []
-    expose_set = _parse_header_filter_tokens(raw_expose)
     hide_set = _parse_header_filter_tokens(transport.get(BUNDLE_HIDE_HEADER, ""))
     if "*" in hide_set or "all" in hide_set:
         return []
-    expose_all = "*" in expose_set or "all" in expose_set
-    if not expose_all and (not expose_set or expose_set == {"none"}):
-        return []
+    if BUNDLE_EXPOSE_HEADER in transport:
+        expose_set = _parse_header_filter_tokens(transport.get(BUNDLE_EXPOSE_HEADER, ""))
+        expose_all = "*" in expose_set or "all" in expose_set
+        if not expose_all and (not expose_set or expose_set == {"none"}):
+            return []
+    else:
+        expose_set = set()
+        expose_all = True
 
     exposed: list[tuple[str, str]] = []
     for k, v in headers:
@@ -9576,32 +9466,20 @@ def _prepare_progress_script(
     step_dir: Path,
     step_lines: list[dict[str, object]],
     shell_bin: str,
-    is_ps: bool,
     work_dir: Path,
 ) -> Path | None:
     if not step_lines:
         return None
-    inst_text = instrument_script_for_progress(
-        script_text, step_lines=step_lines, is_powershell=is_ps
-    )
+    inst_text = instrument_script_for_progress(script_text, step_lines=step_lines)
     if inst_text == script_text:
         return None
-    ext = ".ps1" if is_ps else ".sh"
-    fd, tmp_name = tempfile.mkstemp(prefix=".progress_", suffix=ext, dir=step_dir)
+    fd, tmp_name = tempfile.mkstemp(prefix=".progress_", suffix=".sh", dir=step_dir)
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(inst_text)
         os.chmod(tmp_path, 0o600)
-        if is_ps:
-            ps_check = (
-                "$err = $null; "
-                "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-                "if ($err) { exit 1 }"
-            )
-            chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(tmp_path)]
-        else:
-            chk_cmd = [shell_bin, "-n", str(tmp_path)]
+        chk_cmd = [shell_bin, "-n", str(tmp_path)]
         chk = subprocess.run(
             chk_cmd,
             cwd=work_dir,
@@ -9672,21 +9550,12 @@ def _validate_step_script_syntax(
     out_path: Path,
     work_dir: Path,
     shell_bin: str,
-    is_ps: bool,
     sdir: Path,
     headless: bool = False,
     footer_on_fail: str | None = None,
     renumbered_from: str | None = None,
 ) -> int:
-    if is_ps:
-        ps_check = (
-            "$err = $null; "
-            "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-            "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
-        )
-        chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(script_path)]
-    else:
-        chk_cmd = [shell_bin, "-n", str(script_path)]
+    chk_cmd = [shell_bin, "-n", str(script_path)]
     chk = subprocess.run(
         chk_cmd,
         cwd=work_dir,
@@ -9768,13 +9637,8 @@ def run_script(
     work_dir = get_work_dir(sdir)
     sandbox_mode = get_sandbox_mode(sdir, override=sandbox_override)
     shell_bin, _ = get_setting("shell")
-    is_ps = _is_powershell(shell_bin)
     script_text = script_path.read_text(encoding="utf-8")
-    exec_cmd = (
-        [shell_bin, "-NoProfile", "-File", str(script_path)]
-        if is_ps
-        else [shell_bin, str(script_path)]
-    )
+    exec_cmd = [shell_bin, str(script_path)]
 
     rc_syn = _validate_step_script_syntax(
         label,
@@ -9782,7 +9646,6 @@ def run_script(
         out_path,
         work_dir,
         shell_bin,
-        is_ps,
         sdir,
         headless=headless,
         footer_on_fail=footer_on_fail,
@@ -9827,7 +9690,6 @@ def run_script(
                 out_path,
                 work_dir,
                 shell_bin,
-                is_ps,
                 sdir,
                 headless=headless,
                 footer_on_fail=footer_on_fail,
@@ -9898,17 +9760,13 @@ def run_script(
     progress_filter: _ProgressLineFilter | None = None
     if use_progress:
         tmp_progress_path = _prepare_progress_script(
-            script_text, step_dir, step_lines, shell_bin, is_ps, work_dir
+            script_text, step_dir, step_lines, shell_bin, work_dir
         )
         if tmp_progress_path is not None:
             step_map = {int(s["step"]): s for s in step_lines if s.get("step")}
             progress_filter = _ProgressLineFilter(step_map, len(step_lines))
             progress_filter.line_base = sum(c.count("\n") for c in log_chunks)
-            exec_cmd = (
-                [shell_bin, "-NoProfile", "-File", str(tmp_progress_path)]
-                if is_ps
-                else [shell_bin, str(tmp_progress_path)]
-            )
+            exec_cmd = [shell_bin, str(tmp_progress_path)]
 
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
@@ -10318,7 +10176,7 @@ def cmd_normal(
         out_path.unlink(missing_ok=True)
         (step_dir / "meta.json").unlink(missing_ok=True)
         aborted_marker.unlink(missing_ok=True)
-        for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+        for orig_p in (step_dir / "block.orig.sh", step_dir / "out.orig"):
             orig_p.unlink(missing_ok=True)
     elif script_path.exists() or out_path.exists():
         if sys.stdout.isatty() and not no_clipboard() and not headless:
@@ -10386,7 +10244,7 @@ def cmd_normal(
                 (step_dir / "meta.json").unlink(missing_ok=True)
                 (step_dir / "error").unlink(missing_ok=True)
                 aborted_marker.unlink(missing_ok=True)
-                for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                for orig_p in (step_dir / "block.orig.sh", step_dir / "out.orig"):
                     orig_p.unlink(missing_ok=True)
                 overwrite = True
             elif choice == "copy":
@@ -10438,7 +10296,7 @@ def cmd_normal(
                     out_path.unlink(missing_ok=True)
                     (step_dir / "meta.json").unlink(missing_ok=True)
                     aborted_marker.unlink(missing_ok=True)
-                    for orig_p in (step_dir / "block.orig.sh", step_dir / "block.orig.ps1", step_dir / "out.orig"):
+                    for orig_p in (step_dir / "block.orig.sh", step_dir / "out.orig"):
                         orig_p.unlink(missing_ok=True)
             else:
                 return 2
@@ -10764,13 +10622,12 @@ def _bundle_row_desc(sdir: Path) -> str:
 
 def _step_row_desc(sdir: Path, stem: str) -> str:
     step_d = _step_dir(sdir, stem)
-    for name in ("block.sh", "block.ps1"):
-        script = step_d / name
-        if script.is_file():
-            sh_text = script.read_text(encoding="utf-8", errors="replace")
-            summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
-            rows = summary.get("rows") or []
-            return _clip_list_desc("; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else "")
+    script = step_d / "block.sh"
+    if script.is_file():
+        sh_text = script.read_text(encoding="utf-8", errors="replace")
+        summary = summarize_script_actions(sh_text, work_dir=get_work_dir(sdir))
+        rows = summary.get("rows") or []
+        return _clip_list_desc("; ".join(f"{k}: {v}" for k, v in rows[:2]) if rows else "")
     info = _step_outcome(sdir, stem)
     parts = []
     if info["reason"]:

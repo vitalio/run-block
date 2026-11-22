@@ -6,19 +6,18 @@ rules are loaded via `.agents_bundle`.
 ## Architecture & Module Boundaries
 
 - `src/header.py` — `--help` row tables (`HELP_*`), standard library imports,
-  version constants, and embedded block rule placeholders (`EMBEDDED_RULE_BASH`,
-  `EMBEDDED_RULE_PWSH`) populated by `build.py`.
+  version constants, and the embedded block rule placeholder
+  (`EMBEDDED_RULE_BASH`) populated by `build.py`.
 - `src/config.py` — zero-config environment variable settings (`RUN_BLOCK_*`,
   `VISUAL`/`EDITOR`), non-interactive child pager variable tuple
   (`CHILD_PAGER_ENV_VARS` controlled by `RUN_BLOCK_PAGER`, default `cat`),
   working directory resolution, and `usage_text()`, which renders `--help` from
   the `HELP_*` tables (aligned description column per section, lines <= 100
   columns).
-- `agents/blocks/*.md` — internal embedded terminal block execution rule
-  sources injected by `build.py` into `src/header.py`. Keep
-  `agents/blocks/bash.md` and `agents/blocks/pwsh.md` in sync in the same
-  commit whenever CLI flags, step numbering, `--fix` constraints, or session
-  rules change.
+- `agents/blocks/bash.md` — internal embedded terminal block execution rule
+  source injected by `build.py` into `src/header.py`. Update
+  `agents/blocks/bash.md` in the same commit whenever CLI flags, step
+  numbering, `--fix` constraints, or session rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
   `run_block --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
 - `src/ui.py` — thin open-right box-drawing (`╭─ TITLE ───`, `│ `, `╰───`, ASCII fallback) TUI blocks with aligned metadata and TTY colors
@@ -52,8 +51,8 @@ rules are loaded via `.agents_bundle`.
   `--bundle-plan` text/CLI output (`cmd_bundle_plan()`).
 - `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
   piped `stdin` (`run_block` / `<command> | run_block` -> `<session>/0` and
-  `<session>/meta.json`), injecting embedded `bash`/`pwsh` terminal block
-  rules via `format_start_bundle()`. Parses
+  `<session>/meta.json`), injecting embedded `bash` terminal block rules via
+  `format_start_bundle()`. Parses
   optional leading `Key: Value` header lines (separated from the body by a
   blank line) into `<session>/meta.json`, keeping `<session>/0` limited to
   `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
@@ -121,13 +120,13 @@ rules are loaded via `.agents_bundle`.
 
 ## Bundle Input Protocol
 
-- Header contract: Treat `Bundle-*` preamble headers (`Bundle-Command`,
-  `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`, `Bundle-Hide`) as
-  transport metadata for
-  `<session>/meta.json` only, never forwarding them into `<session>/0`. Forward
-  `stdin` headers into `<session>/0` according to `Bundle-Expose` /
-  `Bundle-Hide` (without overriding `Session`, `Next-Block`, `Workdir`,
-  `Sandbox`, or `Date`).
+- Header contract: Treat `Bundle-*` preamble headers (`Bundle-Name`,
+  `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`,
+  `Bundle-Hide`) as transport metadata for `<session>/meta.json` only, never
+  forwarding them into `<session>/0`. Forward all non-transport, non-hidden
+  `stdin` preamble headers into `<session>/0` by default (while honoring legacy
+  `Bundle-Expose` / `Bundle-Hide` filters when present, and never overriding
+  `Session`, `Next-Block`, `Workdir`, `Sandbox`, or `Date`).
 - Fragment parsing & stripping: When `Bundle-Boundary: <nonce>` is present,
   parse `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
   markers (agnostic of generator internals via `kind`, `group`, `name`, `via`,

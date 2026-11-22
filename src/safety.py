@@ -394,14 +394,8 @@ def _has_unquoted_redirect(cmd: str) -> bool:
     return False
 
 
-def _advance_quote_state(
-    line: str,
-    state: str | None,
-    *,
-    is_powershell: bool = False,
-) -> str | None:
+def _advance_quote_state(line: str, state: str | None) -> str | None:
     """Tracks open single/ANSI-C/double quote state across a physical line."""
-    esc = "`" if is_powershell else "\\"
     n = len(line)
     i = 0
     while i < n:
@@ -409,10 +403,10 @@ def _advance_quote_state(
         if state is None:
             if ch == "#" and (i == 0 or line[i - 1].isspace() or line[i - 1] in ";|&()"):
                 break
-            if ch == esc:
+            if ch == "\\":
                 i += 2
                 continue
-            if not is_powershell and ch == chr(36) and i + 1 < n and line[i + 1] == "'":
+            if ch == chr(36) and i + 1 < n and line[i + 1] == "'":
                 state = chr(36) + "'"
                 i += 2
                 continue
@@ -437,7 +431,7 @@ def _advance_quote_state(
                 state = None
             i += 1
         else:  # state == '"'
-            if ch == esc:
+            if ch == "\\":
                 i += 2
                 continue
             if ch == '"':
@@ -1100,7 +1094,7 @@ def summarize_script_actions(script_text: str, work_dir: Path | None = None) -> 
     ):
         if bucket:
             rows.append((label, ", ".join(bucket)))
-    sh_tag = "pwsh" if _is_powershell() else "bash"
+    sh_tag = "bash"
     meta = f"{len(non_empty)} line{'s' if len(non_empty) != 1 else ''}"
     if py_blocks:
         meta += f", {sh_tag} + {py_blocks} python block{'s' if py_blocks != 1 else ''}"
@@ -1192,45 +1186,10 @@ def _bash_compound_delta(line: str) -> tuple[int, int, bool]:
     return opens, closes, starts_closer
 
 
-def _pwsh_brace_delta(line: str) -> tuple[int, int, bool]:
-    """Returns (opens, closes, starts_with_closer) for PowerShell braces outside quotes/comments."""
-    in_sq = False
-    in_dq = False
-    escaped = False
-    opens = 0
-    closes = 0
-    first_non_ws = ""
-    for ch in line:
-        if not first_non_ws and not ch.isspace():
-            first_non_ws = ch
-        if escaped:
-            escaped = False
-            continue
-        if ch == "`" and not in_sq:
-            escaped = True
-            continue
-        if ch == "'" and not in_dq:
-            in_sq = not in_sq
-            continue
-        if ch == '"' and not in_sq:
-            in_dq = not in_dq
-            continue
-        if ch == "#" and not in_sq and not in_dq:
-            break
-        if not in_sq and not in_dq:
-            if ch == "{":
-                opens += 1
-            elif ch == "}":
-                closes += 1
-    starts_closer = first_non_ws == "}" or bool(re.match(r"^(?:elseif|else|catch|finally)\b", line.strip(), re.IGNORECASE))
-    return opens, closes, starts_closer
-
-
 def instrument_script_for_progress(
     script_text: str,
     step_lines: list[dict[str, object]] | None = None,
     *,
-    is_powershell: bool | None = None,
     marker_prefix: str = "__RB_STEP__:",
 ) -> str:
     """Returns an instrumented script copy emitting step markers before top-level operations."""
@@ -1248,11 +1207,9 @@ def instrument_script_for_progress(
     if not line_to_step:
         return script_text
 
-    ps_mode = _is_powershell() if is_powershell is None else bool(is_powershell)
     out: list[str] = []
     eof_token: str | None = None
     py_quote: str | None = None
-    ps_here_quote: str | None = None
     in_continuation = False
     quote_state: str | None = None
     depth = 0
@@ -1260,12 +1217,6 @@ def instrument_script_for_progress(
     for idx, raw_line in enumerate(script_text.splitlines(keepends=True), start=1):
         line_no_nl = raw_line.rstrip("\r\n")
         s = line_no_nl.strip()
-
-        if ps_here_quote is not None:
-            out.append(raw_line)
-            if line_no_nl.startswith(ps_here_quote):
-                ps_here_quote = None
-            continue
 
         if eof_token is not None:
             out.append(raw_line)
@@ -1281,86 +1232,58 @@ def instrument_script_for_progress(
 
         if quote_state is not None:
             out.append(raw_line)
-            quote_state = _advance_quote_state(line_no_nl, quote_state, is_powershell=ps_mode)
+            quote_state = _advance_quote_state(line_no_nl, quote_state)
             if quote_state is None:
-                if ps_mode:
-                    in_continuation = line_no_nl.rstrip().endswith("`")
-                else:
-                    in_continuation = _has_trailing_continuation(line_no_nl)
+                in_continuation = _has_trailing_continuation(line_no_nl)
             continue
 
         if in_continuation:
             out.append(raw_line)
-            q_after = _advance_quote_state(line_no_nl, None, is_powershell=ps_mode)
+            q_after = _advance_quote_state(line_no_nl, None)
             if q_after is not None:
                 quote_state = q_after
                 in_continuation = False
                 continue
-            if ps_mode:
-                in_continuation = line_no_nl.rstrip().endswith("`")
-            else:
-                in_continuation = _has_trailing_continuation(line_no_nl)
+            in_continuation = _has_trailing_continuation(line_no_nl)
             continue
 
-        if ps_mode:
-            opens, closes, starts_closer = _pwsh_brace_delta(line_no_nl)
-        else:
-            opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
+        opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
 
         if idx in line_to_step and depth == 0 and not starts_closer:
             step_num = line_to_step[idx]
             indent = line_no_nl[: len(line_no_nl) - len(line_no_nl.lstrip(" \t"))]
-            if ps_mode:
-                out.append(f"{indent}Write-Output '{marker_prefix}{step_num}'\n")
-            else:
-                out.append(f"{indent}printf '%s\\n' '{marker_prefix}{step_num}'\n")
+            out.append(f"{indent}printf '%s\\n' '{marker_prefix}{step_num}'\n")
 
         out.append(raw_line)
 
         if not s or s.startswith("#"):
             continue
 
-        if ps_mode:
-            if s.endswith("@'") and not s.startswith("#"):
-                ps_here_quote = "'@"
-                continue
-            if s.endswith('@"') and not s.startswith("#"):
-                ps_here_quote = '"@'
-                continue
-            q_after = _advance_quote_state(line_no_nl, None, is_powershell=True)
-            if q_after is not None:
-                quote_state = q_after
+        m_py = PY_HEREDOC_START_RE.search(s)
+        if m_py:
+            eof_token = m_py.group(1)
+            depth = max(0, depth + opens - closes)
+            continue
+        m_pyc = PY_DASH_C_START_RE.match(s)
+        if m_pyc:
+            q_ch, rest = m_pyc.group(1), m_pyc.group(2)
+            if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
+                py_quote = q_ch
                 depth = max(0, depth + opens - closes)
                 continue
-            if line_no_nl.rstrip().endswith("`"):
-                in_continuation = True
-                continue
-        else:
-            m_py = PY_HEREDOC_START_RE.search(s)
-            if m_py:
-                eof_token = m_py.group(1)
-                depth = max(0, depth + opens - closes)
-                continue
-            m_pyc = PY_DASH_C_START_RE.match(s)
-            if m_pyc:
-                q_ch, rest = m_pyc.group(1), m_pyc.group(2)
-                if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
-                    py_quote = q_ch
-                    depth = max(0, depth + opens - closes)
-                    continue
-            m_sh = SHELL_HEREDOC_START_RE.search(s)
-            if m_sh:
-                eof_token = m_sh.group(1)
-                depth = max(0, depth + opens - closes)
-                continue
-            q_after = _advance_quote_state(line_no_nl, None, is_powershell=False)
-            if q_after is not None:
-                quote_state = q_after
-                depth = max(0, depth + opens - closes)
-                continue
-            if _has_trailing_continuation(line_no_nl):
-                in_continuation = True
-                continue
+        m_sh = SHELL_HEREDOC_START_RE.search(s)
+        if m_sh:
+            eof_token = m_sh.group(1)
+            depth = max(0, depth + opens - closes)
+            continue
+        q_after = _advance_quote_state(line_no_nl, None)
+        if q_after is not None:
+            quote_state = q_after
+            depth = max(0, depth + opens - closes)
+            continue
+        if _has_trailing_continuation(line_no_nl):
+            in_continuation = True
+            continue
 
         depth = max(0, depth + opens - closes)
 
@@ -1520,22 +1443,12 @@ def scan_script_risks(script_text: str) -> list[dict[str, object]]:
 def check_script_syntax(script_text: str, work_dir: Path | None = None) -> tuple[bool, str | None, int]:
     wdir = work_dir if work_dir is not None else get_work_dir()
     shell_bin, _ = get_setting("shell")
-    is_ps = _is_powershell(shell_bin)
-    ext = ".ps1" if is_ps else ".sh"
-    fd, tmp_name = tempfile.mkstemp(prefix="rb_chk_", suffix=ext)
+    fd, tmp_name = tempfile.mkstemp(prefix="rb_chk_", suffix=".sh")
     tmp_path = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(script_text)
-        if is_ps:
-            ps_check = (
-                "$err = $null; "
-                "[void][System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$err); "
-                "if ($err) { foreach ($e in $err) { [Console]::Error.WriteLine($e.ToString()) }; exit 1 }"
-            )
-            chk_cmd = [shell_bin, "-NoProfile", "-NonInteractive", "-Command", ps_check, str(tmp_path)]
-        else:
-            chk_cmd = [shell_bin, "-n", str(tmp_path)]
+        chk_cmd = [shell_bin, "-n", str(tmp_path)]
         chk = subprocess.run(
             chk_cmd,
             cwd=wdir,

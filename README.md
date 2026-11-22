@@ -36,16 +36,8 @@ one-keystroke clipboard handoff with Claude/GPT/Gemini token counts.
 
 ## Quick Installation
 
-### Linux & macOS
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vitalio/run_block/main/install.sh | sh
-```
-
-### Windows (PowerShell 7+)
-
-```powershell
-irm https://raw.githubusercontent.com/vitalio/run_block/main/install.ps1 | iex
 ```
 
 ## Quick Start
@@ -60,7 +52,7 @@ run_block --start --session s1 -p "Implement feature" < context.txt
 ```
 
 Run bare `run_block` (or `run_block --start`) in an interactive TTY to create a
-rule-only `<session>/0` bundle with embedded `bash` or `pwsh` rules, or pipe any
+rule-only `<session>/0` bundle with embedded `bash` rules, or pipe any
 context bundle on `stdin` to inject rules and copy `<session>/0` to the
 clipboard. Repeatable `-p TEXT` / `--prompt TEXT` flags append prompt sections
 to `===== Prompt =====` (joining multiple non-empty values with `\n\n`).
@@ -187,16 +179,18 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
 
 - **Preamble headers & `Workdir` resolution**: Optional leading `Key: Value`
   lines on `stdin` (before the first blank line) are stored in
-  `<session>/meta.json`. Exposed headers (such as `Role`, `Task`, `Title`) appear
-  in TUI headers and `<session>/0`, while `Bundle-*` transport headers
-  (`Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`,
-  `Bundle-Hide`) remain
-  in `<session>/meta.json` only. When `RUN_BLOCK_CWD=auto`, an existing piped
-  `Workdir` directory is preferred over the current directory or Git root.
-- **Rule injection & deduplication**: `run_block` injects embedded `bash` or
-  `pwsh` execution rules into `===== Rules =====`, deduplicating against
-  existing `blocks/bash` or `blocks/pwsh` parts or `## Terminal blocks (`
-  headings, and wraps unlabeled plain text under `===== Prompt =====`.
+  `<session>/meta.json`. Non-transport preamble headers emitted via `export`
+  (such as `Role`, `Task`, `Title`) appear in TUI headers and `<session>/0`
+  by default (or filtered when legacy `Bundle-Expose` / `Bundle-Hide` headers
+  are present), while `Bundle-*` transport headers (`Bundle-Name`,
+  `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`,
+  `Bundle-Hide`) remain in `<session>/meta.json` only. When
+  `RUN_BLOCK_CWD=auto`, an existing piped `Workdir` directory is preferred over
+  the current directory or Git root.
+- **Rule injection & deduplication**: `run_block` injects embedded `bash`
+  execution rules into `===== Rules =====`, deduplicating against existing
+  `blocks/bash` parts or `## Terminal blocks (` headings, and wraps unlabeled
+  plain text under `===== Prompt =====`.
   `Sandbox: off` is omitted from `<session>/0` and clipboard output while
   remaining visible inside `i(nfo)`.
 - **Boundary markers & hierarchical `Parts` table**: When
@@ -303,7 +297,7 @@ standard environment variables:
 | `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers and elapsed timings during interactive execution (`0`/`false` to disable) |
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
-| `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash`, `sh`, or `pwsh`/`powershell` on Windows) |
+| `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash` or POSIX `sh`) |
 | `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e(dit)`/`s(cript)`/`o(utput)`/`v(iew)` inside `i(nfo)` |
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |

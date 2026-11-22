@@ -715,9 +715,8 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(self.mod.read_step_meta(s154 / "12").get("renumbered_from"), "s154/14")
 
         # 7. Embedded rules instruct agents to continue from renumbered step
-        for rule_rel in ("agents/blocks/bash.md", "agents/blocks/pwsh.md"):
-            rule_txt = (ROOT / rule_rel).read_text(encoding="utf-8")
-            self.assertIn("Note: renumbered from <session>/<old> to <session>/<new>", rule_txt)
+        rule_txt = (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8")
+        self.assertIn("Note: renumbered from <session>/<old> to <session>/<new>", rule_txt)
 
     def test_step_stdout_identity_exported_to_child(self):
         import os
@@ -876,7 +875,7 @@ class TestRunner(RunBlockTestCase):
         self.assertGreater(len(summary["operations"]), len(steps))
 
         # 2. Bash instrumentation emits markers before top-level ops, skips heredocs/continuations/if-bodies, and passes bash -n
-        inst_bash = self.mod.instrument_script_for_progress(script, is_powershell=False)
+        inst_bash = self.mod.instrument_script_for_progress(script)
         ok_syn, syn_err, _ = self.mod.check_script_syntax(inst_bash, self.tmp)
         self.assertTrue(ok_syn, syn_err)
         self.assertIn("printf '%s\\n' '__RB_STEP__:1'\ngit status \\\n  --porcelain", inst_bash)
@@ -920,32 +919,13 @@ class TestRunner(RunBlockTestCase):
             "done\n"
             "git status -sb\n"
         )
-        inst_complex = self.mod.instrument_script_for_progress(complex_bash, is_powershell=False)
+        inst_complex = self.mod.instrument_script_for_progress(complex_bash)
         ok_c, err_c, _ = self.mod.check_script_syntax(inst_complex, self.tmp)
         self.assertTrue(ok_c, err_c)
         self.assertIn("printf '%s\\n' '__RB_STEP__:1'\npython3 -c '", inst_complex)
         self.assertIn("printf '%s\\n' '__RB_STEP__:7'\ngit status -sb", inst_complex)
         for skipped in ("__RB_STEP__:2", "__RB_STEP__:3", "__RB_STEP__:4", "__RB_STEP__:5", "__RB_STEP__:6"):
             self.assertNotIn(skipped, inst_complex)
-
-        # 4. PowerShell instrumentation skips here-strings, backtick continuations, and brace blocks
-        ps_script = (
-            "git status `\n"
-            "  --porcelain\n"
-            "if (Test-Path src) {\n"
-            "  ls src\n"
-            "}\n"
-            "cat <<'EOF' > out.txt\n"
-            "body\n"
-            "EOF\n"
-            "rm -f out.txt\n"
-        )
-        inst_ps = self.mod.instrument_script_for_progress(ps_script, is_powershell=True)
-        self.assertIn("Write-Output '__RB_STEP__:1'\ngit status `", inst_ps)
-        self.assertNotIn("__RB_STEP__:2", inst_ps)
-        self.assertNotIn("__RB_STEP__:4", inst_ps)
-        self.assertIn("Write-Output '__RB_STEP__:5'\ncat <<'EOF' > out.txt", inst_ps)
-        self.assertIn("Write-Output '__RB_STEP__:6'\nrm -f out.txt", inst_ps)
 
     def test_f30_numbered_block_plan_and_live_progress_execution(self):
         # 1. PLAN numbers top-level operations and keeps Python AST sub-entries unnumbered
@@ -1226,9 +1206,9 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("╭─ SYNTAX ERROR ", buf_syn.getvalue())
         self.assertIn("END (syntax error", bad_out_p.read_text(encoding="utf-8"))
 
-        # 4. PowerShell backup uses .orig.ps1
-        ps_path = step2 / "block.ps1"
-        self.assertEqual(self.mod._orig_backup_path(ps_path), step2 / "block.orig.ps1")
+        # 4. Script backup uses .orig.sh
+        sh_path = step2 / "block.sh"
+        self.assertEqual(self.mod._orig_backup_path(sh_path), step2 / "block.orig.sh")
 
     def test_f52_end_output_edit_backup_recalc_and_show_markers(self):
         # 1. END STEP prompt unifies behind i(nfo)

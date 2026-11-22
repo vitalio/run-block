@@ -1,19 +1,12 @@
 def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run_block"
-    for suf in (".py", ".cmd", ".bat", ".exe"):
-        if raw.lower().endswith(suf) and len(raw) > len(suf):
-            raw = raw[:-len(suf)]
-            break
+    if raw.lower().endswith(".py") and len(raw) > 3:
+        raw = raw[:-3]
     return raw or "run_block"
 
 
 def _os_default_base_dir(prog: str | None = None) -> Path:
     name = prog or prog_name()
-    if os.name == "nt":
-        local_app = os.environ.get("LOCALAPPDATA", "").strip()
-        if local_app:
-            return Path(local_app).expanduser() / name / "state"
-        return Path.home() / "AppData" / "Local" / name / "state"
     xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
     if xdg_state:
         return Path(xdg_state).expanduser() / name
@@ -49,7 +42,7 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
     if key == "shell":
         if os.environ.get("RUN_BLOCK_SHELL"):
             return os.environ["RUN_BLOCK_SHELL"].strip(), "env"
-        return ("pwsh" if os.name == "nt" else "bash"), "default"
+        return "bash", "default"
     if key == "editor":
         if os.environ.get("RUN_BLOCK_EDITOR"):
             return os.environ["RUN_BLOCK_EDITOR"].strip(), "env"
@@ -115,35 +108,20 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
     raise KeyError(f"unknown setting: {key}")
 
 
-def _is_powershell(shell_bin: str | None = None) -> bool:
-    sh = shell_bin if shell_bin is not None else get_setting("shell")[0]
-    name = Path(sh).name.lower()
-    for suf in (".exe", ".cmd", ".bat"):
-        if name.endswith(suf):
-            name = name[:-len(suf)]
-            break
-    return name in ("pwsh", "powershell")
-
-
-def _script_ext(shell_bin: str | None = None) -> str:
-    return ".ps1" if _is_powershell(shell_bin) else ".sh"
+def _script_ext() -> str:
+    return ".sh"
 
 
 def _step_dir(sdir: Path, step: str) -> Path:
     return sdir / step
 
 
-def _find_step_script(sdir: Path, step: str, shell_bin: str | None = None) -> Path:
-    step_d = _step_dir(sdir, step)
-    for ext in (".sh", ".ps1"):
-        p = step_d / f"block{ext}"
-        if p.exists():
-            return p
-    return step_d / f"block{_script_ext(shell_bin)}"
+def _find_step_script(sdir: Path, step: str) -> Path:
+    return _step_dir(sdir, step) / "block.sh"
 
 
 def _orig_backup_path(script_path: Path) -> Path:
-    ext = script_path.suffix or _script_ext()
+    ext = script_path.suffix or ".sh"
     return script_path.with_name(f"block.orig{ext}")
 
 
@@ -152,7 +130,7 @@ def _orig_file_backup_path(target_path: Path) -> Path:
 
 
 _STEP_DIR_RE = re.compile(r"\d+(?:_\d+)?")
-_STEP_ARTIFACTS = ("block.sh", "block.ps1", "fix.py", "out", "error", "aborted", "meta.json")
+_STEP_ARTIFACTS = ("block.sh", "fix.py", "out", "error", "aborted", "meta.json")
 STEP_OUTCOMES = ("ok", "failed", "syntax-error", "not-run", "aborted", "saved")
 
 
@@ -172,11 +150,9 @@ def _iter_session_steps(sdir: Path) -> list[Path]:
 def _iter_session_scripts(sdir: Path) -> list[Path]:
     scripts: list[Path] = []
     for d in _iter_session_steps(sdir):
-        for ext in (".sh", ".ps1"):
-            p = d / f"block{ext}"
-            if p.is_file():
-                scripts.append(p)
-                break
+        p = d / "block.sh"
+        if p.is_file():
+            scripts.append(p)
     return scripts
 
 
@@ -281,6 +257,7 @@ FULLSCREEN_HIDDEN_HEADER_KEYS = frozenset({
     "bundle-boundary",
     "bundle-expose",
     "bundle-hide",
+    "bundle-name",
     "bundle-protocol",
     "chat-lang",
 })
