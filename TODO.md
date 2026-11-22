@@ -112,3 +112,17 @@
   - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/cli.py`), integrated with `D6` sandbox/revert policies and `F70` token/cache usage accounting.
 - Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
+
+# ⚪ [NEW] B14: Fix fullscreen i(nfo) meta hotkey in START SESSION part viewer, END STEP table refresh on out edit, and progress line range edge cases
+
+- Bump: `PATCH`
+- Add `m(eta)` hotkey handling and footer hint (`m(eta)`) to `_open_part_viewer()` and `_build_part_screen()` in `src/ui.py` so `START SESSION` `PART N/M` and `BUNDLE R/M` subviews open `<session>/meta.json` consistently with step `PART k/N` views.
+- Recompute per-operation `share_pct` (and slice metrics when `<step>/out` is modified) in `_format_output_breakdown()` (`src/ui.py`) and keep `_open_operation_viewer()` operation list aligned with the displayed `END STEP` breakdown table when `block.sh` or `out` is edited.
+- Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` stay aligned with cleaned `<step>/out`.
+
+# ⚪ [NEW] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
+
+- Depends on: B14
+- Bump: `PATCH`
+- Split `src/ui.py` (>4,100 lines) into cohesive modules under `src/` (separating ANSI/box primitives and inline TUI cards, fullscreen `i(nfo)` pager/part/operation inspector, and interactive prompt/clipboard orchestration) while keeping `build.py` assembly order and `AGENTS.md` module boundaries updated.
+- Rename remaining ticket-prefixed unit test methods (`test_f51_*`, `test_f52_*`, `test_f53_*`, `test_f54_*`, `test_f77_*`, etc.) across `tests/test_*.py` to domain-behavior names.
