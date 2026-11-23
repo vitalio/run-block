@@ -1,3 +1,15 @@
+# 🎯 [NEXT] B15: Fix --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, and AssertionError root-cause hints
+
+- Depends on: F74
+Follow-up findings from F74 review:
+- `src/runner.py:_propose_anchor_repair`, `src/runner.py:cmd_fix`: `_propose_anchor_repair()` matches and replaces the missing anchor via `fix_code.count(repr(old)) == 1` and `fix_code.replace(repr(old), repr(new_old), 1)`, which fails when `old` is written with double quotes, triple quotes, or other literal forms in `fix_code`; additionally, invoking `prompt_yes_no_box("NOT RUN", ...)` before `not_run_exit()` displays two consecutive `NOT RUN` prompts when the user declines repair (and `i(nfo)` in the first prompt runs before `<step>/out` or `<step>/fix.py` exists).
+- `src/runner.py:cmd_fix`, `src/runner.py:_looks_like_shell_script`: `cmd_fix()` checks `_looks_like_shell_script(fix_code)` only when `validate_fix_ast(fix_code)` fails, so shell commands that happen to parse as valid Python AST expressions (`ls -la`, `cd /tmp`, `pwd`, `git`) bypass shell detection and fail with `NameError` during `exec()` instead of reporting the shell-script hint (or offering interactive execution as `<session>/<next_step>`).
+- `src/runner.py:_reassemble_split_payload`: stopping at the first heredoc terminator, dropping duplicate trailing blocks/prose, and stripping nested `SPLIT_HEADER_RE` wrappers only run when the first non-empty line on `stdin` matches `SPLIT_HEADER_RE`; when the local shell consumes the outer `run_block <s/n> <<'RUN_BLOCK'` line before piping `stdin`, an indented inner terminator followed by a duplicate block or prose falls through the `if not m:` branch without truncation.
+- `src/ui.py:_traceback_root_cause`, `src/ui.py:_extract_last_error_line`: `_traceback_root_cause()` searches for `AssertionError: '<needle>' not found in ...` matches only in `lines[:tb_idx]` (ignoring the haystack text embedded in the `AssertionError` message itself when output was captured in memory), and `_extract_last_error_line()` truncates `cause` by character index (`cause[: max_len - 3]`) rather than `char_width()`.
+- `src/runner.py:_fix_anchor_values`, `src/runner.py:cmd_fix`: `_fix_anchor_values()` inspects only `text.count/replace/find/index` calls (missing `assert old in text` and `re.sub(old, new, text)` anchors), and `next_seq_ref` in `cmd_fix()` uses `int(base_step) + 1` instead of `next_free_step(sdir, min_step=int(base_step) + 1)`.
+
+- `src/cli.py`, `src/runner.py`, `src/header.py`: decouple `-y` / `--yes` (`auto_yes=True`) from `--headless` (`RUN_BLOCK_HEADLESS=1`) so `-y` / `--yes` automatically reopens a completed session and auto-confirms `START STEP` execution while preserving interactive TUI conflict cards (`STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`), `NOT RUN` / `SYNTAX ERROR` / `END STEP` cards, and clipboard copy prompts on a TTY; reserve `--headless` and `RUN_BLOCK_HEADLESS=1` for non-interactive headless output without TUI boxes or prompts.
+
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3
@@ -88,8 +100,14 @@
   - Automatic session & step resolution: resolve target `<session>` from the explicit CLI `[session]` argument, the extracted block header, or `_find_latest_session()` for the current `Workdir`, and automatically derive the next sequential step number via `next_free_step(sdir)` (auto-renumbering stale or mismatched step numbers without manual editing).
   - Model reasoning display & persistence: extract the model's prose commentary preceding the block, persist it in `<session>/<step>/meta.json` (or `plan.md`), and render a compact commentary/reasoning section at the top of the `START STEP` (`BLOCK PLAN`) card in `src/ui.py` so the same reply-ingestion pipeline serves both web-chat (`-r`) and built-in API transport (`D10`).
 
+# ⚪ [NEW] F93: Split src/runner.py by responsibility
+
+- Depends on: F94, B15
+src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
+
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
 
+- Depends on: F92, F93
 - Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
 - Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_runner.py` and `tests/test_safety.py`.
 
@@ -119,27 +137,11 @@
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
 
-# ⚪ [NEW] B15: Fix --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, and AssertionError root-cause hints
-
-- Depends on: F74
-Follow-up findings from F74 review:
-- `src/runner.py:_propose_anchor_repair`, `src/runner.py:cmd_fix`: `_propose_anchor_repair()` matches and replaces the missing anchor via `fix_code.count(repr(old)) == 1` and `fix_code.replace(repr(old), repr(new_old), 1)`, which fails when `old` is written with double quotes, triple quotes, or other literal forms in `fix_code`; additionally, invoking `prompt_yes_no_box("NOT RUN", ...)` before `not_run_exit()` displays two consecutive `NOT RUN` prompts when the user declines repair (and `i(nfo)` in the first prompt runs before `<step>/out` or `<step>/fix.py` exists).
-- `src/runner.py:cmd_fix`, `src/runner.py:_looks_like_shell_script`: `cmd_fix()` checks `_looks_like_shell_script(fix_code)` only when `validate_fix_ast(fix_code)` fails, so shell commands that happen to parse as valid Python AST expressions (`ls -la`, `cd /tmp`, `pwd`, `git`) bypass shell detection and fail with `NameError` during `exec()` instead of reporting the shell-script hint (or offering interactive execution as `<session>/<next_step>`).
-- `src/runner.py:_reassemble_split_payload`: stopping at the first heredoc terminator, dropping duplicate trailing blocks/prose, and stripping nested `SPLIT_HEADER_RE` wrappers only run when the first non-empty line on `stdin` matches `SPLIT_HEADER_RE`; when the local shell consumes the outer `run_block <s/n> <<'RUN_BLOCK'` line before piping `stdin`, an indented inner terminator followed by a duplicate block or prose falls through the `if not m:` branch without truncation.
-- `src/ui.py:_traceback_root_cause`, `src/ui.py:_extract_last_error_line`: `_traceback_root_cause()` searches for `AssertionError: '<needle>' not found in ...` matches only in `lines[:tb_idx]` (ignoring the haystack text embedded in the `AssertionError` message itself when output was captured in memory), and `_extract_last_error_line()` truncates `cause` by character index (`cause[: max_len - 3]`) rather than `char_width()`.
-- `src/runner.py:_fix_anchor_values`, `src/runner.py:cmd_fix`: `_fix_anchor_values()` inspects only `text.count/replace/find/index` calls (missing `assert old in text` and `re.sub(old, new, text)` anchors), and `next_seq_ref` in `cmd_fix()` uses `int(base_step) + 1` instead of `next_free_step(sdir, min_step=int(base_step) + 1)`.
-
-- `src/cli.py`, `src/runner.py`, `src/header.py`: decouple `-y` / `--yes` (`auto_yes=True`) from `--headless` (`RUN_BLOCK_HEADLESS=1`) so `-y` / `--yes` automatically reopens a completed session and auto-confirms `START STEP` execution while preserving interactive TUI conflict cards (`STEP ALREADY EXISTS`, `MISSING PREVIOUS STEP`), `NOT RUN` / `SYNTAX ERROR` / `END STEP` cards, and clipboard copy prompts on a TTY; reserve `--headless` and `RUN_BLOCK_HEADLESS=1` for non-interactive headless output without TUI boxes or prompts.
-
-# ⚪ [NEW] F93: Split src/runner.py by responsibility
-
-- Depends on: F94, B15
-src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
-
 # ⚪ [NEW] F88: Implement built-in LLM API agent mode in run_block (single run_block tool, TUI loop, prompt caching, and key isolation)
 
 - Depends on: D10, F85
 - Depends on: B14 -> F92 -> F84
+- Depends on: F94, B15 -> F93
 - Implement the built-in LLM API agent mode in `run_block` per `D10` so `todo_md <ID> | agents_bundle | run_block` (or standalone `run_block`) can drive multi-step agent sessions directly over provider APIs while preserving `c(opy)` clipboard and `run_block -r` workflows:
   - Provider profiles, API key loading, and child environment secret scrubbing (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
   - Stdlib `urllib.request` HTTP/SSE streaming client, single polymorphic `run_block` tool schema (`edits`, `script`, `fix_target`, `done`, `done_note`), and fallback reply extraction via `extract_reply_block()`.
