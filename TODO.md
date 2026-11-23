@@ -1,9 +1,3 @@
-# 🎯 [NEXT] F100: Refine README.md progressive disclosure, add Options table, and update producer chain example
-
-- Keep the introduction and `Quick Start` scenario-focused by moving low-level step descriptor/artifact details (`<session>/<step>/out`, `aborted`, `error`, `meta.json`) and `--fix` fuzzy-anchor heuristics (`similarity >= 0.85`, traceback tail extraction) into a dedicated reference section in the second half of `README.md`.
-- Add a structured `Options` table under `CLI Reference` matching `run --help` and `agents/stack/cli/docs.md`.
-- Update the legacy producer chain example `chain: ["todo_md"]` to `chain: ["vitalio/todo-md"]`.
-
 # 🎯 [NEXT] F101: Add model/role profile resolution and unconditional child env API key scrubbing
 
 - Depends on: D10, F85

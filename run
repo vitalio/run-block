@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.38.0"
+VERSION = "0.38.1"
 REPO_MARKER = "run-block-repo: vitalio/run-block"
 LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
 REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)

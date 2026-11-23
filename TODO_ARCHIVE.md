@@ -1,3 +1,9 @@
+# ✅ [DONE] F100: Refine README.md progressive disclosure, add Options table, and update producer chain example — *2026-11-24, Refined README.md progressive disclosure, added Options table under CLI Reference, and updated producer chain example to vitalio/todo-md*
+
+- Keep the introduction and `Quick Start` scenario-focused by moving low-level step descriptor/artifact details (`<session>/<step>/out`, `aborted`, `error`, `meta.json`) and `--fix` fuzzy-anchor heuristics (`similarity >= 0.85`, traceback tail extraction) into a dedicated reference section in the second half of `README.md`.
+- Add a structured `Options` table under `CLI Reference` matching `run --help` and `agents/stack/cli/docs.md`.
+- Update the legacy producer chain example `chain: ["todo_md"]` to `chain: ["vitalio/todo-md"]`.
+
 # ✅ [DONE] D10: Design built-in API agent mode in run-block (single run tool, reasoning in BLOCK PLAN, prompt caching, and key isolation) — *2026-11-24, Designed built-in API agent mode, prompt caching, and supervisor-session orchestration in docs/adr/0001-built-in-api-agent-mode.md*
 
 - Depends on: F86, F89, F82, F74, F95

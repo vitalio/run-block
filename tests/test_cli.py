@@ -178,6 +178,28 @@ class TestCli(RunBlockTestCase):
         self.assertIn("comparable in size to the original block", run_md)
         readme_md = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("small, targeted patches", readme_md)
+        self.assertIn('chain: ["vitalio/todo-md"]', readme_md)
+        self.assertNotIn('chain: ["todo_md"]', readme_md)
+        qs_idx = readme_md.index("## Quick Start")
+        tui_idx = readme_md.index("## Interactive TUI & Keyboard Shortcuts")
+        ref_idx = readme_md.index("## Step Artifacts & `--fix` Diagnostics")
+        cli_idx = readme_md.index("## CLI Reference")
+        opts_idx = readme_md.index("### Options")
+        env_idx = readme_md.index("## Environment Variables")
+        self.assertLess(qs_idx, tui_idx)
+        self.assertLess(tui_idx, ref_idx)
+        self.assertLess(ref_idx, cli_idx)
+        self.assertLess(cli_idx, opts_idx)
+        self.assertLess(opts_idx, env_idx)
+        quick_start_section = readme_md[qs_idx:tui_idx]
+        self.assertNotIn("<session>/<step>/out", quick_start_section)
+        self.assertNotIn("similarity >= 0.85", quick_start_section)
+        step_ref_section = readme_md[ref_idx:cli_idx]
+        self.assertIn("<session>/<step>/out", step_ref_section)
+        self.assertIn("similarity >= 0.85", step_ref_section)
+        options_section = readme_md[opts_idx:env_idx]
+        for flag in ("-r", "--run", "-y", "--yes", "--headless", "-p", "--prompt", "--sandbox", "--no-sandbox", "-V", "--version", "-h", "--help"):
+            self.assertIn(flag, options_section)
 
     def test_self_update_and_check_update(self):
         bin_dir = self.tmp / "up_bin"

@@ -85,14 +85,6 @@ AST-expanded Python sub-items), and any safety warnings. During execution, live 
 timings stream to the terminal, and `END STEP` offers one-keystroke clipboard
 copy of the combined step header, output, and token stats.
 
-Child `stdout` and `stderr` share one descriptor, so `<session>/<step>/out`
-keeps the exact write order of interleaved output. `out` is written once the
-block finishes and ends with the `[<session>/<step>] END` line; `END STEP` takes
-its `Error:` line from the last meaningful line of `out`. There is no separate
-`stderr` file. `aborted` marks a block that was declined or rejected, `error`
-holds a pre-execution failure message, and `meta.json` stores the structured
-outcome, exit code, and duration.
-
 ### 3. Patch a failed block (`--fix`)
 
 ```bash
@@ -108,20 +100,6 @@ Use `--fix <session>/<target>` for small, targeted patches to a failed step
 (`text` and `re` are preloaded; each attempt allocates `<target>_1`,
 `<target>_2`, up to `RUN_BLOCK_MAX_FIX_ATTEMPTS`). When a fix requires rewriting
 multiple sections, emit a fresh `<session>/<step+1>` block instead.
-
-When a fix fails, `NOT RUN` appends `Hint:` lines: the closest matching line and
-similarity for a missing anchor, a trailing-newline mismatch, an ambiguous anchor
-(`actual: N == 1`), a discarded `text.replace(...)` / `re.sub(...)` result, an
-anchor that lives in a repository file instead of the script, and a shell script
-passed instead of a Python patch (run it as the next `<session>/<step>`).
-`SyntaxError` output carries a +-2 line code context. In an interactive TTY, a
-single anchor with
-similarity >= 0.85 and a clear margin over the runner-up can be replaced on
-confirmation and re-run immediately; headless `-y` mode never applies fuzzy matches.
-Pasted payloads stop at the first closing terminator, drop nested wrappers and fence
-debris, and recover a missing terminator before a closing fence. `END STEP` takes
-its `Error:` line from the last `Traceback` when the output ends with a generic runner
-tail, and shell syntax errors show a +-2 line context.
 
 ### 4. Complete or chain sessions (`--done`)
 
@@ -222,7 +200,7 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   `-p`/`--prompt` text and interactive `p(rompt)` notes merge only into a
   trailing root user `prompt` fragment (`chain: []`, `name: "Prompt"`), or
   append a new trailing root `Prompt` part after upstream producer `prompt`
-  fragments (such as `chain: ["todo_md"]`), and any empty `prompt` fragment
+  fragments (such as `chain: ["vitalio/todo-md"]`), and any empty `prompt` fragment
   raises a `fragment_empty` warning in `--bundle-plan` and `START SESSION`.
 - **Fragment deduplication & overlap warnings**: With a declared boundary,
   a fragment whose text (ignoring a leading `===== ... =====` header line and
@@ -270,7 +248,40 @@ run --bundle-plan s1 --part 2
   risk categories via `RUN_BLOCK_SAFETY_DISABLE=cat1,cat2` or register custom
   regex patterns via `RUN_BLOCK_SAFETY_RULES="cat1=regex1;cat2=regex2"`.
 
+## Step Artifacts & `--fix` Diagnostics
+
+- **Step descriptors & saved artifacts (`<session>/<step>/`)**: Child `stdout`
+  and `stderr` share a single descriptor (the PTY slave or capture pipe write
+  end), so `<session>/<step>/out` preserves the exact interleaved write order
+  without a separate `stderr` file. `out` is written once the block finishes and
+  ends with the `[<session>/<step>] END` marker. `aborted` marks a block that
+  was declined or rejected before running, `error` records a pre-execution
+  failure message shown by `--show`, and `meta.json` stores the structured
+  outcome (`ok`, `failed`, `syntax-error`, `not-run`, `aborted`, `saved`), exit
+  code, duration, optional `fix_target`, and model `reasoning` (also saved to
+  `plan.md`).
+- **Error summary & syntax context**: `END STEP` extracts its `Error:` summary
+  line from the last meaningful line of `out` (preferring the last `Traceback`
+  exception line when output ends with a generic test-runner summary tail). Both
+  Python `SyntaxError` failures and shell syntax errors include a `+-2` line
+  code context.
+- **`--fix` failure hints & fuzzy-anchor repair**: When a `--fix` patch fails,
+  `NOT RUN` appends `Hint:` lines diagnosing the root cause: closest matching
+  line and similarity score for a missing anchor, trailing-newline mismatches,
+  ambiguous anchors (`actual: N == 1`), discarded `text.replace(...)` /
+  `re.sub(...)` return values, anchors located in a repository file instead of
+  the target step script, or a shell script passed where a Python patch was
+  expected (advising to run it as the next `<session>/<step>`). In an
+  interactive TTY, a single missing anchor with `similarity >= 0.85` and a clear
+  margin over the runner-up can be replaced on confirmation and re-run
+  immediately; non-interactive `-y` / `--headless` runs never apply fuzzy
+  matches. Pasted payloads stop at the first closing terminator, strip nested
+  wrappers and fence debris, and recover a missing terminator before a closing
+  fence.
+
 ## CLI Reference
+
+### Commands
 
 | Command | Description |
 | :--- | :--- |
@@ -295,6 +306,19 @@ run --bundle-plan s1 --part 2
 | `run --uninstall [--purge]` | Remove installed `run` / `run_block` binary (`--purge` also removes the state directory) |
 | `run -V`, `--version` | Print version and exit `0` |
 | `run -h`, `--help` | Print usage help and exit `0` |
+
+### Options
+
+| Option | Description |
+| :--- | :--- |
+| `-r`, `--run [session]` | Full-reply mode: extract block and reasoning from `$VISUAL`/`$EDITOR` (on TTY `stdin`) or piped `stdin` and infer `<session>/<next_step>` |
+| `-y`, `--yes` | Auto-confirm `START STEP` and reopen a completed session (keeps TUI cards and clipboard prompts) |
+| `--headless` | Non-interactive headless mode without TUI boxes or prompts (same as `RUN_BLOCK_HEADLESS=1`) |
+| `-p`, `--prompt TEXT` | Embed repeatable prompt text into the started session bundle (`===== Prompt =====`) |
+| `--sandbox [MODE]` | Set the sandbox mode for the run or started session (`off`, `strict`, `nonet`); bare flag means `strict` |
+| `--no-sandbox` | Same as `--sandbox off` |
+| `-V`, `--version` | Print version and exit `0` |
+| `-h`, `--help` | Print usage help and exit `0` |
 
 ## Environment Variables
 
