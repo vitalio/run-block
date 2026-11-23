@@ -127,7 +127,7 @@ class TestCli(RunBlockTestCase):
 
     def test_embedded_rules_files_exist(self):
         self.assertFalse((ROOT / "src/bundles").exists())
-        ab_txt = (ROOT / ".ctx.bundle").read_text(encoding="utf-8")
+        ab_txt = (ROOT / ".context.bundle").read_text(encoding="utf-8")
         self.assertNotIn("bundle vitalio/run_block", ab_txt)
         self.assertFalse((ROOT / "agents/blocks/pwsh.md").exists())
         self.assertFalse((ROOT / "install.ps1").exists())
@@ -363,7 +363,7 @@ class TestCli(RunBlockTestCase):
         self.assertEqual(r_sub_step.returncode, 0, r_sub_step.stderr)
         self.assertIn(str(subproj.resolve()), r_sub_step.stdout)
 
-        # 2. Subproject with AGENTS.md or .ctx.bundle (without .agents_bundle) also resolves to subproject root
+        # 2. Subproject with AGENTS.md or .context.bundle (without .agents_bundle) also resolves to subproject root
         subproj_agents = repo / "apps" / "docs_sub"
         subproj_agents.mkdir(parents=True)
         (subproj_agents / "AGENTS.md").write_text("# Subproject rules\n", encoding="utf-8")
@@ -383,7 +383,7 @@ class TestCli(RunBlockTestCase):
         subproj_ctx = repo / "apps" / "ctx_sub"
         subproj_ctx_nested = subproj_ctx / "pkg"
         subproj_ctx_nested.mkdir(parents=True)
-        (subproj_ctx / ".ctx.bundle").write_text("bundle vitalio/agents-rules:default\n", encoding="utf-8")
+        (subproj_ctx / ".context.bundle").write_text("bundle vitalio/agents-rules:default\n", encoding="utf-8")
         r_ctx = self._run(
             [str(SCRIPT), "--start", "--session", "s2_ctx"],
             input="Role: execute\n",

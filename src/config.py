@@ -224,7 +224,7 @@ def _git_toplevel() -> Path | None:
     return None
 
 
-PROJECT_ROOT_MARKERS = (".ctx.bundle", ".agents_bundle", "AGENTS.md")
+PROJECT_ROOT_MARKERS = (".context.bundle", ".agents_bundle", "AGENTS.md")
 
 
 def _git_toplevel_or_cwd() -> Path:
