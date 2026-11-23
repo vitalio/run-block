@@ -6,7 +6,6 @@
 - Recognize `.ctx.bundle` alongside `.agents_bundle` and `AGENTS.md` in workspace/project root detection (`src/config.py`).
 - Strip historical `- Role:` and `- Target files:` lines from `TODO_ARCHIVE.md`.
 - Acceptance criteria: `Bundle-Expose`/`Bundle-Hide` and legacy fragment kind aliases are removed, `.ctx.bundle` is recognized in root detection, `AGENTS.md`/`README.md`/`tests/test_*.py` are updated, and `./build.py` and `python3 -m unittest discover -s tests` pass.
-__RB_STEP__:3
 
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
@@ -101,7 +100,6 @@ __RB_STEP__:3
 - Depends on: F89, F95, F97
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `run` (updating `agents/blocks/bash.md`, protocol markers, and env vars/compatibility aliases per `todo_flow:D8` and ADR 0003).
 - Acceptance criteria: `build.py` outputs `run`, `install.sh` installs `run` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `run`, and `python3 -m unittest discover -s tests` passes.
-__RB_STEP__:4
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
 
