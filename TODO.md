@@ -72,7 +72,7 @@
 
 - Depends on: F89, F95, F97
 - Rename project/repository references from `run_block` to `run-block` (`vitalio/run-block`) and CLI entrypoint to `run` per `todo_flow:D8` (`docs/adr/0004-ecosystem-rename-and-cutover.md`):
-  - Update `agents/blocks/bash.md` to use `{cmd:run}` (`run s1/1 <<'RUN_BLOCK'`, `run --fix s1/1 <<'RUN_FIX'`), emit embedded rule `id: "vitalio/run-block:blocks/bash"`, `chain: ["vitalio/run-block"]`, and repo marker `# run-block-repo: vitalio/run-block`.
+  - Flatten `agents/blocks/bash.md` to `agents/run.md` (removing the legacy `agents/blocks/` directory) using `{cmd:run}` (`run s1/1 <<'RUN_BLOCK'`, `run --fix s1/1 <<'RUN_FIX'`), emit embedded rule `id: "vitalio/run-block:run"`, `chain: ["vitalio/run-block"]`, and repo marker `# run-block-repo: vitalio/run-block`.
   - Recognize both `run` and `run_block` in `SPLIT_HEADER_RE`, step-renumber comments, and shell-command heuristics in `src/runner.py`; keep `RUN_BLOCK_*` environment variables.
   - Use fixed state directory `${XDG_STATE_HOME:-~/.local/state}/run-block` in `_os_default_base_dir()` (independent of `argv[0]`) and atomically migrate `~/.local/state/run_block` -> `~/.local/state/run-block` via `os.replace` on startup and in `install.sh`, plus fallback hyphen/underscore workdir resolution for existing sessions.
   - Replace any existing `run_block` binary in `$INSTALL_DIR` during `install.sh` / `--update`, add `--uninstall [--purge]` to `run` and `install.sh` (preserving `~/.local/state/run-block` unless `--purge` is passed), rename the GitHub repository `vitalio/run_block` -> `vitalio/run-block` and update local `git remote` URL, and run `python3 build.py && ./install.sh --yes` to migrate the local machine.
