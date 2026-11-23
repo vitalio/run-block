@@ -440,12 +440,27 @@ def _advance_quote_state(line: str, state: str | None) -> str | None:
     return state
 
 
+def _detect_heredoc_eof(line: str) -> str | None:
+    s = line.strip()
+    if not s or s.startswith("#"):
+        return None
+    m_py = PY_HEREDOC_START_RE.search(s)
+    if m_py:
+        return m_py.group(1)
+    m_sh = SHELL_HEREDOC_START_RE.search(s)
+    if m_sh:
+        return m_sh.group(1)
+    return None
+
+
 def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
     """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks.
 
     Each item is (start_line, text, end_line) with 1-based inclusive physical line numbers."""
     out: list[tuple[int, str, int]] = []
     eof_token: str | None = None
+    pending_eof: str | None = None
+    heredoc_in_quote = False
     py_quote: str | None = None
     quote_state: str | None = None
     cont_buf: list[str] = []
@@ -454,9 +469,14 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
     for idx, raw in enumerate(script_text.splitlines(), start=1):
         s = raw.strip()
         if eof_token is not None:
-            out.append((idx, raw, idx))
-            if s == eof_token:
-                eof_token = None
+            if heredoc_in_quote:
+                if s == eof_token:
+                    eof_token = None
+                    heredoc_in_quote = False
+            else:
+                out.append((idx, raw, idx))
+                if s == eof_token:
+                    eof_token = None
             continue
         if py_quote is not None:
             out.append((idx, raw, idx))
@@ -464,11 +484,19 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
                 py_quote = None
             continue
 
+        line_eof = _detect_heredoc_eof(raw)
+        if line_eof is not None and pending_eof is None:
+            pending_eof = line_eof
+
         if quote_state is not None:
             quote_state = _advance_quote_state(raw, quote_state)
             if quote_state is not None:
-                if s:
+                if s and pending_eof is None:
                     cont_buf.append(s)
+                if pending_eof is not None and not _has_trailing_continuation(raw):
+                    eof_token = pending_eof
+                    pending_eof = None
+                    heredoc_in_quote = True
                 continue
             if _has_trailing_continuation(raw):
                 piece = raw.rstrip()[:-1].strip()
@@ -486,6 +514,10 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
                 quote_state = q_after
                 if s:
                     cont_buf.append(s)
+                if pending_eof is not None and not _has_trailing_continuation(raw):
+                    eof_token = pending_eof
+                    pending_eof = None
+                    heredoc_in_quote = True
                 continue
             if _has_trailing_continuation(raw):
                 piece = raw.rstrip()[:-1].strip()
@@ -505,12 +537,21 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
                     out.append((idx, raw, idx))
                     if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
                         py_quote = q_ch
+                    pending_eof = None
                     continue
                 q_after = _advance_quote_state(raw, None)
                 if q_after is not None:
                     quote_state = q_after
                     cont_start = idx
-                    cont_buf = [raw.rstrip()]
+                    if pending_eof is not None:
+                        cleaned_hd = SHELL_HEREDOC_START_RE.sub("", raw.rstrip())
+                        cont_buf = [cleaned_hd]
+                        if not _has_trailing_continuation(raw):
+                            eof_token = pending_eof
+                            pending_eof = None
+                            heredoc_in_quote = True
+                    else:
+                        cont_buf = [raw.rstrip()]
                     continue
             if _has_trailing_continuation(raw):
                 cont_start = idx
@@ -523,6 +564,12 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
         out.append((logical_idx, logical, idx))
         ls = logical.strip()
         if not ls or ls.startswith("#"):
+            pending_eof = None
+            continue
+        if pending_eof is not None:
+            eof_token = pending_eof
+            pending_eof = None
+            heredoc_in_quote = False
             continue
         m_py = PY_HEREDOC_START_RE.search(ls)
         if m_py:
@@ -1209,6 +1256,7 @@ def instrument_script_for_progress(
 
     out: list[str] = []
     eof_token: str | None = None
+    pending_eof: str | None = None
     py_quote: str | None = None
     in_continuation = False
     quote_state: str | None = None
@@ -1230,21 +1278,33 @@ def instrument_script_for_progress(
                 py_quote = None
             continue
 
+        line_eof = _detect_heredoc_eof(line_no_nl)
+        if line_eof is not None and pending_eof is None:
+            pending_eof = line_eof
+
         if quote_state is not None:
             out.append(raw_line)
             quote_state = _advance_quote_state(line_no_nl, quote_state)
+            has_cont = _has_trailing_continuation(line_no_nl)
             if quote_state is None:
-                in_continuation = _has_trailing_continuation(line_no_nl)
+                in_continuation = has_cont
+            if pending_eof is not None and not has_cont:
+                eof_token = pending_eof
+                pending_eof = None
             continue
 
         if in_continuation:
             out.append(raw_line)
             q_after = _advance_quote_state(line_no_nl, None)
+            has_cont = _has_trailing_continuation(line_no_nl)
             if q_after is not None:
                 quote_state = q_after
                 in_continuation = False
-                continue
-            in_continuation = _has_trailing_continuation(line_no_nl)
+            else:
+                in_continuation = has_cont
+            if pending_eof is not None and not has_cont:
+                eof_token = pending_eof
+                pending_eof = None
             continue
 
         opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
@@ -1257,34 +1317,26 @@ def instrument_script_for_progress(
         out.append(raw_line)
 
         if not s or s.startswith("#"):
+            pending_eof = None
             continue
 
-        m_py = PY_HEREDOC_START_RE.search(s)
-        if m_py:
-            eof_token = m_py.group(1)
-            depth = max(0, depth + opens - closes)
-            continue
         m_pyc = PY_DASH_C_START_RE.match(s)
         if m_pyc:
             q_ch, rest = m_pyc.group(1), m_pyc.group(2)
             if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
                 py_quote = q_ch
+                pending_eof = None
                 depth = max(0, depth + opens - closes)
                 continue
-        m_sh = SHELL_HEREDOC_START_RE.search(s)
-        if m_sh:
-            eof_token = m_sh.group(1)
-            depth = max(0, depth + opens - closes)
-            continue
         q_after = _advance_quote_state(line_no_nl, None)
+        has_cont = _has_trailing_continuation(line_no_nl)
         if q_after is not None:
             quote_state = q_after
-            depth = max(0, depth + opens - closes)
-            continue
-        if _has_trailing_continuation(line_no_nl):
+        elif has_cont:
             in_continuation = True
-            continue
-
+        if pending_eof is not None and not has_cont:
+            eof_token = pending_eof
+            pending_eof = None
         depth = max(0, depth + opens - closes)
 
     return "".join(out)

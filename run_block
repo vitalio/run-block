@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.34.1"
+VERSION = "0.34.2"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -1277,12 +1277,27 @@ def _advance_quote_state(line: str, state: str | None) -> str | None:
     return state
 
 
+def _detect_heredoc_eof(line: str) -> str | None:
+    s = line.strip()
+    if not s or s.startswith("#"):
+        return None
+    m_py = PY_HEREDOC_START_RE.search(s)
+    if m_py:
+        return m_py.group(1)
+    m_sh = SHELL_HEREDOC_START_RE.search(s)
+    if m_sh:
+        return m_sh.group(1)
+    return None
+
+
 def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
     """Joins shell line continuations and multiline quoted strings outside heredocs and python -c blocks.
 
     Each item is (start_line, text, end_line) with 1-based inclusive physical line numbers."""
     out: list[tuple[int, str, int]] = []
     eof_token: str | None = None
+    pending_eof: str | None = None
+    heredoc_in_quote = False
     py_quote: str | None = None
     quote_state: str | None = None
     cont_buf: list[str] = []
@@ -1291,9 +1306,14 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
     for idx, raw in enumerate(script_text.splitlines(), start=1):
         s = raw.strip()
         if eof_token is not None:
-            out.append((idx, raw, idx))
-            if s == eof_token:
-                eof_token = None
+            if heredoc_in_quote:
+                if s == eof_token:
+                    eof_token = None
+                    heredoc_in_quote = False
+            else:
+                out.append((idx, raw, idx))
+                if s == eof_token:
+                    eof_token = None
             continue
         if py_quote is not None:
             out.append((idx, raw, idx))
@@ -1301,11 +1321,19 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
                 py_quote = None
             continue
 
+        line_eof = _detect_heredoc_eof(raw)
+        if line_eof is not None and pending_eof is None:
+            pending_eof = line_eof
+
         if quote_state is not None:
             quote_state = _advance_quote_state(raw, quote_state)
             if quote_state is not None:
-                if s:
+                if s and pending_eof is None:
                     cont_buf.append(s)
+                if pending_eof is not None and not _has_trailing_continuation(raw):
+                    eof_token = pending_eof
+                    pending_eof = None
+                    heredoc_in_quote = True
                 continue
             if _has_trailing_continuation(raw):
                 piece = raw.rstrip()[:-1].strip()
@@ -1323,6 +1351,10 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
                 quote_state = q_after
                 if s:
                     cont_buf.append(s)
+                if pending_eof is not None and not _has_trailing_continuation(raw):
+                    eof_token = pending_eof
+                    pending_eof = None
+                    heredoc_in_quote = True
                 continue
             if _has_trailing_continuation(raw):
                 piece = raw.rstrip()[:-1].strip()
@@ -1342,12 +1374,21 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
                     out.append((idx, raw, idx))
                     if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
                         py_quote = q_ch
+                    pending_eof = None
                     continue
                 q_after = _advance_quote_state(raw, None)
                 if q_after is not None:
                     quote_state = q_after
                     cont_start = idx
-                    cont_buf = [raw.rstrip()]
+                    if pending_eof is not None:
+                        cleaned_hd = SHELL_HEREDOC_START_RE.sub("", raw.rstrip())
+                        cont_buf = [cleaned_hd]
+                        if not _has_trailing_continuation(raw):
+                            eof_token = pending_eof
+                            pending_eof = None
+                            heredoc_in_quote = True
+                    else:
+                        cont_buf = [raw.rstrip()]
                     continue
             if _has_trailing_continuation(raw):
                 cont_start = idx
@@ -1360,6 +1401,12 @@ def _iter_logical_lines(script_text: str) -> list[tuple[int, str, int]]:
         out.append((logical_idx, logical, idx))
         ls = logical.strip()
         if not ls or ls.startswith("#"):
+            pending_eof = None
+            continue
+        if pending_eof is not None:
+            eof_token = pending_eof
+            pending_eof = None
+            heredoc_in_quote = False
             continue
         m_py = PY_HEREDOC_START_RE.search(ls)
         if m_py:
@@ -2046,6 +2093,7 @@ def instrument_script_for_progress(
 
     out: list[str] = []
     eof_token: str | None = None
+    pending_eof: str | None = None
     py_quote: str | None = None
     in_continuation = False
     quote_state: str | None = None
@@ -2067,21 +2115,33 @@ def instrument_script_for_progress(
                 py_quote = None
             continue
 
+        line_eof = _detect_heredoc_eof(line_no_nl)
+        if line_eof is not None and pending_eof is None:
+            pending_eof = line_eof
+
         if quote_state is not None:
             out.append(raw_line)
             quote_state = _advance_quote_state(line_no_nl, quote_state)
+            has_cont = _has_trailing_continuation(line_no_nl)
             if quote_state is None:
-                in_continuation = _has_trailing_continuation(line_no_nl)
+                in_continuation = has_cont
+            if pending_eof is not None and not has_cont:
+                eof_token = pending_eof
+                pending_eof = None
             continue
 
         if in_continuation:
             out.append(raw_line)
             q_after = _advance_quote_state(line_no_nl, None)
+            has_cont = _has_trailing_continuation(line_no_nl)
             if q_after is not None:
                 quote_state = q_after
                 in_continuation = False
-                continue
-            in_continuation = _has_trailing_continuation(line_no_nl)
+            else:
+                in_continuation = has_cont
+            if pending_eof is not None and not has_cont:
+                eof_token = pending_eof
+                pending_eof = None
             continue
 
         opens, closes, starts_closer = _bash_compound_delta(line_no_nl)
@@ -2094,34 +2154,26 @@ def instrument_script_for_progress(
         out.append(raw_line)
 
         if not s or s.startswith("#"):
+            pending_eof = None
             continue
 
-        m_py = PY_HEREDOC_START_RE.search(s)
-        if m_py:
-            eof_token = m_py.group(1)
-            depth = max(0, depth + opens - closes)
-            continue
         m_pyc = PY_DASH_C_START_RE.match(s)
         if m_pyc:
             q_ch, rest = m_pyc.group(1), m_pyc.group(2)
             if not (rest.endswith(q_ch) and not rest.endswith("\\" + q_ch)):
                 py_quote = q_ch
+                pending_eof = None
                 depth = max(0, depth + opens - closes)
                 continue
-        m_sh = SHELL_HEREDOC_START_RE.search(s)
-        if m_sh:
-            eof_token = m_sh.group(1)
-            depth = max(0, depth + opens - closes)
-            continue
         q_after = _advance_quote_state(line_no_nl, None)
+        has_cont = _has_trailing_continuation(line_no_nl)
         if q_after is not None:
             quote_state = q_after
-            depth = max(0, depth + opens - closes)
-            continue
-        if _has_trailing_continuation(line_no_nl):
+        elif has_cont:
             in_continuation = True
-            continue
-
+        if pending_eof is not None and not has_cont:
+            eof_token = pending_eof
+            pending_eof = None
         depth = max(0, depth + opens - closes)
 
     return "".join(out)
@@ -5358,11 +5410,13 @@ def _step_part_total(
     *,
     has_output: bool,
 ) -> int:
-    if kind != "START STEP" and has_output:
+    steps = _info_operation_steps(script, sdir, label)
+    script_edited = _is_file_edited(script, _orig_backup_path(script)) if script is not None else False
+    if kind != "START STEP" and has_output and not (script_edited and steps):
         timed = _step_op_timings(op_timings, script)
         if timed:
             return len(timed)
-    return len(_info_operation_steps(script, sdir, label))
+    return len(steps)
 
 
 def _build_operation_screen(
@@ -5462,6 +5516,7 @@ def _build_part_screen(
     title: str | None = None,
     header_kv: list[str] | None = None,
     footer_tail: list[str] | None = None,
+    has_meta: bool = False,
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
     is_folder = folder_row is not None and folder_entries is not None and len(folder_entries) > 1
@@ -5508,6 +5563,8 @@ def _build_part_screen(
     if footer_tail is None:
         if can_edit:
             tail.append("e(dit) bundle")
+        if has_meta:
+            tail.append("m(eta)")
         tail.append("Esc: back")
     return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, tail)
 
@@ -5667,6 +5724,72 @@ def _render_operation_table(
     return lines
 
 
+def _refresh_output_operations(
+    op_timings: list[dict[str, object]],
+    out_lines: list[str],
+    total_chars: int,
+    *,
+    step_ops: list[dict[str, object]] | None = None,
+    out_edited: bool = False,
+    script_edited: bool = False,
+) -> list[dict[str, object]]:
+    raw_ops = [dict(op) for op in op_timings]
+    if script_edited and step_ops:
+        by_step = {int(op["step"]): op for op in raw_ops if isinstance(op.get("step"), int)}
+        merged: list[dict[str, object]] = []
+        for idx, st in enumerate(step_ops, 1):
+            st_no = int(st.get("step") or idx)
+            base = dict(by_step.get(st_no) or {})
+            base["step"] = st_no
+            base["tag"] = str(st.get("tag") or base.get("tag") or "exec")
+            base["desc"] = str(st.get("desc") or base.get("desc") or "")
+            base["line"] = int(st.get("line") or base.get("line") or 0)
+            base["end_line"] = int(st.get("end_line") or base.get("end_line") or base["line"])
+            merged.append(base)
+        raw_ops = merged
+    elif step_ops:
+        st_by_no = {int(st.get("step") or i): st for i, st in enumerate(step_ops, 1)}
+        for op in raw_ops:
+            st_no = op.get("step")
+            if isinstance(st_no, int) and st_no in st_by_no:
+                st = st_by_no[st_no]
+                if not op.get("line") and st.get("line"):
+                    op["line"] = int(st["line"])
+                if not op.get("end_line") and st.get("end_line"):
+                    op["end_line"] = int(st["end_line"])
+
+    total_lines = len(out_lines)
+    refreshed: list[dict[str, object]] = []
+    for op in raw_ops:
+        out_start = op.get("out_line_start")
+        out_end = op.get("out_line_end")
+        if isinstance(out_start, int) and isinstance(out_end, int) and out_start >= 1 and out_end >= out_start:
+            if out_start <= total_lines:
+                clamped_end = min(total_lines, out_end)
+                op["out_line_start"] = out_start
+                op["out_line_end"] = clamped_end
+                if out_edited or "chars" not in op or "lines" not in op:
+                    chunk = "\n".join(out_lines[out_start - 1 : clamped_end]) + "\n"
+                    s = count_tokens(chunk.encode("utf-8"))
+                    op["lines"] = int(s["lines"])
+                    op["chars"] = int(s["chars"])
+                    op["bytes"] = int(s["bytes"])
+                    op["gpt"] = int(s["gpt"])
+                    op["claude"] = int(s["claude"])
+            elif out_edited:
+                op.pop("out_line_start", None)
+                op.pop("out_line_end", None)
+                op["lines"] = 0
+                op["chars"] = 0
+                op["bytes"] = 0
+                op["gpt"] = 0
+                op["claude"] = 0
+        chars = max(0, int(op.get("chars") or 0))
+        op["share_pct"] = round(100.0 * chars / total_chars, 1) if total_chars > 0 else 0.0
+        refreshed.append(op)
+    return refreshed
+
+
 def _format_output_breakdown(
     op_timings: list[dict[str, object]],
     out_path: Path,
@@ -5675,13 +5798,25 @@ def _format_output_breakdown(
     failed_step: int | None,
     edited: bool,
     max_width: int,
+    step_ops: list[dict[str, object]] | None = None,
+    out_edited: bool | None = None,
+    script_edited: bool = False,
 ) -> list[str]:
     try:
         data = out_path.read_bytes()
     except OSError:
         data = b""
-    ops = [dict(op) for op in op_timings]
+    out_lines = data.decode("utf-8", "replace").splitlines()
     total = _total_stats_entry(data)
+    is_out_edited = _is_file_edited(out_path, _orig_file_backup_path(out_path)) if out_edited is None else out_edited
+    ops = _refresh_output_operations(
+        op_timings,
+        out_lines,
+        int(total.get("chars") or 0),
+        step_ops=step_ops,
+        out_edited=is_out_edited,
+        script_edited=script_edited,
+    )
     total["duration_ms"] = (
         total_ms if total_ms is not None else sum(max(0, int(op.get("duration_ms") or 0)) for op in ops)
     )
@@ -5871,6 +6006,9 @@ def _collect_info_report(
                 failed_step=failed_step if (rc is not None and rc != 0) else None,
                 edited=any_edited,
                 max_width=max_content_w,
+                step_ops=step_ops,
+                out_edited=out_edited,
+                script_edited=script_edited,
             )
         )
     elif step_ops and resolved_script is not None:
@@ -6244,6 +6382,7 @@ def _show_info_fullscreen(
         if not isinstance(plan, dict) or total_rows < 1:
             return initial_row_no, None
         total_parts = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
+        meta_file = _info_meta_path("START SESSION", resolved_sdir, None, out_path)
         row_no = max(1, min(total_rows, initial_row_no))
         part_scroll = 0
         while True:
@@ -6292,6 +6431,7 @@ def _show_info_fullscreen(
                 error=err,
                 folder_row=None if is_single else cur_row,
                 folder_entries=None if is_single else folder_entries,
+                has_meta=meta_file is not None,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -6307,6 +6447,8 @@ def _show_info_fullscreen(
             elif key == "prev_part":
                 row_no = max(1, row_no - 1)
                 part_scroll = 0
+            elif key == "meta":
+                _open_meta(meta_file)
             elif key == "edit" and edit_target is not None and edit_target.is_file():
                 return row_no, _edit_artifact(edit_target)
             elif key in ("back", "esc", "tab"):
@@ -6327,39 +6469,67 @@ def _show_info_fullscreen(
         script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
         if script is None or not script.is_file():
             return initial_no, None
-        timing_by_step = {
-            int(t["step"]): t for t in _step_op_timings(op_timings, script) if isinstance(t.get("step"), int)
-        }
+        raw_timings = _step_op_timings(op_timings, script)
         use_out = kind != "START STEP" and out_path is not None and out_path.is_file()
         meta_file = _info_meta_path(kind, resolved_sdir, script, out_path)
         op_no = initial_no
         op_scroll = 0
         while True:
             steps = _info_operation_steps(script, resolved_sdir, label)
-            if not steps:
-                return initial_no, None
-            total = len(steps)
-            op_no = max(1, min(total, op_no))
             try:
                 script_lines = script.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 script_lines = []
             out_lines: list[str] | None = None
+            out_total_chars = 0
             if use_out and out_path is not None:
                 try:
-                    out_lines = out_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    out_text = out_path.read_text(encoding="utf-8", errors="replace")
+                    out_total_chars = len(out_text)
+                    out_lines = out_text.splitlines()
                 except OSError:
                     out_lines = []
+            script_edited = _is_file_edited(script, _orig_backup_path(script))
+            out_edited = _is_file_edited(out_path, _orig_file_backup_path(out_path)) if out_path is not None else False
+            refreshed_timings = (
+                _refresh_output_operations(
+                    raw_timings,
+                    out_lines or [],
+                    out_total_chars,
+                    step_ops=steps,
+                    out_edited=out_edited,
+                    script_edited=script_edited,
+                )
+                if (use_out and raw_timings)
+                else raw_timings
+            )
+            timing_by_step = {
+                int(t["step"]): t for t in refreshed_timings if isinstance(t.get("step"), int)
+            }
+            if use_out and refreshed_timings and not (script_edited and steps):
+                st_by_no = {int(st.get("step") or i): st for i, st in enumerate(steps, 1)}
+                view_steps = [
+                    {**st_by_no.get(int(t.get("step") or i), {}), **t}
+                    for i, t in enumerate(refreshed_timings, 1)
+                ]
+            else:
+                view_steps = steps
+            if not view_steps:
+                return initial_no, None
+            total = len(view_steps)
+            op_no = max(1, min(total, op_no))
+            cur_step = view_steps[op_no - 1]
+            cur_step_no = int(cur_step.get("step") or op_no)
             cols, rows = _term_size()
-            is_failed = rc is not None and rc != 0 and failed_step == op_no
+            is_failed = rc is not None and rc != 0 and failed_step == cur_step_no
             frame, op_scroll, vp_rows = _build_operation_screen(
                 label,
                 op_no,
                 total,
-                steps[op_no - 1],
+                cur_step,
                 script,
                 script_lines,
-                timing_by_step.get(op_no),
+                timing_by_step.get(cur_step_no),
                 is_failed,
                 cols,
                 rows,
@@ -9292,7 +9462,7 @@ class _ProgressLineFilter:
         self.total_steps = total_steps
         self.marker_prefix = marker_prefix
         self.buf = ""
-        self._marker_re = re.compile(rf"^{re.escape(marker_prefix)}(\d+)\r?$")
+        self._marker_re = re.compile(rf"^(.*?){re.escape(marker_prefix)}(\d+)\r?$")
         self._clock = clock if callable(clock) else time.monotonic
         if is_tty is None:
             try:
@@ -9309,6 +9479,7 @@ class _ProgressLineFilter:
         self.line_base = 0
         self._op_text: dict[int, list[str]] = {}
         self._pre_text: list[str] = []
+        self._at_line_start: bool = True
 
     @staticmethod
     def _truncate_width(text: str, max_w: int) -> str:
@@ -9418,11 +9589,25 @@ class _ProgressLineFilter:
         return "".join(parts)
 
     def _note_out(self, text: str) -> None:
+        if not text:
+            return
         if self.active_step is not None:
             self._active_has_output = True
             self._op_text.setdefault(self.active_step, []).append(text)
         else:
             self._pre_text.append(text)
+        self._at_line_start = text.endswith("\n")
+
+    def _possible_marker_tail_index(self, s: str) -> int | None:
+        idx = s.find(self.marker_prefix)
+        if idx != -1:
+            return idx
+        pfx = self.marker_prefix
+        max_k = min(len(pfx) - 1, len(s))
+        for k in range(max_k, 0, -1):
+            if s.endswith(pfx[:k]):
+                return len(s) - k
+        return None
 
     def feed_events(self, text: str) -> list[tuple[str, str]]:
         self.buf += text
@@ -9432,20 +9617,30 @@ class _ProgressLineFilter:
             self.buf = rest
             m = self._marker_re.match(line)
             if m:
-                prog = self._start_step(int(m.group(1)))
+                lead, step_s = m.group(1), m.group(2)
+                if lead:
+                    self._note_out(lead + "\n")
+                    events.append(("out", lead + "\n"))
+                elif not self._at_line_start:
+                    self._note_out("\n")
+                    events.append(("out", "\n"))
+                prog = self._start_step(int(step_s))
                 if prog:
                     events.append(("prog", prog))
             else:
                 self._note_out(line + "\n")
                 events.append(("out", line + "\n"))
         if self.buf:
-            if not (
-                self.marker_prefix.startswith(self.buf)
-                or self.buf.startswith(self.marker_prefix)
-            ):
+            tail_idx = self._possible_marker_tail_index(self.buf)
+            if tail_idx is None:
                 self._note_out(self.buf)
                 events.append(("out", self.buf))
                 self.buf = ""
+            elif tail_idx > 0:
+                lead_chunk = self.buf[:tail_idx]
+                self.buf = self.buf[tail_idx:]
+                self._note_out(lead_chunk)
+                events.append(("out", lead_chunk))
         return events
 
     def feed(self, text: str) -> tuple[str, str]:
@@ -9466,7 +9661,14 @@ class _ProgressLineFilter:
             self.buf = ""
             m = self._marker_re.match(rem)
             if m:
-                prog = self._start_step(int(m.group(1)))
+                lead, step_s = m.group(1), m.group(2)
+                if lead:
+                    self._note_out(lead + "\n")
+                    rem_out = lead + "\n"
+                elif not self._at_line_start:
+                    self._note_out("\n")
+                    rem_out = "\n"
+                prog = self._start_step(int(step_s))
                 if prog:
                     prog_parts.append(prog)
             else:
@@ -9485,7 +9687,10 @@ class _ProgressLineFilter:
         return rem_out, "".join(prog_parts)
 
     def operation_timings(self, total_chars: int | None = None) -> list[dict[str, object]]:
-        pre = count_tokens(_clean_out_text("".join(self._pre_text)).encode("utf-8"))
+        raw_pre = "".join(self._pre_text)
+        if raw_pre and not raw_pre.endswith("\n"):
+            raw_pre += "\n"
+        pre = count_tokens(_clean_out_text(raw_pre).encode("utf-8"))
         pos = self.line_base + int(pre["lines"])
         total = int(total_chars or 0)
         timings: list[dict[str, object]] = []
@@ -9493,7 +9698,10 @@ class _ProgressLineFilter:
             if step_num not in self.step_durations:
                 continue
             info = self.step_map.get(step_num) or {}
-            text = _clean_out_text("".join(self._op_text.get(step_num, [])))
+            raw_op = "".join(self._op_text.get(step_num, []))
+            if raw_op and not raw_op.endswith("\n"):
+                raw_op += "\n"
+            text = _clean_out_text(raw_op)
             st = count_tokens(text.encode("utf-8"))
             lines = int(st["lines"])
             chars = int(st["chars"])

@@ -584,7 +584,7 @@ class _ProgressLineFilter:
         self.total_steps = total_steps
         self.marker_prefix = marker_prefix
         self.buf = ""
-        self._marker_re = re.compile(rf"^{re.escape(marker_prefix)}(\d+)\r?$")
+        self._marker_re = re.compile(rf"^(.*?){re.escape(marker_prefix)}(\d+)\r?$")
         self._clock = clock if callable(clock) else time.monotonic
         if is_tty is None:
             try:
@@ -601,6 +601,7 @@ class _ProgressLineFilter:
         self.line_base = 0
         self._op_text: dict[int, list[str]] = {}
         self._pre_text: list[str] = []
+        self._at_line_start: bool = True
 
     @staticmethod
     def _truncate_width(text: str, max_w: int) -> str:
@@ -710,11 +711,25 @@ class _ProgressLineFilter:
         return "".join(parts)
 
     def _note_out(self, text: str) -> None:
+        if not text:
+            return
         if self.active_step is not None:
             self._active_has_output = True
             self._op_text.setdefault(self.active_step, []).append(text)
         else:
             self._pre_text.append(text)
+        self._at_line_start = text.endswith("\n")
+
+    def _possible_marker_tail_index(self, s: str) -> int | None:
+        idx = s.find(self.marker_prefix)
+        if idx != -1:
+            return idx
+        pfx = self.marker_prefix
+        max_k = min(len(pfx) - 1, len(s))
+        for k in range(max_k, 0, -1):
+            if s.endswith(pfx[:k]):
+                return len(s) - k
+        return None
 
     def feed_events(self, text: str) -> list[tuple[str, str]]:
         self.buf += text
@@ -724,20 +739,30 @@ class _ProgressLineFilter:
             self.buf = rest
             m = self._marker_re.match(line)
             if m:
-                prog = self._start_step(int(m.group(1)))
+                lead, step_s = m.group(1), m.group(2)
+                if lead:
+                    self._note_out(lead + "\n")
+                    events.append(("out", lead + "\n"))
+                elif not self._at_line_start:
+                    self._note_out("\n")
+                    events.append(("out", "\n"))
+                prog = self._start_step(int(step_s))
                 if prog:
                     events.append(("prog", prog))
             else:
                 self._note_out(line + "\n")
                 events.append(("out", line + "\n"))
         if self.buf:
-            if not (
-                self.marker_prefix.startswith(self.buf)
-                or self.buf.startswith(self.marker_prefix)
-            ):
+            tail_idx = self._possible_marker_tail_index(self.buf)
+            if tail_idx is None:
                 self._note_out(self.buf)
                 events.append(("out", self.buf))
                 self.buf = ""
+            elif tail_idx > 0:
+                lead_chunk = self.buf[:tail_idx]
+                self.buf = self.buf[tail_idx:]
+                self._note_out(lead_chunk)
+                events.append(("out", lead_chunk))
         return events
 
     def feed(self, text: str) -> tuple[str, str]:
@@ -758,7 +783,14 @@ class _ProgressLineFilter:
             self.buf = ""
             m = self._marker_re.match(rem)
             if m:
-                prog = self._start_step(int(m.group(1)))
+                lead, step_s = m.group(1), m.group(2)
+                if lead:
+                    self._note_out(lead + "\n")
+                    rem_out = lead + "\n"
+                elif not self._at_line_start:
+                    self._note_out("\n")
+                    rem_out = "\n"
+                prog = self._start_step(int(step_s))
                 if prog:
                     prog_parts.append(prog)
             else:
@@ -777,7 +809,10 @@ class _ProgressLineFilter:
         return rem_out, "".join(prog_parts)
 
     def operation_timings(self, total_chars: int | None = None) -> list[dict[str, object]]:
-        pre = count_tokens(_clean_out_text("".join(self._pre_text)).encode("utf-8"))
+        raw_pre = "".join(self._pre_text)
+        if raw_pre and not raw_pre.endswith("\n"):
+            raw_pre += "\n"
+        pre = count_tokens(_clean_out_text(raw_pre).encode("utf-8"))
         pos = self.line_base + int(pre["lines"])
         total = int(total_chars or 0)
         timings: list[dict[str, object]] = []
@@ -785,7 +820,10 @@ class _ProgressLineFilter:
             if step_num not in self.step_durations:
                 continue
             info = self.step_map.get(step_num) or {}
-            text = _clean_out_text("".join(self._op_text.get(step_num, [])))
+            raw_op = "".join(self._op_text.get(step_num, []))
+            if raw_op and not raw_op.endswith("\n"):
+                raw_op += "\n"
+            text = _clean_out_text(raw_op)
             st = count_tokens(text.encode("utf-8"))
             lines = int(st["lines"])
             chars = int(st["chars"])

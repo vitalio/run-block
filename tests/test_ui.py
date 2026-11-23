@@ -2049,6 +2049,82 @@ class TestUi(RunBlockTestCase):
         self.assertIn("PART 3/3 · s9/1", shown)
         self.assertIn("Range: (no output)", shown)
 
+        # Verify in-place out edit and script edit refresh share_pct, slice metrics, and operation viewer
+        meta_path = step_dir / "meta.json"
+        meta_path.write_text('{"exit_code": 0}\n', encoding="utf-8")
+        opened_meta: list[Path] = []
+
+        def stub_edit_step(target: Path, _r, _w) -> None:
+            if target.name == "meta.json":
+                opened_meta.append(target)
+            elif target.name == "out":
+                target.write_text("ok\nline2_expanded_output_text\nline3\nline4\nextra_tail\n", encoding="utf-8")
+            elif target.name == "block.sh":
+                target.write_text(
+                    "git status -sb\npython3 - <<'PY'\nprint(1)\nprint(2)\nPY\nls -la src\n",
+                    encoding="utf-8",
+                )
+
+        buf_edit = io.StringIO()
+        keys_edit = iter(["output", "script", "tab", "down", "copy", "meta", "back", "esc", "back"])
+        with unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=stub_edit_step),              unittest.mock.patch.object(self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys_edit)),              unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 30)):
+            res_edit = self.mod._show_info_fullscreen(
+                title_kind="END STEP",
+                label="s9/1",
+                tty_r=io.StringIO(),
+                tty_w=buf_edit,
+                **common,
+            )
+        self.assertTrue(res_edit["edited"])
+        self.assertEqual(opened_meta, [meta_path])
+        shown_edit = self.mod.ANSI_RE.sub("", buf_edit.getvalue())
+        self.assertIn("3 operations (edited)", shown_edit)
+        self.assertIn("ls -la src", shown_edit)
+        self.assertIn("Script-Range: lines 2-5 of", shown_edit)
+        self.assertIn("line2_expanded_output_text", shown_edit)
+
+        # Verify START SESSION _open_part_viewer m(eta) hotkey and footer hint in PART and BUNDLE views
+        sdir_b = self.tmp / "s9_bundle"
+        sdir_b.mkdir(parents=True)
+        b0 = sdir_b / "0"
+        nonce = "bnd9"
+        stdin_b = (
+            f"Bundle-Boundary: {nonce}\n\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r1","chain":["pkg"]}} -->\n'
+            "Rule 1\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r2","chain":["pkg"]}} -->\n'
+            "Rule 2\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_b = self.mod.format_start_bundle("s9_bundle", stdin_body=stdin_b, work_dir=self.tmp, sandbox_mode="off")
+        b0.write_text(str(res_b["full"]), encoding="utf-8")
+        self.mod.write_session_meta(sdir_b, list(res_b["stdin_headers"]), bundle_plan=res_b["bundle_plan"])
+        s_meta = sdir_b / "meta.json"
+        opened_b_meta: list[Path] = []
+
+        def stub_open_b_meta(target: Path, _r, _w) -> None:
+            opened_b_meta.append(target)
+
+        buf_b = io.StringIO()
+        keys_b = iter(["tab", "down", "down", "copy", "meta", "next_part", "meta", "back", "esc", "back"])
+        with unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=stub_open_b_meta),              unittest.mock.patch.object(self.mod, "_read_pager_key", side_effect=lambda *a, **k: next(keys_b)),              unittest.mock.patch.object(self.mod, "_term_size", return_value=(100, 30)):
+            self.mod._show_info_fullscreen(
+                title_kind="START SESSION",
+                label="s9_bundle/0",
+                tty_r=io.StringIO(),
+                tty_w=buf_b,
+                sdir=sdir_b,
+                out_path=b0,
+                edit_target=b0,
+                allow_copy=True,
+            )
+        self.assertEqual(opened_b_meta, [s_meta, s_meta])
+        shown_b = self.mod.ANSI_RE.sub("", buf_b.getvalue())
+        self.assertIn("BUNDLE 3/5 · s9_bundle/0", shown_b)
+        self.assertIn("PART 3/4 · s9_bundle/0", shown_b)
+        self.assertIn("e(dit) bundle · m(eta) · Esc: back", shown_b)
+
     def test_fullscreen_footer_meta_key_and_operation_table(self):
         for raw, key in (("m\n", "meta"), ("meta\n", "meta"), ("e\n", "edit"), ("o\n", "output")):
             with self.subTest(raw=raw):

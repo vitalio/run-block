@@ -1408,6 +1408,47 @@ class TestRunner(RunBlockTestCase):
             ],
         )
 
+        # Partial output without trailing newline before step marker (both same-chunk and split-chunk)
+        # and CR / ANSI sequences keep out_line_start..out_line_end aligned with cleaned out lines
+        t_seq_edge = iter([1.0, 1.1, 1.3, 1.6])
+        step_map_edge = {
+            1: {"step": 1, "tag": "exec", "desc": "printf no_nl", "line": 1, "end_line": 1},
+            2: {"step": 2, "tag": "exec", "desc": "ansi and cr", "line": 2, "end_line": 2},
+            3: {"step": 3, "tag": "exec", "desc": "final line", "line": 3, "end_line": 3},
+        }
+        pf_edge = self.mod._ProgressLineFilter(step_map_edge, total_steps=3, clock=lambda: next(t_seq_edge))
+        pf_edge.line_base = 2
+        out_chunks: list[str] = ["[s49/1] START\n", "\n"]
+        for chunk in (
+            "__RB_STEP__:1\npartial_one",
+            "__RB_STEP__:2\n\x1b[32mold\rnew_two\x1b[0m\r\nsecond_line_no_nl__RB_STEP__:3\n",
+            "third_line",
+        ):
+            out_s, _ = pf_edge.feed(chunk)
+            if out_s:
+                out_chunks.append(out_s)
+        rem_s, _ = pf_edge.flush(rc=0)
+        if rem_s:
+            out_chunks.append(rem_s)
+        if out_chunks and not out_chunks[-1].endswith("\n"):
+            out_chunks.append("\n")
+        out_chunks.append("\n[s49/1] END (600ms)\n")
+        cleaned_out = self.mod._clean_out_text("".join(out_chunks))
+        cleaned_lines = cleaned_out.splitlines()
+        edge_timings = pf_edge.operation_timings(total_chars=len(cleaned_out))
+        self.assertEqual(
+            cleaned_lines[edge_timings[0]["out_line_start"] - 1 : edge_timings[0]["out_line_end"]],
+            ["partial_one"],
+        )
+        self.assertEqual(
+            cleaned_lines[edge_timings[1]["out_line_start"] - 1 : edge_timings[1]["out_line_end"]],
+            ["new_two", "second_line_no_nl"],
+        )
+        self.assertEqual(
+            cleaned_lines[edge_timings[2]["out_line_start"] - 1 : edge_timings[2]["out_line_end"]],
+            ["third_line"],
+        )
+
         # 4. Interactive run_script records per-op timings in live output, END box, and meta.json, and surfaces in -l
         step2_dir = sdir / "2"
         step2_dir.mkdir(parents=True)

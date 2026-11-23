@@ -2737,11 +2737,13 @@ def _step_part_total(
     *,
     has_output: bool,
 ) -> int:
-    if kind != "START STEP" and has_output:
+    steps = _info_operation_steps(script, sdir, label)
+    script_edited = _is_file_edited(script, _orig_backup_path(script)) if script is not None else False
+    if kind != "START STEP" and has_output and not (script_edited and steps):
         timed = _step_op_timings(op_timings, script)
         if timed:
             return len(timed)
-    return len(_info_operation_steps(script, sdir, label))
+    return len(steps)
 
 
 def _build_operation_screen(
@@ -2841,6 +2843,7 @@ def _build_part_screen(
     title: str | None = None,
     header_kv: list[str] | None = None,
     footer_tail: list[str] | None = None,
+    has_meta: bool = False,
 ) -> tuple[str, int, int]:
     title_col, border_col = _block_colors("START SESSION", has_exit=False)
     is_folder = folder_row is not None and folder_entries is not None and len(folder_entries) > 1
@@ -2887,6 +2890,8 @@ def _build_part_screen(
     if footer_tail is None:
         if can_edit:
             tail.append("e(dit) bundle")
+        if has_meta:
+            tail.append("m(eta)")
         tail.append("Esc: back")
     return _compose_pager_frame(header_rows, all_items, cols, rows, scroll_top, tail)
 
@@ -3046,6 +3051,72 @@ def _render_operation_table(
     return lines
 
 
+def _refresh_output_operations(
+    op_timings: list[dict[str, object]],
+    out_lines: list[str],
+    total_chars: int,
+    *,
+    step_ops: list[dict[str, object]] | None = None,
+    out_edited: bool = False,
+    script_edited: bool = False,
+) -> list[dict[str, object]]:
+    raw_ops = [dict(op) for op in op_timings]
+    if script_edited and step_ops:
+        by_step = {int(op["step"]): op for op in raw_ops if isinstance(op.get("step"), int)}
+        merged: list[dict[str, object]] = []
+        for idx, st in enumerate(step_ops, 1):
+            st_no = int(st.get("step") or idx)
+            base = dict(by_step.get(st_no) or {})
+            base["step"] = st_no
+            base["tag"] = str(st.get("tag") or base.get("tag") or "exec")
+            base["desc"] = str(st.get("desc") or base.get("desc") or "")
+            base["line"] = int(st.get("line") or base.get("line") or 0)
+            base["end_line"] = int(st.get("end_line") or base.get("end_line") or base["line"])
+            merged.append(base)
+        raw_ops = merged
+    elif step_ops:
+        st_by_no = {int(st.get("step") or i): st for i, st in enumerate(step_ops, 1)}
+        for op in raw_ops:
+            st_no = op.get("step")
+            if isinstance(st_no, int) and st_no in st_by_no:
+                st = st_by_no[st_no]
+                if not op.get("line") and st.get("line"):
+                    op["line"] = int(st["line"])
+                if not op.get("end_line") and st.get("end_line"):
+                    op["end_line"] = int(st["end_line"])
+
+    total_lines = len(out_lines)
+    refreshed: list[dict[str, object]] = []
+    for op in raw_ops:
+        out_start = op.get("out_line_start")
+        out_end = op.get("out_line_end")
+        if isinstance(out_start, int) and isinstance(out_end, int) and out_start >= 1 and out_end >= out_start:
+            if out_start <= total_lines:
+                clamped_end = min(total_lines, out_end)
+                op["out_line_start"] = out_start
+                op["out_line_end"] = clamped_end
+                if out_edited or "chars" not in op or "lines" not in op:
+                    chunk = "\n".join(out_lines[out_start - 1 : clamped_end]) + "\n"
+                    s = count_tokens(chunk.encode("utf-8"))
+                    op["lines"] = int(s["lines"])
+                    op["chars"] = int(s["chars"])
+                    op["bytes"] = int(s["bytes"])
+                    op["gpt"] = int(s["gpt"])
+                    op["claude"] = int(s["claude"])
+            elif out_edited:
+                op.pop("out_line_start", None)
+                op.pop("out_line_end", None)
+                op["lines"] = 0
+                op["chars"] = 0
+                op["bytes"] = 0
+                op["gpt"] = 0
+                op["claude"] = 0
+        chars = max(0, int(op.get("chars") or 0))
+        op["share_pct"] = round(100.0 * chars / total_chars, 1) if total_chars > 0 else 0.0
+        refreshed.append(op)
+    return refreshed
+
+
 def _format_output_breakdown(
     op_timings: list[dict[str, object]],
     out_path: Path,
@@ -3054,13 +3125,25 @@ def _format_output_breakdown(
     failed_step: int | None,
     edited: bool,
     max_width: int,
+    step_ops: list[dict[str, object]] | None = None,
+    out_edited: bool | None = None,
+    script_edited: bool = False,
 ) -> list[str]:
     try:
         data = out_path.read_bytes()
     except OSError:
         data = b""
-    ops = [dict(op) for op in op_timings]
+    out_lines = data.decode("utf-8", "replace").splitlines()
     total = _total_stats_entry(data)
+    is_out_edited = _is_file_edited(out_path, _orig_file_backup_path(out_path)) if out_edited is None else out_edited
+    ops = _refresh_output_operations(
+        op_timings,
+        out_lines,
+        int(total.get("chars") or 0),
+        step_ops=step_ops,
+        out_edited=is_out_edited,
+        script_edited=script_edited,
+    )
     total["duration_ms"] = (
         total_ms if total_ms is not None else sum(max(0, int(op.get("duration_ms") or 0)) for op in ops)
     )
@@ -3250,6 +3333,9 @@ def _collect_info_report(
                 failed_step=failed_step if (rc is not None and rc != 0) else None,
                 edited=any_edited,
                 max_width=max_content_w,
+                step_ops=step_ops,
+                out_edited=out_edited,
+                script_edited=script_edited,
             )
         )
     elif step_ops and resolved_script is not None:
@@ -3623,6 +3709,7 @@ def _show_info_fullscreen(
         if not isinstance(plan, dict) or total_rows < 1:
             return initial_row_no, None
         total_parts = len([p for p in (plan.get("parts") or []) if isinstance(p, dict)])
+        meta_file = _info_meta_path("START SESSION", resolved_sdir, None, out_path)
         row_no = max(1, min(total_rows, initial_row_no))
         part_scroll = 0
         while True:
@@ -3671,6 +3758,7 @@ def _show_info_fullscreen(
                 error=err,
                 folder_row=None if is_single else cur_row,
                 folder_entries=None if is_single else folder_entries,
+                has_meta=meta_file is not None,
             )
             tty_w.write(frame)
             tty_w.flush()
@@ -3686,6 +3774,8 @@ def _show_info_fullscreen(
             elif key == "prev_part":
                 row_no = max(1, row_no - 1)
                 part_scroll = 0
+            elif key == "meta":
+                _open_meta(meta_file)
             elif key == "edit" and edit_target is not None and edit_target.is_file():
                 return row_no, _edit_artifact(edit_target)
             elif key in ("back", "esc", "tab"):
@@ -3706,39 +3796,67 @@ def _show_info_fullscreen(
         script = _resolve_info_step_script(label, resolved_sdir, script_path, out_path)
         if script is None or not script.is_file():
             return initial_no, None
-        timing_by_step = {
-            int(t["step"]): t for t in _step_op_timings(op_timings, script) if isinstance(t.get("step"), int)
-        }
+        raw_timings = _step_op_timings(op_timings, script)
         use_out = kind != "START STEP" and out_path is not None and out_path.is_file()
         meta_file = _info_meta_path(kind, resolved_sdir, script, out_path)
         op_no = initial_no
         op_scroll = 0
         while True:
             steps = _info_operation_steps(script, resolved_sdir, label)
-            if not steps:
-                return initial_no, None
-            total = len(steps)
-            op_no = max(1, min(total, op_no))
             try:
                 script_lines = script.read_text(encoding="utf-8", errors="replace").splitlines()
             except OSError:
                 script_lines = []
             out_lines: list[str] | None = None
+            out_total_chars = 0
             if use_out and out_path is not None:
                 try:
-                    out_lines = out_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                    out_text = out_path.read_text(encoding="utf-8", errors="replace")
+                    out_total_chars = len(out_text)
+                    out_lines = out_text.splitlines()
                 except OSError:
                     out_lines = []
+            script_edited = _is_file_edited(script, _orig_backup_path(script))
+            out_edited = _is_file_edited(out_path, _orig_file_backup_path(out_path)) if out_path is not None else False
+            refreshed_timings = (
+                _refresh_output_operations(
+                    raw_timings,
+                    out_lines or [],
+                    out_total_chars,
+                    step_ops=steps,
+                    out_edited=out_edited,
+                    script_edited=script_edited,
+                )
+                if (use_out and raw_timings)
+                else raw_timings
+            )
+            timing_by_step = {
+                int(t["step"]): t for t in refreshed_timings if isinstance(t.get("step"), int)
+            }
+            if use_out and refreshed_timings and not (script_edited and steps):
+                st_by_no = {int(st.get("step") or i): st for i, st in enumerate(steps, 1)}
+                view_steps = [
+                    {**st_by_no.get(int(t.get("step") or i), {}), **t}
+                    for i, t in enumerate(refreshed_timings, 1)
+                ]
+            else:
+                view_steps = steps
+            if not view_steps:
+                return initial_no, None
+            total = len(view_steps)
+            op_no = max(1, min(total, op_no))
+            cur_step = view_steps[op_no - 1]
+            cur_step_no = int(cur_step.get("step") or op_no)
             cols, rows = _term_size()
-            is_failed = rc is not None and rc != 0 and failed_step == op_no
+            is_failed = rc is not None and rc != 0 and failed_step == cur_step_no
             frame, op_scroll, vp_rows = _build_operation_screen(
                 label,
                 op_no,
                 total,
-                steps[op_no - 1],
+                cur_step,
                 script,
                 script_lines,
-                timing_by_step.get(op_no),
+                timing_by_step.get(cur_step_no),
                 is_failed,
                 cols,
                 rows,

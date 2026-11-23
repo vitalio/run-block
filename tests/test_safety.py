@@ -736,6 +736,37 @@ class TestSafety(RunBlockTestCase):
         q_spans = [(s["line"], s["end_line"]) for s in q_sum["operation_steps"]]
         self.assertEqual(q_spans, [(1, 2), (3, 3)])
 
+        # Heredoc starting on a backslash-continued line and inside "$(cat <<'EOF' ... EOF)"
+        cont_hd = (
+            "cat \\\n"
+            "  <<'EOF' > out.txt\n"
+            "git status -sb\n"
+            "EOF\n"
+            'msg="$(cat <<\'EOF\'\n'
+            'line with "quotes" inside heredoc\n'
+            "git diff\n"
+            "EOF\n"
+            ')"\n'
+            "git log -1\n"
+        )
+        hd_sum = self.mod.summarize_script_actions(cont_hd, Path("/tmp/work"))
+        hd_steps = hd_sum["operation_steps"]
+        self.assertEqual([(s["tag"], s["line"], s["end_line"]) for s in hd_steps], [
+            ("write", 1, 4),
+            ("exec", 5, 9),
+            ("git", 10, 10),
+        ])
+        inst = self.mod.instrument_script_for_progress(cont_hd, hd_steps)
+        inst_lines = inst.splitlines()
+        marker_lines = [i for i, ln in enumerate(inst_lines) if "__RB_STEP__:" in ln]
+        self.assertEqual(len(marker_lines), 3)
+        # Ensure no marker is placed inside either heredoc body or before closing ')"'
+        eof1_idx = inst_lines.index("EOF")
+        self.assertLess(marker_lines[0], inst_lines.index("cat \\"))
+        self.assertGreater(marker_lines[1], eof1_idx)
+        close_subst_idx = inst_lines.index(')"')
+        self.assertGreater(marker_lines[2], close_subst_idx)
+
 
 if __name__ == "__main__":
     unittest.main()

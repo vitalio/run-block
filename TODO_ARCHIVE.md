@@ -1,3 +1,13 @@
+# ✅ [DONE] B14: Fix fullscreen i(nfo) meta hotkey in START SESSION part viewer, END STEP table refresh on out edit, and progress line range edge cases — *2026-11-23*
+
+- Depends on: F86 -> F74
+- Bump: `PATCH`
+- Add `m(eta)` hotkey handling and footer hint (`m(eta)`) to `_open_part_viewer()` and `_build_part_screen()` in `src/ui.py` (resolving `<session>/meta.json` via `_info_meta_path("START SESSION", resolved_sdir, None, out_path)`) so `START SESSION` `PART N/M` and `BUNDLE R/M` subviews open `<session>/meta.json` consistently with step `PART k/N` views.
+- Recompute per-operation `share_pct` against current `total["chars"]` (and refresh operation/slice metrics when `block.sh` or `<step>/out` is modified) in `_format_output_breakdown()` and `_open_operation_viewer()` (`src/ui.py`) so the `END STEP` breakdown table and operation viewer stay aligned after in-place edits.
+- Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
+
+- Fix `instrument_script_for_progress()` and `summarize_script_actions()` in `src/safety.py` when a heredoc (`<<EOF` / `<<'EOF'`) starts on a `\`-continued line or inside `"$(cat <<'EOF' ... EOF)"`: track heredoc `eof_token` before/alongside `in_continuation` and `quote_state` so `printf '%s\n' '__RB_STEP__:N'` is never injected inside a heredoc body or an unclosed `"$(...)"` command substitution.
+
 # ✅ [DONE] F96: Align context-bundle-protocol parser and prompt-note merger with canonical 4 fragment kinds (rule, file, cmd, prompt) — *2026-11-23, Normalized context-bundle-protocol fragment kinds to rule/file/cmd/prompt, checked fragment_empty on prompt parts, and distinguished upstream chain prompt fragments from root user Prompt parts during dedup and note merging*
 
 - Depends on: F95
