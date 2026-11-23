@@ -1901,29 +1901,67 @@ def _done_badge(sdir: Path) -> str:
     return " [DONE]" if is_session_completed(sdir) else ""
 
 
+def _parse_iso_utc(ts: object) -> float | None:
+    if not isinstance(ts, str) or not ts.strip():
+        return None
+    raw = ts.strip()
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return datetime.fromisoformat(raw).timestamp()
+    except ValueError:
+        return None
+
+
 def _session_stats_lines(meta: dict[str, object]) -> list[str]:
     stats = _session_stats(meta)
-    lines = [
-        f"Steps: {stat_int(stats, 'steps')}",
-        (
-            f"Results: {stat_int(stats, 'ok')} ok, {stat_int(stats, 'failed')} failed, "
-            f"{stat_int(stats, 'fix')} --fix, {stat_int(stats, 'renumbered')} renumbered"
-        ),
-        f"Duration: {format_duration(stat_int(stats, 'duration_ms') / 1000.0)}",
+    total = stat_int(stats, "steps")
+    outcomes = [
+        f"{count} {label}"
+        for key, label in (("ok", "ok"), ("failed", "failed"))
+        if (count := stat_int(stats, key)) > 0
     ]
-    if stats.get("started_at"):
-        lines.append(f"Started: {stats['started_at']}")
+    modifiers = [
+        f"{count} {label}"
+        for key, label in (("fix", "fix"), ("renumbered", "renumbered"))
+        if (count := stat_int(stats, key)) > 0
+    ]
+    groups = [", ".join(g) for g in (outcomes, modifiers) if g]
+    steps_line = f"Steps: {total} ({' · '.join(groups)})" if groups else f"Steps: {total}"
+
+    exec_dur = format_duration(stat_int(stats, "duration_ms") / 1000.0)
+    started_at = stats.get("started_at")
+    completed_at = meta.get("completed_at") or stats.get("completed_at")
+    start_ts = _parse_iso_utc(started_at)
+    end_ts = _parse_iso_utc(completed_at)
+    if start_ts is not None and end_ts is not None and end_ts > start_ts:
+        wall_dur = format_duration(end_ts - start_ts)
+        dur_line = f"Duration: {wall_dur} ({exec_dur} exec)"
+    else:
+        dur_line = f"Duration: {exec_dur}"
+
+    lines = [steps_line, dur_line]
+    if started_at:
+        lines.append(f"Started: {started_at}")
+    if completed_at:
+        lines.append(f"Completed: {completed_at}")
+    if meta.get("completed_note"):
+        lines.append(f"Note: {meta['completed_note']}")
     return lines
 
 
 def render_end_session_card(sdir: Path, *, headless: bool = False) -> None:
     name = sdir.name
     meta = read_session_meta(sdir)
-    lines = [f"Session: {name}", f"Completed: {meta.get('completed_at')}", *_session_stats_lines(meta)]
-    if meta.get("completed_note"):
-        lines.append(f"Note: {meta['completed_note']}")
+    hdr = format_session_header_lines(label=name, sdir=sdir)
+    lines = [*hdr, "", *_session_stats_lines(meta)]
     if headless:
-        sys.stdout.write(f"[{name}] END SESSION\n" + "".join(f"{ln}\n" for ln in lines[1:]))
+        body = [
+            ln
+            for ln in lines
+            if ln.strip() and not re.match(r"^Session:\s+", ln)
+        ]
+        sys.stdout.write(f"[{name}] END SESSION\n" + "".join(f"{ln}\n" for ln in body))
     else:
         sys.stdout.write(format_info_box("END SESSION", lines) + "\n")
     sys.stdout.flush()
@@ -1977,17 +2015,21 @@ def _guard_completed_session(
     reason = f"session {session} is marked as completed (pass -y/--yes to reopen and run)"
     if sys.stdout.isatty():
         meta = read_session_meta(sdir)
-        lines = [f"Session: {session}", f"Completed: {meta.get('completed_at') or 'unknown'}"]
-        if meta.get("completed_note"):
-            lines.append(f"Note: {meta['completed_note']}")
-        lines.append(f"Step: {label}")
+        def _completed_lines() -> list[str]:
+            hdr = format_session_header_lines(label=label, sdir=sdir)
+            comp_lines = [f"Completed: {meta.get('completed_at') or 'unknown'}"]
+            if meta.get("completed_note"):
+                comp_lines.append(f"Note: {meta['completed_note']}")
+            return [*hdr, "", *comp_lines]
+
         choice = prompt_yes_no_box(
             "SESSION COMPLETED",
-            lines,
+            _completed_lines(),
             f"-> Reopen session {session}?",
             default_yes=False,
             yes_status="✓ Session reopened.",
             no_status="✗ Session stays completed.",
+            content_builder=_completed_lines,
             label=label,
             sdir=sdir,
         )
@@ -2618,10 +2660,6 @@ def cmd_info(session: str | None = None) -> int:
     hint = _session_open_hint(sdir)
     if hint:
         lines.append(f"Next: {hint.removeprefix('next: ')}")
-    if meta.get("completed"):
-        lines.append(f"Completed: {meta.get('completed_at')}")
-        if meta.get("completed_note"):
-            lines.append(f"Note: {meta['completed_note']}")
     lines.extend(_session_stats_lines(meta))
     lines.append("Headers:")
     items = parse_bundle_header_items(sdir)

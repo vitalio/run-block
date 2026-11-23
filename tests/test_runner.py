@@ -321,6 +321,12 @@ class TestRunner(RunBlockTestCase):
         self.assertNotIn("stats", self.mod.read_session_meta(sdir))
 
     def test_done_stats_card_and_list_badge(self):
+        self._assert_ok(
+            self._run(
+                ["--start", "--session", "s1"],
+                input="Role: work\nTask: F94\nTitle: Clean end session card\n\nprompt\n",
+            )
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n"), 0)
             self.assertNotEqual(self.mod.cmd_normal("s1/2", "exit 3\n"), 0)
@@ -330,16 +336,63 @@ class TestRunner(RunBlockTestCase):
             (meta["stats"]["steps"], meta["stats"]["ok"], meta["stats"]["failed"]), (2, 1, 1)
         )
         self.assertNotIn("completed", meta)
+        meta["stats"]["started_at"] = "2026-11-23T19:00:00Z"
+        meta["stats"]["duration_ms"] = 80000
+        meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
-        r = self._run([str(SCRIPT), "--done", "s1", "-m", "wrap up"])
-        self._assert_ok(r)
-        self.assertIn("╭─ END SESSION ", r.stdout)
-        self.assertRegex(r.stdout, r"Steps:\s+2")
-        self.assertRegex(r.stdout, r"1 ok, 1 failed, 0 --fix, 0 renumbered")
-        self.assertRegex(r.stdout, r"Note:\s+wrap up")
+        with unittest.mock.patch.object(self.mod, "_utc_now_iso", return_value="2026-11-23T19:25:01Z"):
+            buf_done = io.StringIO()
+            with contextlib.redirect_stdout(buf_done):
+                self.assertEqual(self.mod.cmd_done("s1", note="wrap up"), 0)
+        done_out = buf_done.getvalue()
+        self.assertIn("╭─ END SESSION ", done_out)
+        self.assertRegex(done_out, r"Session:\s+s1")
+        self.assertRegex(done_out, r"Workdir:\s+")
+        self.assertRegex(done_out, r"Role:\s+work")
+        self.assertRegex(done_out, r"Task:\s+F94")
+        self.assertRegex(done_out, r"Title:\s+Clean end session card")
+        self.assertIn("\n│\n", done_out)
+        self.assertRegex(done_out, r"Steps:\s+2 \(1 ok, 1 failed\)")
+        self.assertNotIn("Results:", done_out)
+        self.assertNotIn("--fix", done_out)
+        self.assertRegex(done_out, r"Duration:\s+25m 1s \(1m 20s exec\)")
+        self.assertRegex(done_out, r"Started:\s+2026-11-23T19:00:00Z")
+        self.assertRegex(done_out, r"Completed:\s+2026-11-23T19:25:01Z")
+        self.assertLess(done_out.index("Started:"), done_out.index("Completed:"))
+        self.assertLess(done_out.index("Completed:"), done_out.index("Note:"))
+        self.assertRegex(done_out, r"Note:\s+wrap up")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         self.assertIs(meta["completed"], True)
         self.assertEqual(meta["completed_note"], "wrap up")
+
+        # Direct unit checks for _session_stats_lines modifiers and duration fallback
+        stats_lines_mod = self.mod._session_stats_lines({
+            "completed_at": "2026-11-23T19:00:00Z",
+            "completed_note": "all good",
+            "stats": {
+                "steps": 21,
+                "ok": 11,
+                "failed": 10,
+                "fix": 2,
+                "renumbered": 0,
+                "duration_ms": 15000,
+                "started_at": "2026-11-23T19:00:00Z",
+            },
+        })
+        self.assertEqual(
+            stats_lines_mod,
+            [
+                "Steps: 21 (11 ok, 10 failed · 2 fix)",
+                "Duration: 15.0s",
+                "Started: 2026-11-23T19:00:00Z",
+                "Completed: 2026-11-23T19:00:00Z",
+                "Note: all good",
+            ],
+        )
+        stats_lines_ok = self.mod._session_stats_lines({
+            "stats": {"steps": 15, "ok": 15, "failed": 0, "fix": 0, "renumbered": 0, "duration_ms": 500},
+        })
+        self.assertEqual(stats_lines_ok, ["Steps: 15 (15 ok)", "Duration: 500ms"])
 
         r_list = self._run([str(SCRIPT), "--list"])
         self._assert_ok(r_list)
@@ -351,10 +404,22 @@ class TestRunner(RunBlockTestCase):
         self._assert_ok(r_again)
         self.assertIn("already marked as completed", r_again.stdout)
 
-        self.mod.start_session("s2")
-        r_latest = self._run([str(SCRIPT), "--done", "-y"])
+        self._assert_ok(
+            self._run(
+                ["--start", "--session", "s2"],
+                input="Role: work\nTask: F94\n\nprompt2\n",
+            )
+        )
+        r_latest = self._run([str(SCRIPT), "--done", "-y", "-m", "headless note"])
         self._assert_ok(r_latest)
-        self.assertIn("[s2] END SESSION", r_latest.stdout)
+        self.assertIn("[s2] END SESSION\n", r_latest.stdout)
+        self.assertNotRegex(r_latest.stdout, r"(?m)^Session:")
+        self.assertNotIn("\n\n", r_latest.stdout)
+        self.assertRegex(r_latest.stdout, r"Workdir:\s+")
+        self.assertRegex(r_latest.stdout, r"Role:\s+work")
+        self.assertRegex(r_latest.stdout, r"Task:\s+F94")
+        self.assertRegex(r_latest.stdout, r"Steps:\s+0")
+        self.assertRegex(r_latest.stdout, r"Note:\s+headless note")
 
     def test_completed_session_blocks_runs_until_reopened(self):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -397,6 +462,12 @@ class TestRunner(RunBlockTestCase):
             def isatty(self):
                 return True
 
+        self._assert_ok(
+            self._run(
+                ["--start", "--session", "s1"],
+                input="Role: work\nTask: F94\nTitle: Guard completed session\n\nprompt\n",
+            )
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             self.mod.cmd_normal("s1/1", "echo one\n")
             self.mod.cmd_done("s1", note="done for today")
@@ -411,7 +482,18 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(args[0], "SESSION COMPLETED")
         self.assertEqual(args[2], "-> Reopen session s1?")
         self.assertFalse(kwargs["default_yes"])
-        self.assertTrue(any("done for today" in ln for ln in args[1]))
+        box_lines = args[1]
+        self.assertIn("", box_lines)
+        sep_idx = box_lines.index("")
+        hdr_part = "\n".join(box_lines[:sep_idx])
+        body_part = "\n".join(box_lines[sep_idx + 1 :])
+        self.assertRegex(hdr_part, r"Step:\s+s1/2")
+        self.assertRegex(hdr_part, r"Workdir:\s+")
+        self.assertRegex(hdr_part, r"Role:\s+work")
+        self.assertRegex(hdr_part, r"Task:\s+F94")
+        self.assertRegex(hdr_part, r"Title:\s+Guard completed session")
+        self.assertRegex(body_part, r"Completed:\s+")
+        self.assertRegex(body_part, r"Note:\s+done for today")
         self.assertTrue(self.mod.is_session_completed(sdir))
         self.assertFalse(self.mod._step_dir(sdir, "2").exists())
 
@@ -1632,11 +1714,12 @@ class TestRunner(RunBlockTestCase):
         self.assertLess(idx_end_sess, idx_start_sess)
 
         # Deferred END SESSION re-reads s1/meta.json AFTER update_session_stats(),
-        # so the completing step s1/1 itself is counted (Steps: 1, Results: 1 ok)
+        # so the completing step s1/1 itself is counted (Steps: 1 (1 ok))
         end_sess_section = full_stdout[idx_end_sess:idx_start_sess]
         self.assertRegex(end_sess_section, r"Session:\s+s1")
-        self.assertRegex(end_sess_section, r"Steps:\s+1")
-        self.assertRegex(end_sess_section, r"Results:\s+1 ok, 0 failed")
+        self.assertRegex(end_sess_section, r"Workdir:\s+")
+        self.assertRegex(end_sess_section, r"Task:\s+F79")
+        self.assertRegex(end_sess_section, r"Steps:\s+1 \(1 ok\)")
         self.assertRegex(end_sess_section, r"Note:\s+finished F79")
 
         # Because a deferred start_session card was queued, offer_clipboard_copy was

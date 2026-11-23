@@ -35,40 +35,6 @@ Follow-up findings from F74 review:
      - Surface provider token and cache hit statistics in `Stats:` across `END STEP` and `END SESSION`.
   6. Stdlib-first HTTP/SSE streaming client (`urllib.request`) with no required third-party dependencies, coordinating with `F85` (`GIT_PAGER=cat`).
 
-# 🎯 [NEXT] F94: Show standard session headers and clean step/duration summary in END SESSION and SESSION COMPLETED cards
-
-- Depends on: B14
-- Bump: `PATCH`
-- In `render_end_session_card()` (`src/runner.py`), prepend standard session
-  header lines via `format_session_header_lines(label=name, sdir=sdir)`
-  (`Session`, `Workdir`, `Sandbox` when active, and exposed bundle headers such
-  as `Role`, `Task`, `Title`), separated by a blank line from the session
-  completion summary block.
-- In `_guard_completed_session()` (`src/runner.py`), prepend
-  `format_session_header_lines(label=label, sdir=sdir)` separated by a blank
-  line from `Completed:` and `Note:` in the `SESSION COMPLETED` confirmation
-  box (matching `STEP ALREADY EXISTS` and `MISSING PREVIOUS STEP`).
-- Replace the noisy two-line `Steps:` + `Results: X ok, Y failed, Z --fix, W
-  renumbered` format in `_session_stats_lines()` (`src/runner.py`) with a
-  concise summary:
-  - `Steps: <total> (<non-zero outcomes> · <non-zero modifiers>)` (for example
-    `Steps: 15 (15 ok)` or `Steps: 21 (11 ok, 10 failed · 2 fix)`), omitting
-    zero-count outcomes and zero-count modifiers (`fix`, `renumbered`) and
-    using `fix` instead of `--fix`.
-  - Order timestamps chronologically (`Started:` before `Completed:`) and show
-    wall-clock session elapsed time alongside total script execution time in
-    `Duration:` when `started_at` and `completed_at` are present (for example
-    `Duration: 25m 1s (1m 20s exec)`, falling back to `Duration: <exec>` when
-    timestamps are absent or equal).
-  - Keep `Note: <completed_note>` at the end of the summary block, and in
-    headless mode (`run --done -y`) print `[<session>] END SESSION`
-    followed by the non-empty header and summary lines without duplicating
-    `Session:`.
-- Update unit tests in `tests/test_runner.py` to verify standard headers
-  (`Workdir`, `Role`, `Task`, `Title`), blank-line separation, the new
-  `Steps:` / `Duration:` / `Started:` / `Completed:` layout, and
-  `SESSION COMPLETED` headers.
-
 # ⚪ [NEW] F93: Split src/runner.py by responsibility
 
 - Depends on: F94, B15
