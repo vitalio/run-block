@@ -136,10 +136,17 @@ rules are loaded via `.agents_bundle`.
   no boundary is declared.
 - Protocol version and fragment kinds: `get_bundle_protocol()` reads
   `Bundle-Protocol`; `format_start_bundle()` warns on `stderr` for versions
-  outside `SUPPORTED_BUNDLE_PROTOCOLS` without rejecting the bundle. Fragment
-  kinds `task` and `context` (`TASK_CONTEXT_KINDS`) are ordinary parts; the CLI
-  `-p` prompt always lands in a trailing `prompt` part after them, and
-  `analyze_bundle_warnings()` flags empty ones (`fragment_empty`).
+  outside `SUPPORTED_BUNDLE_PROTOCOLS` without rejecting the bundle.
+  `normalize_fragment_kind()` maps `context-bundle-protocol` fragments to the 4
+  canonical kinds (`rule`, `file`, `cmd`, `prompt`), normalizing legacy
+  `include` -> `file` and `task` / `context` -> `prompt`. Upstream prompt
+  fragments carry a non-empty `chain` (and can be deduplicated by
+  `_dedupe_fragments()`), whereas the user's root session prompt fragment has
+  `chain: []` (`name: "Prompt"`): `inject_embedded_prompt()`,
+  `append_note_to_raw_bundle()`, and `refresh_bundle_plan_after_edit()` merge
+  only into a trailing root user prompt fragment (`chain: []`) and otherwise
+  append a new root `Prompt` part, and `analyze_bundle_warnings()` flags any
+  empty prompt fragment (`fragment_empty`).
 - Part line ranges: each part entry records 1-based `line_start` / `line_end`
   into the cleaned `<session>/0` (body-relative for `stdin`; `line_offset`
   tracks the header shift applied by `reconcile_bundle_plan`, which keeps the

@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.34.0"
+VERSION = "0.34.1"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -5032,7 +5032,7 @@ def append_note_to_file(target: Path, note: str, *, as_prompt: bool) -> bool:
             if boundary:
                 raw_txt = raw_path.read_text(encoding="utf-8", errors="replace")
                 pre_hdrs, raw_body = parse_stdin_preamble(raw_txt)
-                new_raw_body = inject_embedded_prompt(raw_body, prompt=text, boundary=boundary)
+                new_raw_body = append_note_to_raw_bundle(raw_body, note=text, boundary=boundary)
                 hdr_block = "\n".join(f"{k}: {v}" for k, v in pre_hdrs) + "\n" if pre_hdrs else ""
                 new_raw_full = hdr_block + ("\n" + new_raw_body.strip("\n") + "\n" if (hdr_block and new_raw_body.strip()) else (new_raw_body.strip("\n") + "\n" if new_raw_body.strip() else ""))
                 write_private(raw_path, new_raw_full, overwrite=True)
@@ -6808,7 +6808,13 @@ BUNDLE_HIDE_HEADER = "bundle-hide"
 BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
-TASK_CONTEXT_KINDS = ("task", "context")
+CANONICAL_FRAGMENT_KINDS = ("rule", "file", "cmd", "prompt")
+LEGACY_FRAGMENT_KIND_ALIASES = {
+    "include": "file",
+    "task": "prompt",
+    "context": "prompt",
+}
+PROMPT_FRAGMENT_KINDS = ("prompt", "task", "context")
 DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 DEDUP_MIN_LINES = 3
@@ -6968,6 +6974,29 @@ def inject_embedded_block_rule(
     return f"===== Rules =====\n{rule_text}\n\n===== Prompt =====\n{stripped}"
 
 
+def normalize_fragment_kind(raw_kind: object, default: str = "") -> str:
+    kind = str(raw_kind or "").strip().lower()
+    if not kind:
+        return default
+    return LEGACY_FRAGMENT_KIND_ALIASES.get(kind, kind)
+
+
+def _fragment_meta_chain(meta: dict[str, object]) -> list[str]:
+    if "chain" in meta and isinstance(meta.get("chain"), (list, tuple)):
+        return [str(x).strip() for x in meta["chain"] if str(x).strip()]
+    grp = str(meta.get("group") or "").strip()
+    if not grp:
+        return []
+    via = str(meta.get("via") or "").strip()
+    if via and via != grp:
+        return [via, grp]
+    return [grp]
+
+
+def _is_root_prompt_fragment(meta: dict[str, object]) -> bool:
+    return normalize_fragment_kind(meta.get("kind")) == "prompt" and not _fragment_meta_chain(meta)
+
+
 def normalize_prompt_text(prompt: str | list[str] | tuple[str, ...] | None) -> str:
     if prompt is None:
         return ""
@@ -7048,7 +7077,7 @@ def inject_embedded_prompt(
                                 pass
                         break
                 if last_part_idx is not None:
-                    part_kind = str(last_meta.get("kind") or "").strip().lower()
+                    part_kind = normalize_fragment_kind(last_meta.get("kind"))
                     inner = list(lines[last_part_idx + 1 : last_end_idx])
                     while inner and not inner[-1].strip():
                         inner.pop()
@@ -7059,14 +7088,18 @@ def inject_embedded_prompt(
                         "",
                     )
                     m_prev_sec = SECTION_HEADER_RE.match(prev_nonempty) if prev_nonempty else None
-                    is_prompt_part = part_kind == "prompt" or (
-                        part_kind in ("", "section")
-                        and (
-                            (m_inner_sec is not None and m_inner_sec.group(1).strip().lower() == "prompt")
-                            or (m_prev_sec is not None and m_prev_sec.group(1).strip().lower() == "prompt")
+                    has_upstream_chain = bool(_fragment_meta_chain(last_meta))
+                    is_root_prompt_part = not has_upstream_chain and (
+                        part_kind == "prompt"
+                        or (
+                            part_kind in ("", "section")
+                            and (
+                                (m_inner_sec is not None and m_inner_sec.group(1).strip().lower() == "prompt")
+                                or (m_prev_sec is not None and m_prev_sec.group(1).strip().lower() == "prompt")
+                            )
                         )
                     )
-                    if is_prompt_part:
+                    if is_root_prompt_part:
                         non_empty_inner = [ln for ln in inner if ln.strip()]
                         only_header = (
                             len(non_empty_inner) == 1
@@ -7093,6 +7126,14 @@ def inject_embedded_prompt(
     if lines:
         return "\n".join([*lines, "", "===== Prompt =====", *prompt_lines])
     return "\n".join(["===== Prompt =====", *prompt_lines])
+
+
+def append_note_to_raw_bundle(
+    raw_body: str,
+    note: str | list[str] | tuple[str, ...] | None = None,
+    boundary: str | None = None,
+) -> str:
+    return inject_embedded_prompt(raw_body, prompt=note, boundary=boundary)
 
 
 def _parse_header_filter_tokens(raw: str) -> set[str]:
@@ -7260,7 +7301,7 @@ def _dedupe_fragments(
     for (meta, part_lines), span in zip(raw_parts, spans):
         norm = _comparable_payload(part_lines)
         src = None
-        if span is not None and any(norm) and str(meta.get("kind") or "").lower() != "prompt":
+        if span is not None and any(norm) and not _is_root_prompt_fragment(meta):
             src = _find_dedup_source(norm, kept_norms)
         if src is None:
             kept_parts.append((meta, part_lines))
@@ -7359,7 +7400,8 @@ def analyze_bundle_warnings(
     computed_gpt = 0
     for idx_0, entry in enumerate(parts):
         idx = int(entry.get("index") or (idx_0 + 1))
-        kind = str(entry.get("kind") or "part").lower()
+        raw_kind = str(entry.get("kind") or "part").lower()
+        kind = normalize_fragment_kind(raw_kind, default="part")
         label = _part_label(entry)
         gpt_cnt = int(entry.get("gpt") or 0)
         computed_gpt += gpt_cnt
@@ -7385,15 +7427,15 @@ def analyze_bundle_warnings(
                         "message": f"command {label!r} produced empty output",
                     }
                 )
-        if kind in TASK_CONTEXT_KINDS and part_lines_list is not None and idx_0 < len(part_lines_list):
-            if not any(ln.strip() for ln in part_lines_list[idx_0]):
+        if (kind == "prompt" or raw_kind in PROMPT_FRAGMENT_KINDS) and part_lines_list is not None and idx_0 < len(part_lines_list):
+            if _is_cmd_output_empty(part_lines_list[idx_0]):
                 warnings.append(
                     {
                         "code": "fragment_empty",
                         "severity": "warn",
                         "part_index": idx,
                         "part_name": label,
-                        "message": f"{kind} fragment {label!r} is empty",
+                        "message": f"prompt fragment {label!r} is empty",
                     }
                 )
         if frag_limit > 0 and gpt_cnt > frag_limit:
@@ -7763,7 +7805,7 @@ def _build_bundle_plan(
 
         entry: dict[str, object] = {
             "index": idx,
-            "kind": str(meta.get("kind") or "part"),
+            "kind": normalize_fragment_kind(meta.get("kind"), default="part"),
         }
         if meta.get("id"):
             entry["id"] = str(meta["id"])
@@ -7916,7 +7958,9 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
                     try:
                         parsed = json.loads(raw_json)
                         if isinstance(parsed, dict):
-                            cur_meta = parsed
+                            cur_meta = dict(parsed)
+                            if "kind" in cur_meta:
+                                cur_meta["kind"] = normalize_fragment_kind(cur_meta.get("kind"), default="part")
                     except ValueError:
                         cur_meta = {"kind": "part"}
                 continue
@@ -7958,6 +8002,70 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
     return _split_section_fallback(norm_text, boundary_val)
 
 
+def _is_trailing_root_prompt_part(entry: dict[str, object]) -> bool:
+    return normalize_fragment_kind(entry.get("kind")) == "prompt" and not _resolve_part_chain(entry)
+
+
+def refresh_bundle_plan_after_edit(
+    prev_plan: dict[str, object] | None,
+    parsed_plan: dict[str, object],
+    text: str,
+) -> dict[str, object] | None:
+    if not (
+        isinstance(prev_plan, dict)
+        and prev_plan.get("protocol") == "boundary"
+        and parsed_plan.get("protocol") != "boundary"
+    ):
+        return None
+    prev_parts = [dict(p) for p in (prev_plan.get("parts") or []) if isinstance(p, dict)]
+    non_hdr = [p for p in prev_parts if str(p.get("kind") or "") != "header"]
+    if not non_hdr:
+        return None
+    has_trailing_root_prompt = _is_trailing_root_prompt_part(non_hdr[-1])
+    fixed_parts = non_hdr[:-1] if has_trailing_root_prompt else non_hdr
+    lines = text.splitlines()
+    last_fixed_end = 0
+    for p in fixed_parts:
+        ls, le = p.get("line_start"), p.get("line_end")
+        if not isinstance(ls, int) or not isinstance(le, int) or ls < 1 or le > len(lines):
+            return None
+        last_fixed_end = max(last_fixed_end, int(le))
+    if last_fixed_end <= 0 or last_fixed_end > len(lines):
+        return None
+    tail_start = last_fixed_end + 1
+    while tail_start <= len(lines) and not lines[tail_start - 1].strip():
+        tail_start += 1
+    tail_end = len(lines)
+    while tail_end >= tail_start and not lines[tail_end - 1].strip():
+        tail_end -= 1
+    if tail_start > tail_end:
+        return None
+    tail_lines = lines[tail_start - 1 : tail_end]
+    first_tail = tail_lines[0].strip()
+    m_sec = SECTION_HEADER_RE.match(first_tail)
+    if not (m_sec and m_sec.group(1).strip().lower() == "prompt"):
+        return None
+    p_text = "\n".join(tail_lines) + "\n"
+    tok = count_tokens(p_text.encode("utf-8"))
+    if has_trailing_root_prompt:
+        p_entry = dict(non_hdr[-1])
+        non_hdr[-1] = p_entry
+    else:
+        p_entry = {"kind": "prompt", "name": "Prompt", "chain": []}
+        non_hdr.append(p_entry)
+    p_entry["lines"] = int(tok["lines"])
+    p_entry["chars"] = int(tok["chars"])
+    p_entry["bytes"] = int(tok["bytes"])
+    p_entry["gpt"] = int(tok["gpt"])
+    p_entry["claude"] = int(tok["claude"])
+    p_entry["line_start"] = tail_start
+    p_entry["line_end"] = tail_end
+    kept_plan = dict(prev_plan)
+    kept_plan["parts"] = non_hdr
+    kept_plan["line_offset"] = _body_line_offset(text)
+    return reconcile_bundle_plan(kept_plan, text, track_lines=False)
+
+
 def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     if not bundle_path.is_file():
         return
@@ -7988,59 +8096,10 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
             plan = reconcile_bundle_plan(raw_plan, text)
             update_session_meta(sdir, bundle_plan=plan)
             return
-    if (
-        isinstance(prev_plan, dict)
-        and prev_plan.get("protocol") == "boundary"
-        and parsed_plan.get("protocol") != "boundary"
-    ):
-        prev_parts = [dict(p) for p in (prev_plan.get("parts") or []) if isinstance(p, dict)]
-        non_hdr = [p for p in prev_parts if str(p.get("kind") or "") != "header"]
-        lines = text.splitlines()
-        last_non_prompt_end = 0
-        for p in non_hdr:
-            if str(p.get("kind") or "") != "prompt" and isinstance(p.get("line_end"), int):
-                last_non_prompt_end = max(last_non_prompt_end, int(p["line_end"]))
-        if non_hdr and last_non_prompt_end > 0 and last_non_prompt_end <= len(lines):
-            prefix_match = True
-            for p in non_hdr:
-                if str(p.get("kind") or "") == "prompt":
-                    continue
-                ls, le = p.get("line_start"), p.get("line_end")
-                if not isinstance(ls, int) or not isinstance(le, int) or ls < 1 or le > len(lines):
-                    prefix_match = False
-                    break
-            if prefix_match:
-                tail_start = last_non_prompt_end + 1
-                while tail_start <= len(lines) and not lines[tail_start - 1].strip():
-                    tail_start += 1
-                tail_end = len(lines)
-                while tail_end >= tail_start and not lines[tail_end - 1].strip():
-                    tail_end -= 1
-                if tail_start <= tail_end:
-                    tail_lines = lines[tail_start - 1 : tail_end]
-                    first_tail = tail_lines[0].strip()
-                    m_sec = SECTION_HEADER_RE.match(first_tail)
-                    if m_sec and m_sec.group(1).strip().lower() == "prompt":
-                        p_text = "\n".join(tail_lines) + "\n"
-                        tok = count_tokens(p_text.encode("utf-8"))
-                        if str(non_hdr[-1].get("kind") or "") == "prompt":
-                            p_entry = dict(non_hdr[-1])
-                        else:
-                            p_entry = {"kind": "prompt", "name": "Prompt", "chain": []}
-                            non_hdr.append(p_entry)
-                        p_entry["lines"] = int(tok["lines"])
-                        p_entry["chars"] = int(tok["chars"])
-                        p_entry["bytes"] = int(tok["bytes"])
-                        p_entry["gpt"] = int(tok["gpt"])
-                        p_entry["claude"] = int(tok["claude"])
-                        p_entry["line_start"] = tail_start
-                        p_entry["line_end"] = tail_end
-                        kept_plan = dict(prev_plan)
-                        kept_plan["parts"] = non_hdr
-                        kept_plan["line_offset"] = _body_line_offset(text)
-                        plan = reconcile_bundle_plan(kept_plan, text, track_lines=False)
-                        update_session_meta(sdir, bundle_plan=plan)
-                        return
+    reconciled_edit = refresh_bundle_plan_after_edit(prev_plan, parsed_plan, text)
+    if reconciled_edit is not None:
+        update_session_meta(sdir, bundle_plan=reconciled_edit)
+        return
     raw_path.unlink(missing_ok=True)
     plan = reconcile_bundle_plan(parsed_plan, text)
     update_session_meta(sdir, bundle_plan=plan)

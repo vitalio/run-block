@@ -323,7 +323,7 @@ def _build_bundle_plan(
 
         entry: dict[str, object] = {
             "index": idx,
-            "kind": str(meta.get("kind") or "part"),
+            "kind": normalize_fragment_kind(meta.get("kind"), default="part"),
         }
         if meta.get("id"):
             entry["id"] = str(meta["id"])
@@ -476,7 +476,9 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
                     try:
                         parsed = json.loads(raw_json)
                         if isinstance(parsed, dict):
-                            cur_meta = parsed
+                            cur_meta = dict(parsed)
+                            if "kind" in cur_meta:
+                                cur_meta["kind"] = normalize_fragment_kind(cur_meta.get("kind"), default="part")
                     except ValueError:
                         cur_meta = {"kind": "part"}
                 continue
@@ -518,6 +520,70 @@ def parse_bundle_fragments(body_text: str, boundary: str | None = None) -> tuple
     return _split_section_fallback(norm_text, boundary_val)
 
 
+def _is_trailing_root_prompt_part(entry: dict[str, object]) -> bool:
+    return normalize_fragment_kind(entry.get("kind")) == "prompt" and not _resolve_part_chain(entry)
+
+
+def refresh_bundle_plan_after_edit(
+    prev_plan: dict[str, object] | None,
+    parsed_plan: dict[str, object],
+    text: str,
+) -> dict[str, object] | None:
+    if not (
+        isinstance(prev_plan, dict)
+        and prev_plan.get("protocol") == "boundary"
+        and parsed_plan.get("protocol") != "boundary"
+    ):
+        return None
+    prev_parts = [dict(p) for p in (prev_plan.get("parts") or []) if isinstance(p, dict)]
+    non_hdr = [p for p in prev_parts if str(p.get("kind") or "") != "header"]
+    if not non_hdr:
+        return None
+    has_trailing_root_prompt = _is_trailing_root_prompt_part(non_hdr[-1])
+    fixed_parts = non_hdr[:-1] if has_trailing_root_prompt else non_hdr
+    lines = text.splitlines()
+    last_fixed_end = 0
+    for p in fixed_parts:
+        ls, le = p.get("line_start"), p.get("line_end")
+        if not isinstance(ls, int) or not isinstance(le, int) or ls < 1 or le > len(lines):
+            return None
+        last_fixed_end = max(last_fixed_end, int(le))
+    if last_fixed_end <= 0 or last_fixed_end > len(lines):
+        return None
+    tail_start = last_fixed_end + 1
+    while tail_start <= len(lines) and not lines[tail_start - 1].strip():
+        tail_start += 1
+    tail_end = len(lines)
+    while tail_end >= tail_start and not lines[tail_end - 1].strip():
+        tail_end -= 1
+    if tail_start > tail_end:
+        return None
+    tail_lines = lines[tail_start - 1 : tail_end]
+    first_tail = tail_lines[0].strip()
+    m_sec = SECTION_HEADER_RE.match(first_tail)
+    if not (m_sec and m_sec.group(1).strip().lower() == "prompt"):
+        return None
+    p_text = "\n".join(tail_lines) + "\n"
+    tok = count_tokens(p_text.encode("utf-8"))
+    if has_trailing_root_prompt:
+        p_entry = dict(non_hdr[-1])
+        non_hdr[-1] = p_entry
+    else:
+        p_entry = {"kind": "prompt", "name": "Prompt", "chain": []}
+        non_hdr.append(p_entry)
+    p_entry["lines"] = int(tok["lines"])
+    p_entry["chars"] = int(tok["chars"])
+    p_entry["bytes"] = int(tok["bytes"])
+    p_entry["gpt"] = int(tok["gpt"])
+    p_entry["claude"] = int(tok["claude"])
+    p_entry["line_start"] = tail_start
+    p_entry["line_end"] = tail_end
+    kept_plan = dict(prev_plan)
+    kept_plan["parts"] = non_hdr
+    kept_plan["line_offset"] = _body_line_offset(text)
+    return reconcile_bundle_plan(kept_plan, text, track_lines=False)
+
+
 def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
     if not bundle_path.is_file():
         return
@@ -548,59 +614,10 @@ def refresh_bundle_plan_meta(sdir: Path, bundle_path: Path) -> None:
             plan = reconcile_bundle_plan(raw_plan, text)
             update_session_meta(sdir, bundle_plan=plan)
             return
-    if (
-        isinstance(prev_plan, dict)
-        and prev_plan.get("protocol") == "boundary"
-        and parsed_plan.get("protocol") != "boundary"
-    ):
-        prev_parts = [dict(p) for p in (prev_plan.get("parts") or []) if isinstance(p, dict)]
-        non_hdr = [p for p in prev_parts if str(p.get("kind") or "") != "header"]
-        lines = text.splitlines()
-        last_non_prompt_end = 0
-        for p in non_hdr:
-            if str(p.get("kind") or "") != "prompt" and isinstance(p.get("line_end"), int):
-                last_non_prompt_end = max(last_non_prompt_end, int(p["line_end"]))
-        if non_hdr and last_non_prompt_end > 0 and last_non_prompt_end <= len(lines):
-            prefix_match = True
-            for p in non_hdr:
-                if str(p.get("kind") or "") == "prompt":
-                    continue
-                ls, le = p.get("line_start"), p.get("line_end")
-                if not isinstance(ls, int) or not isinstance(le, int) or ls < 1 or le > len(lines):
-                    prefix_match = False
-                    break
-            if prefix_match:
-                tail_start = last_non_prompt_end + 1
-                while tail_start <= len(lines) and not lines[tail_start - 1].strip():
-                    tail_start += 1
-                tail_end = len(lines)
-                while tail_end >= tail_start and not lines[tail_end - 1].strip():
-                    tail_end -= 1
-                if tail_start <= tail_end:
-                    tail_lines = lines[tail_start - 1 : tail_end]
-                    first_tail = tail_lines[0].strip()
-                    m_sec = SECTION_HEADER_RE.match(first_tail)
-                    if m_sec and m_sec.group(1).strip().lower() == "prompt":
-                        p_text = "\n".join(tail_lines) + "\n"
-                        tok = count_tokens(p_text.encode("utf-8"))
-                        if str(non_hdr[-1].get("kind") or "") == "prompt":
-                            p_entry = dict(non_hdr[-1])
-                        else:
-                            p_entry = {"kind": "prompt", "name": "Prompt", "chain": []}
-                            non_hdr.append(p_entry)
-                        p_entry["lines"] = int(tok["lines"])
-                        p_entry["chars"] = int(tok["chars"])
-                        p_entry["bytes"] = int(tok["bytes"])
-                        p_entry["gpt"] = int(tok["gpt"])
-                        p_entry["claude"] = int(tok["claude"])
-                        p_entry["line_start"] = tail_start
-                        p_entry["line_end"] = tail_end
-                        kept_plan = dict(prev_plan)
-                        kept_plan["parts"] = non_hdr
-                        kept_plan["line_offset"] = _body_line_offset(text)
-                        plan = reconcile_bundle_plan(kept_plan, text, track_lines=False)
-                        update_session_meta(sdir, bundle_plan=plan)
-                        return
+    reconciled_edit = refresh_bundle_plan_after_edit(prev_plan, parsed_plan, text)
+    if reconciled_edit is not None:
+        update_session_meta(sdir, bundle_plan=reconciled_edit)
+        return
     raw_path.unlink(missing_ok=True)
     plan = reconcile_bundle_plan(parsed_plan, text)
     update_session_meta(sdir, bundle_plan=plan)

@@ -2411,7 +2411,7 @@ def append_note_to_file(target: Path, note: str, *, as_prompt: bool) -> bool:
             if boundary:
                 raw_txt = raw_path.read_text(encoding="utf-8", errors="replace")
                 pre_hdrs, raw_body = parse_stdin_preamble(raw_txt)
-                new_raw_body = inject_embedded_prompt(raw_body, prompt=text, boundary=boundary)
+                new_raw_body = append_note_to_raw_bundle(raw_body, note=text, boundary=boundary)
                 hdr_block = "\n".join(f"{k}: {v}" for k, v in pre_hdrs) + "\n" if pre_hdrs else ""
                 new_raw_full = hdr_block + ("\n" + new_raw_body.strip("\n") + "\n" if (hdr_block and new_raw_body.strip()) else (new_raw_body.strip("\n") + "\n" if new_raw_body.strip() else ""))
                 write_private(raw_path, new_raw_full, overwrite=True)

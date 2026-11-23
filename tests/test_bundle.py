@@ -593,7 +593,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(plan["boundary"], nonce)
         self.assertEqual(plan["part_count"], 5)
         parts = plan["parts"]
-        self.assertEqual([p["kind"] for p in parts], ["header", "rule", "cmd", "include", "prompt"])
+        self.assertEqual([p["kind"] for p in parts], ["header", "rule", "cmd", "file", "prompt"])
         self.assertEqual(parts[0]["name"], "Headers & spacing")
         self.assertEqual(parts[0]["index"], 1)
         self.assertEqual(parts[1]["id"], "vitalio/run_block:blocks/bash")
@@ -732,33 +732,105 @@ class TestBundle(RunBlockTestCase):
             self.mod.format_start_bundle("s1", stdin_body="Bundle-Protocol: 9\n\nbody\n", work_dir=self.tmp)
         self.assertIn("unsupported Bundle-Protocol: 9", err_bad.getvalue())
 
-        # 2. task/context kinds parse, and CLI prompt lands after them in a Prompt part
+        # 2. Legacy include/task/context kinds normalize to canonical file/prompt;
+        #    upstream prompt fragments (with non-empty chain) stay distinct from the trailing root user Prompt part
         body = (
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"context\", \"name\": \"repo state\"}} -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"include\", \"name\": \"extra.md\", \"chain\": [\".agents_bundle\"]}} -->\n"
+            "included file line\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"context\", \"name\": \"repo state\", \"chain\": [\".agents_bundle\"]}} -->\n"
             "context line\n"
             f"<!-- bundle:{nonce}:end -->\n"
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"task\", \"name\": \"F1\"}} -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"task\", \"name\": \"F1\", \"chain\": [\"todo_md\"]}} -->\n"
             "task line\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"F2\", \"chain\": [\"todo_md\"]}} -->\n"
+            "upstream prompt line\n"
             f"<!-- bundle:{nonce}:end -->\n"
         )
         merged = self.mod.inject_embedded_prompt(body, prompt="cli note", boundary=nonce)
         clean, plan = self.mod.parse_bundle_fragments(merged, boundary=nonce)
-        self.assertEqual([p["kind"] for p in plan["parts"]], ["context", "task", "prompt"])
-        self.assertLess(clean.index("task line"), clean.index("===== Prompt ====="))
+        self.assertEqual([p["kind"] for p in plan["parts"]], ["file", "prompt", "prompt", "prompt", "prompt"])
+        self.assertEqual(
+            [(p["name"], p.get("chain", [])) for p in plan["parts"]],
+            [
+                ("extra.md", [".agents_bundle"]),
+                ("repo state", [".agents_bundle"]),
+                ("F1", ["todo_md"]),
+                ("F2", ["todo_md"]),
+                ("Prompt", []),
+            ],
+        )
+        self.assertLess(clean.index("upstream prompt line"), clean.index("===== Prompt ====="))
         self.assertLess(clean.index("===== Prompt ====="), clean.index("cli note"))
         self.assertEqual(
             [k for k, _ in self.mod.format_bundle_part_items(plan)],
-            ["context", "task", "prompt"],
+            ["file", "prompt", "prompt", "prompt", "prompt"],
         )
         self.assertEqual(plan["warnings"], [])
 
-        # 3. Empty task/context fragments are flagged
-        empty_body = (
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"task\", \"name\": \"F2\"}} -->\n"
+        # Appending a follow-up prompt note via append_note_to_raw_bundle merges into the trailing root Prompt part
+        merged2 = self.mod.append_note_to_raw_bundle(merged, note="second user note", boundary=nonce)
+        clean2, plan2 = self.mod.parse_bundle_fragments(merged2, boundary=nonce)
+        self.assertEqual(len(plan2["parts"]), 5)
+        self.assertEqual(plan2["parts"][-1]["name"], "Prompt")
+        self.assertEqual(plan2["parts"][-1].get("chain", []), [])
+        self.assertIn("cli note\n\nsecond user note", clean2)
+
+        # Appending a prompt note when the last part is an upstream prompt (non-empty chain) creates a new root Prompt part
+        upstream_only = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"F96\", \"chain\": [\"todo_md\"]}} -->\n"
+            "===== Prompt =====\n"
+            "Task prompt from todo_md\n"
             f"<!-- bundle:{nonce}:end -->\n"
         )
-        _, empty_plan = self.mod.parse_bundle_fragments(empty_body, boundary=nonce)
-        self.assertEqual([w["code"] for w in empty_plan["warnings"]], ["fragment_empty"])
+        with_note = self.mod.append_note_to_raw_bundle(upstream_only, note="user addition", boundary=nonce)
+        _, note_plan = self.mod.parse_bundle_fragments(with_note, boundary=nonce)
+        self.assertEqual(
+            [(p["kind"], p["name"], p.get("chain", [])) for p in note_plan["parts"]],
+            [
+                ("prompt", "F96", ["todo_md"]),
+                ("prompt", "Prompt", []),
+            ],
+        )
+
+        # refresh_bundle_plan_after_edit preserves upstream prompt parts and appends/updates only trailing root Prompt
+        prev_with_hdr = self.mod.reconcile_bundle_plan(
+            self.mod.parse_bundle_fragments(upstream_only, boundary=nonce)[1],
+            "Session: s1\n\n===== Prompt =====\nTask prompt from todo_md\n",
+        )
+        edited_text = (
+            "Session: s1\n\n"
+            "===== Prompt =====\n"
+            "Task prompt from todo_md\n\n"
+            "===== Prompt =====\n"
+            "user addition\n"
+        )
+        _, fallback_parsed = self.mod.parse_bundle_fragments(
+            "===== Prompt =====\nTask prompt from todo_md\n\n===== Prompt =====\nuser addition\n"
+        )
+        reconciled = self.mod.refresh_bundle_plan_after_edit(prev_with_hdr, fallback_parsed, edited_text)
+        self.assertIsNotNone(reconciled)
+        assert reconciled is not None
+        self.assertEqual(
+            [(p["kind"], p["name"], p.get("chain", [])) for p in reconciled["parts"]],
+            [
+                ("header", "Headers & spacing", []),
+                ("prompt", "F96", ["todo_md"]),
+                ("prompt", "Prompt", []),
+            ],
+        )
+
+        # 3. Empty prompt (and legacy task/context) fragments are flagged with fragment_empty
+        for empty_kind in ("prompt", "task", "context"):
+            with self.subTest(empty_kind=empty_kind):
+                empty_body = (
+                    f"<!-- bundle:{nonce}:part {{\"kind\": \"{empty_kind}\", \"name\": \"F2\"}} -->\n"
+                    f"<!-- bundle:{nonce}:end -->\n"
+                )
+                _, empty_plan = self.mod.parse_bundle_fragments(empty_body, boundary=nonce)
+                self.assertEqual([w["code"] for w in empty_plan["warnings"]], ["fragment_empty"])
+                self.assertIn("prompt fragment 'F2' is empty", empty_plan["warnings"][0]["message"])
 
     def test_f68_top_style_table_kinds_groups_heavy_and_header(self) -> None:
         def _part(idx, kind, name, chain, chars, share):
@@ -2279,6 +2351,19 @@ class TestBundle(RunBlockTestCase):
         _, small = self.mod.parse_bundle_fragments(small_body, boundary=nonce)
         self.assertEqual([p["name"] for p in small["parts"]], ["AGENTS.md", "tiny"])
         self.assertNotIn("fragment_deduped", by_code(small))
+
+        # Upstream prompt fragments (with non-empty chain) are deduplicated, while root user Prompt (chain: []) is never dropped
+        dup_prompt_lines = ["Prompt line 1", "Prompt line 2", "Prompt line 3"]
+        prompt_dedup_body = (
+            part('{"kind":"prompt","name":"F96","chain":["todo_md"]}', dup_prompt_lines)
+            + part('{"kind":"prompt","name":"F96_dup","chain":[".agents_bundle","todo_md"]}', dup_prompt_lines)
+            + part('{"kind":"prompt","name":"Prompt","chain":[]}', dup_prompt_lines)
+        )
+        _, p_plan = self.mod.parse_bundle_fragments(prompt_dedup_body, boundary=nonce)
+        self.assertEqual([p["name"] for p in p_plan["parts"]], ["F96", "Prompt"])
+        p_codes = by_code(p_plan)
+        self.assertEqual(len(p_codes["fragment_deduped"]), 1)
+        self.assertEqual(p_codes["fragment_deduped"][0]["removed_name"], "F96_dup")
 
 
 if __name__ == "__main__":

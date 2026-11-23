@@ -4,7 +4,13 @@ BUNDLE_HIDE_HEADER = "bundle-hide"
 BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
-TASK_CONTEXT_KINDS = ("task", "context")
+CANONICAL_FRAGMENT_KINDS = ("rule", "file", "cmd", "prompt")
+LEGACY_FRAGMENT_KIND_ALIASES = {
+    "include": "file",
+    "task": "prompt",
+    "context": "prompt",
+}
+PROMPT_FRAGMENT_KINDS = ("prompt", "task", "context")
 DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 DEDUP_MIN_LINES = 3
@@ -164,6 +170,29 @@ def inject_embedded_block_rule(
     return f"===== Rules =====\n{rule_text}\n\n===== Prompt =====\n{stripped}"
 
 
+def normalize_fragment_kind(raw_kind: object, default: str = "") -> str:
+    kind = str(raw_kind or "").strip().lower()
+    if not kind:
+        return default
+    return LEGACY_FRAGMENT_KIND_ALIASES.get(kind, kind)
+
+
+def _fragment_meta_chain(meta: dict[str, object]) -> list[str]:
+    if "chain" in meta and isinstance(meta.get("chain"), (list, tuple)):
+        return [str(x).strip() for x in meta["chain"] if str(x).strip()]
+    grp = str(meta.get("group") or "").strip()
+    if not grp:
+        return []
+    via = str(meta.get("via") or "").strip()
+    if via and via != grp:
+        return [via, grp]
+    return [grp]
+
+
+def _is_root_prompt_fragment(meta: dict[str, object]) -> bool:
+    return normalize_fragment_kind(meta.get("kind")) == "prompt" and not _fragment_meta_chain(meta)
+
+
 def normalize_prompt_text(prompt: str | list[str] | tuple[str, ...] | None) -> str:
     if prompt is None:
         return ""
@@ -244,7 +273,7 @@ def inject_embedded_prompt(
                                 pass
                         break
                 if last_part_idx is not None:
-                    part_kind = str(last_meta.get("kind") or "").strip().lower()
+                    part_kind = normalize_fragment_kind(last_meta.get("kind"))
                     inner = list(lines[last_part_idx + 1 : last_end_idx])
                     while inner and not inner[-1].strip():
                         inner.pop()
@@ -255,14 +284,18 @@ def inject_embedded_prompt(
                         "",
                     )
                     m_prev_sec = SECTION_HEADER_RE.match(prev_nonempty) if prev_nonempty else None
-                    is_prompt_part = part_kind == "prompt" or (
-                        part_kind in ("", "section")
-                        and (
-                            (m_inner_sec is not None and m_inner_sec.group(1).strip().lower() == "prompt")
-                            or (m_prev_sec is not None and m_prev_sec.group(1).strip().lower() == "prompt")
+                    has_upstream_chain = bool(_fragment_meta_chain(last_meta))
+                    is_root_prompt_part = not has_upstream_chain and (
+                        part_kind == "prompt"
+                        or (
+                            part_kind in ("", "section")
+                            and (
+                                (m_inner_sec is not None and m_inner_sec.group(1).strip().lower() == "prompt")
+                                or (m_prev_sec is not None and m_prev_sec.group(1).strip().lower() == "prompt")
+                            )
                         )
                     )
-                    if is_prompt_part:
+                    if is_root_prompt_part:
                         non_empty_inner = [ln for ln in inner if ln.strip()]
                         only_header = (
                             len(non_empty_inner) == 1
@@ -289,6 +322,14 @@ def inject_embedded_prompt(
     if lines:
         return "\n".join([*lines, "", "===== Prompt =====", *prompt_lines])
     return "\n".join(["===== Prompt =====", *prompt_lines])
+
+
+def append_note_to_raw_bundle(
+    raw_body: str,
+    note: str | list[str] | tuple[str, ...] | None = None,
+    boundary: str | None = None,
+) -> str:
+    return inject_embedded_prompt(raw_body, prompt=note, boundary=boundary)
 
 
 def _parse_header_filter_tokens(raw: str) -> set[str]:
@@ -456,7 +497,7 @@ def _dedupe_fragments(
     for (meta, part_lines), span in zip(raw_parts, spans):
         norm = _comparable_payload(part_lines)
         src = None
-        if span is not None and any(norm) and str(meta.get("kind") or "").lower() != "prompt":
+        if span is not None and any(norm) and not _is_root_prompt_fragment(meta):
             src = _find_dedup_source(norm, kept_norms)
         if src is None:
             kept_parts.append((meta, part_lines))
@@ -555,7 +596,8 @@ def analyze_bundle_warnings(
     computed_gpt = 0
     for idx_0, entry in enumerate(parts):
         idx = int(entry.get("index") or (idx_0 + 1))
-        kind = str(entry.get("kind") or "part").lower()
+        raw_kind = str(entry.get("kind") or "part").lower()
+        kind = normalize_fragment_kind(raw_kind, default="part")
         label = _part_label(entry)
         gpt_cnt = int(entry.get("gpt") or 0)
         computed_gpt += gpt_cnt
@@ -581,15 +623,15 @@ def analyze_bundle_warnings(
                         "message": f"command {label!r} produced empty output",
                     }
                 )
-        if kind in TASK_CONTEXT_KINDS and part_lines_list is not None and idx_0 < len(part_lines_list):
-            if not any(ln.strip() for ln in part_lines_list[idx_0]):
+        if (kind == "prompt" or raw_kind in PROMPT_FRAGMENT_KINDS) and part_lines_list is not None and idx_0 < len(part_lines_list):
+            if _is_cmd_output_empty(part_lines_list[idx_0]):
                 warnings.append(
                     {
                         "code": "fragment_empty",
                         "severity": "warn",
                         "part_index": idx,
                         "part_name": label,
-                        "message": f"{kind} fragment {label!r} is empty",
+                        "message": f"prompt fragment {label!r} is empty",
                     }
                 )
         if frag_limit > 0 and gpt_cnt > frag_limit:

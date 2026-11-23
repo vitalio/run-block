@@ -205,21 +205,26 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   for large parts (>=10% or ~3k tokens accented; >=25% or ~10k tokens warning).
 - **Bundle protocol version & fragment kinds**: `Bundle-Protocol: 1` declares
   `context-bundle-protocol` v1; an unsupported version prints a warning on
-  `stderr` while the bundle is still ingested. Besides `rule`, `cmd`, `file`,
-  `include`, and `prompt`, fragments may have kind `task` or `context`; repeatable
-  `-p`/`--prompt` text is appended to `===== Prompt =====` after the upstream
-  `task`/`context` fragments, and an empty `task`/`context` fragment raises a
-  `fragment_empty` warning in `--bundle-plan` and `START SESSION`.
+  `stderr` while the bundle is still ingested. Fragments use the 4 canonical
+  kinds `rule`, `file`, `cmd`, and `prompt` (legacy `include` normalizes to
+  `file`, and legacy `task` / `context` normalize to `prompt`). Repeatable
+  `-p`/`--prompt` text and interactive `p(rompt)` notes merge only into a
+  trailing root user `prompt` fragment (`chain: []`, `name: "Prompt"`), or
+  append a new trailing root `Prompt` part after upstream producer `prompt`
+  fragments (such as `chain: ["todo_md"]`), and any empty `prompt` fragment
+  raises a `fragment_empty` warning in `--bundle-plan` and `START SESSION`.
 - **Fragment deduplication & overlap warnings**: With a declared boundary,
   a fragment whose text (ignoring a leading `===== ... =====` header line and
   surrounding blank lines) is identical to an earlier fragment, or is a
   contiguous block of at least 3 lines inside one, is dropped from
   `<session>/0` (`0.raw` keeps it) and reported as a `fragment_deduped`
-  warning naming the kept part and the saved lines/tokens. `prompt` fragments
-  are never dropped. When two remaining fragments share a contiguous block of
-  at least 5 lines and 200 characters without being duplicates, a
-  `fragment_overlap` warning shows the earlier part, shared line count, and
-  overlap percentage in `--bundle-plan` and `START SESSION`.
+  warning naming the kept part and the saved lines/tokens. Upstream `prompt`
+  fragments (with a non-empty `chain`) participate in deduplication, while the
+  user's root session `prompt` fragment (`chain: []`) is never dropped. When
+  two remaining fragments share a contiguous block of at least 5 lines and 200
+  characters without being duplicates, a `fragment_overlap` warning shows the
+  earlier part, shared line count, and overlap percentage in `--bundle-plan`
+  and `START SESSION`.
 - **Inspecting individual parts (`--bundle-plan` & `--part N`)**: Each part in
   `bundle_plan` records 1-based `line_start` / `line_end` offsets into cleaned
   `<session>/0`. Inspect the full table or slice a single 1-based part index `N`
