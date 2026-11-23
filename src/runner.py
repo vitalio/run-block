@@ -1374,9 +1374,57 @@ SPLIT_HEADER_RE = re.compile(
 FENCE_LINE_RE = re.compile(r"^`{3,}[A-Za-z0-9_-]*\s*$")
 
 
+ANY_HEREDOC_OPEN_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z0-9_]+)['\"]?\s*$")
+REPLY_CMD_HEADER_RE = re.compile(
+    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*)?(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b([^\n]*?)<<-?\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
+)
+FENCE_OPEN_RE = re.compile(r"^\s*`{3,}([A-Za-z0-9_-]*)\s*$")
+FENCE_CLOSE_RE = re.compile(r"^\s*`{3,}\s*$")
+PROSE_BULLET_HDR_RE = re.compile(
+    r"^\s*(?:[-*+]|\d+\.)\s+`?(?:run(?:_block)?\b|```)"
+)
+
+
 def _is_heredoc_terminator(line: str, delim: str) -> bool:
     stripped = line.strip()
     return stripped == delim or bool(re.fullmatch(rf"{re.escape(delim)}\s*`{{3,}}", stripped))
+
+
+def _find_outer_heredoc_end(lines: list[str], body_start: int, delim: str) -> tuple[int, bool]:
+    """Locate the closing terminator for an outer RUN_BLOCK/RUN_FIX while skipping nested doc/script examples."""
+    # Check whether the first non-blank line is an accidental duplicate wrapper header
+    first_nb = next((i for i in range(body_start, len(lines)) if lines[i].strip()), None)
+    inner_heredoc_eof: str | None = None
+    nested_delim_depth = 0
+    for j in range(body_start, len(lines)):
+        ln = lines[j]
+        stripped = ln.strip()
+        if inner_heredoc_eof is not None:
+            if stripped == inner_heredoc_eof:
+                inner_heredoc_eof = None
+            continue
+        if _is_heredoc_terminator(ln, delim):
+            if nested_delim_depth > 0:
+                nested_delim_depth -= 1
+                continue
+            return j, (ln != delim)
+        # If an inner line opens a nested `run ... <<'RUN_BLOCK'` example (and isn't a leading duplicate wrapper)
+        if j != first_nb and REPLY_CMD_HEADER_RE.match(ln) and not PROSE_BULLET_HDR_RE.match(ln):
+            m_inner = REPLY_CMD_HEADER_RE.match(ln)
+            if m_inner and m_inner.group(2) == delim:
+                # Only treat as nested example if a matching second terminator exists later
+                later_terms = sum(1 for k in range(j + 1, len(lines)) if _is_heredoc_terminator(lines[k], delim))
+                if later_terms >= nested_delim_depth + 2:
+                    nested_delim_depth += 1
+                    continue
+        m_hd = ANY_HEREDOC_OPEN_RE.search(ln)
+        if m_hd and not stripped.startswith("#"):
+            hd_tok = m_hd.group(1)
+            if hd_tok not in ("RUN_BLOCK", "RUN_FIX"):
+                # Only enter inner heredoc state if its closing token exists before the outer terminator
+                if any(lines[k].strip() == hd_tok for k in range(j + 1, len(lines))):
+                    inner_heredoc_eof = hd_tok
+    return -1, False
 
 
 def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
@@ -1406,24 +1454,25 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
 
     delim = m.group(1)
     body_lines = lines[first_nonempty + 1 :]
-    # Stop at the first terminator so repeated or concatenated blocks never merge.
-    end_idx = next((i for i, ln in enumerate(body_lines) if _is_heredoc_terminator(ln, delim)), -1)
-    if end_idx == -1:
+    end_rel, _ = _find_outer_heredoc_end(body_lines, 0, delim)
+    if end_rel == -1:
         # Recover a missing terminator when the block ends with a closing Markdown fence.
         nonblank = [i for i, ln in enumerate(body_lines) if ln.strip()]
         if nonblank and FENCE_LINE_RE.match(body_lines[nonblank[-1]]):
-            end_idx = nonblank[-1]
+            end_rel = nonblank[-1]
         else:
             return (
                 payload,
                 f"unclosed {delim} heredoc on stdin (missing closing '{delim}' terminator — check for split Markdown fences)",
             )
 
-    inner = body_lines[:end_idx]
-    # Drop accidental nested `run_block <s/n> <<'RUN_BLOCK'` wrapper headers.
+    inner = body_lines[:end_rel]
+    # Drop accidental nested `run_block <s/n> <<'RUN_BLOCK'` wrapper headers when not closed inside inner.
     while True:
         first = next((i for i, ln in enumerate(inner) if ln.strip()), None)
         if first is None or not SPLIT_HEADER_RE.match(inner[first]):
+            break
+        if any(_is_heredoc_terminator(ln, delim) for ln in inner[first + 1 :]):
             break
         inner = inner[first + 1 :]
 
@@ -1432,15 +1481,6 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     joined = "\n".join(rebuilt)
     out = (joined + "\n") if joined and not joined.endswith("\n") else joined
     return out, None
-
-REPLY_CMD_HEADER_RE = re.compile(
-    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*)?(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b([^\n]*?)<<-?\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
-)
-FENCE_OPEN_RE = re.compile(r"^\s*`{3,}([A-Za-z0-9_-]*)\s*$")
-FENCE_CLOSE_RE = re.compile(r"^\s*`{3,}\s*$")
-PROSE_BULLET_HDR_RE = re.compile(
-    r"^\s*(?:[-*+]|\d+\.)\s+`?(?:run(?:_block)?\b|```)"
-)
 
 
 def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | None:
@@ -1517,7 +1557,7 @@ def extract_reply_block(
     *,
     allow_fenced_fallback: bool = False,
 ) -> dict[str, object]:
-    """Extract the actionable run / --fix block and preceding model reasoning from a full reply."""
+    """Extract the first actionable run / --fix block (matching default_session when present) and preceding reasoning, discarding trailing hallucinations."""
     norm = reply_text.replace("\r\n", "\n")
     lines = norm.split("\n")
 
@@ -1536,22 +1576,16 @@ def extract_reply_block(
                     if idx > 0 and FENCE_OPEN_RE.match(lines[idx - 1]):
                         start_line = idx - 1
                     body_start = idx + 1
-                    end_idx = -1
-                    repaired = False
-                    next_hdr_idx = n_lines
-                    for j in range(body_start, n_lines):
-                        if _is_heredoc_terminator(lines[j], delim):
-                            if lines[j] != delim:
-                                repaired = True
-                            end_idx = j
-                            break
-                        if not PROSE_BULLET_HDR_RE.match(lines[j]):
-                            m_next = REPLY_CMD_HEADER_RE.match(lines[j])
-                            if m_next and _parse_reply_cmd_tokens(m_next.group(1), m_next.group(2)) is not None:
-                                next_hdr_idx = j
-                                break
+                    end_idx, repaired = _find_outer_heredoc_end(lines, body_start, delim)
                     if end_idx == -1:
                         repaired = True
+                        next_hdr_idx = n_lines
+                        for j in range(body_start, n_lines):
+                            if not PROSE_BULLET_HDR_RE.match(lines[j]):
+                                m_next = REPLY_CMD_HEADER_RE.match(lines[j])
+                                if m_next and _parse_reply_cmd_tokens(m_next.group(1), m_next.group(2)) is not None:
+                                    next_hdr_idx = j
+                                    break
                         close_fence_before_next = [
                             j for j in range(body_start, next_hdr_idx) if FENCE_CLOSE_RE.match(lines[j])
                         ]
@@ -1574,11 +1608,27 @@ def extract_reply_block(
                             m_inner = REPLY_CMD_HEADER_RE.match(inner[first_nb])
                             if not m_inner or _parse_reply_cmd_tokens(m_inner.group(1), m_inner.group(2)) is None:
                                 break
+                            if any(_is_heredoc_terminator(ln, delim) for ln in inner[first_nb + 1 :]):
+                                break
                             inner = inner[first_nb + 1 :]
                             repaired = True
                         rebuilt: list[str] = []
+                        inner_hd_eof: str | None = None
                         for ln in inner:
-                            if FENCE_LINE_RE.match(ln.strip()):
+                            st = ln.strip()
+                            if inner_hd_eof is not None:
+                                if st == inner_hd_eof:
+                                    inner_hd_eof = None
+                                rebuilt.append(ln)
+                                continue
+                            m_hd = ANY_HEREDOC_OPEN_RE.search(ln)
+                            if m_hd and not st.startswith("#"):
+                                tok = m_hd.group(1)
+                                if tok not in ("RUN_BLOCK", "RUN_FIX"):
+                                    inner_hd_eof = tok
+                                    rebuilt.append(ln)
+                                    continue
+                            if FENCE_LINE_RE.match(st):
                                 repaired = True
                                 continue
                             rebuilt.append(ln)
@@ -1647,7 +1697,7 @@ def extract_reply_block(
             "error": "no executable 'run <session>/<step> <<\'RUN_BLOCK\'' or '--fix' block found in reply",
         }
 
-    # Deduplicate consecutive or repeated identical blocks while tracking count
+    # Deduplicate consecutive identical blocks while tracking count
     unique_candidates: list[dict[str, object]] = []
     duplicate_count = 0
     for cand in non_empty:
@@ -1660,12 +1710,24 @@ def extract_reply_block(
                 continue
         unique_candidates.append(cand)
 
-    # Prefer the final actionable block over earlier inline prose examples
-    chosen = unique_candidates[-1]
-    if len(unique_candidates) > 1:
+    # Select the first actionable block:
+    # - If default_session is known and at least one candidate matches default_session,
+    #   pick the FIRST candidate matching default_session (skipping earlier generic s1/1 prose examples).
+    # - Otherwise pick the FIRST candidate, treating any trailing text or subsequent blocks
+    #   after the first actionable block as model hallucinations.
+    chosen_idx = 0
+    if default_session:
+        for idx_c, cand in enumerate(unique_candidates):
+            if cand.get("session") == default_session:
+                chosen_idx = idx_c
+                break
+    chosen = unique_candidates[chosen_idx]
+    ignored_trailing_blocks = len(unique_candidates) - (chosen_idx + 1)
+
+    if chosen_idx > 0:
         first_start = int(unique_candidates[0]["start_line"])
         chosen_start = int(chosen["start_line"])
-        prev_end = int(unique_candidates[-2]["end_line"])
+        prev_end = int(unique_candidates[chosen_idx - 1]["end_line"])
         between_reasoning = _clean_reply_reasoning(lines[prev_end:chosen_start])
         lead_reasoning = _clean_reply_reasoning(lines[:first_start])
         reasoning = between_reasoning or lead_reasoning
@@ -1693,6 +1755,7 @@ def extract_reply_block(
         "repaired": bool(chosen.get("repaired")),
         "fenced_fallback": bool(chosen.get("fenced_fallback")),
         "duplicate_count": duplicate_count,
+        "ignored_trailing_blocks": ignored_trailing_blocks,
         "candidate_count": len(unique_candidates),
     }
 
@@ -1770,9 +1833,15 @@ def cmd_run_reply(
         sys.stderr.write(f"{prog}: empty reply (nothing to run)\n")
         return 2
 
+    inferred_default_sess = session_arg
+    if inferred_default_sess is None:
+        try:
+            inferred_default_sess = _resolve_reply_session(None, None)
+        except SystemExit:
+            inferred_default_sess = None
     extracted = extract_reply_block(
         reply_text,
-        default_session=session_arg,
+        default_session=inferred_default_sess,
         allow_fenced_fallback=True,
     )
     if not extracted.get("ok"):

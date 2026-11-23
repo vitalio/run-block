@@ -72,8 +72,10 @@ wl-paste | run -r s1
 With `run -r [session]` / `run --run [session]`, you can paste or pipe an entire
 model reply (reasoning prose + code block): when `stdin` is a TTY, `run -r`
 opens a temporary buffer in `$VISUAL` / `$EDITOR`; when piped, it reads from
-`stdin`. It automatically extracts the final actionable `RUN_BLOCK` or
-`--fix` / `RUN_FIX` block, repairs split fences or missing terminators, infers
+`stdin`. It automatically extracts the first actionable `RUN_BLOCK` or
+`--fix` / `RUN_FIX` block (matching `[session]` when given, preserving nested
+doc/heredoc examples, and discarding any trailing hallucinated output or
+subsequent blocks), repairs split fences or missing terminators, infers
 the target session and next free step (`next_free_step()`), and persists the
 model's preceding prose in `<session>/<step>/meta.json` and `plan.md`.
 

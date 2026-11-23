@@ -1676,39 +1676,100 @@ class TestRunner(RunBlockTestCase):
         )
 
 
-    def test_extract_reply_block_repairs_fences_dedupes_and_prefers_final_block(self):
+    def test_extract_reply_block_repairs_fences_dedupes_and_discards_trailing_hallucinations(self):
         fence = chr(96) * 3
         fn = self.mod.extract_reply_block
 
-        # 1. Standard reply with preceding prose, inline example, split inner fence, and indented terminator
-        reply_complex = (
-            "In the rules we saw an inline example:\n"
-            "- `run s1/1 <<'RUN_BLOCK'`\n"
-            "And an earlier example block:\n\n"
+        # 1a. First block is chosen and any trailing hallucinated output + second block are discarded
+        reply_hallucinated = (
+            "I will inspect the repository status first.\n\n"
             + fence + "bash\n"
-            "run s1/1 <<'RUN_BLOCK'\n"
-            "echo example_only\n"
-            "RUN_BLOCK\n"
-            + fence + "\n\n"
-            "Now I will apply the actual update and run tests.\n\n"
-            + fence + "bash\n"
-            "run s1/1 <<'RUN_BLOCK'\n"
-            "# run: s1/1\n"
-            "echo real_action\n"
+            "run s10/1 <<'RUN_BLOCK'\n"
+            "# run: s10/1\n"
+            "echo first_real_step\n"
             + fence + "\n"
             "echo after_inner_fence\n"
             "  RUN_BLOCK\n"
+            + fence + "\n\n"
+            "[s10/1] START\n"
+            "first_real_step\n"
+            "[s10/1] END (10ms)\n\n"
+            "Now I will run step 2 based on the simulated output:\n\n"
+            + fence + "bash\n"
+            "run s10/2 <<'RUN_BLOCK'\n"
+            "echo hallucinated_second_step\n"
+            "RUN_BLOCK\n"
             + fence + "\n"
         )
-        res = fn(reply_complex)
+        res = fn(reply_hallucinated)
         self.assertTrue(res["ok"])
         self.assertEqual(res["kind"], "normal")
-        self.assertEqual(res["session"], "s1")
+        self.assertEqual(res["session"], "s10")
         self.assertEqual(res["step"], "1")
         self.assertTrue(res["repaired"])
         self.assertEqual(res["candidate_count"], 2)
-        self.assertEqual(res["reasoning"], "Now I will apply the actual update and run tests.")
-        self.assertEqual(res["payload"], "# run: s1/1\necho real_action\necho after_inner_fence\n")
+        self.assertEqual(res["ignored_trailing_blocks"], 1)
+        self.assertEqual(res["reasoning"], "I will inspect the repository status first.")
+        self.assertEqual(res["payload"], "# run: s10/1\necho first_real_step\necho after_inner_fence\n")
+
+        # 1b. When default_session is provided (e.g. s453), an earlier generic s1/1 prose example is skipped
+        # and the first block matching s453 is chosen (while still ignoring a trailing s453/2 hallucination)
+        reply_with_example = (
+            "In the rules we saw an inline bullet:\n"
+            "- `run s1/1 <<'RUN_BLOCK'`\n"
+            "And a generic s1/1 example block:\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "echo generic_example\n"
+            "RUN_BLOCK\n"
+            + fence + "\n\n"
+            "Now I will run the actual command for s453.\n\n"
+            + fence + "bash\n"
+            "run s453/1 <<'RUN_BLOCK'\n"
+            "echo real_s453_step1\n"
+            "RUN_BLOCK\n"
+            + fence + "\n\n"
+            "Hallucinated follow-up:\n"
+            + fence + "bash\n"
+            "run s453/2 <<'RUN_BLOCK'\n"
+            "echo hallucinated_s453_step2\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        res_sess = fn(reply_with_example, default_session="s453")
+        self.assertTrue(res_sess["ok"])
+        self.assertEqual(res_sess["session"], "s453")
+        self.assertEqual(res_sess["step"], "1")
+        self.assertEqual(res_sess["ignored_trailing_blocks"], 1)
+        self.assertEqual(res_sess["reasoning"], "Now I will run the actual command for s453.")
+        self.assertEqual(res_sess["payload"], "echo real_s453_step1\n")
+
+        # 1c. Nested documentation example block inside cat <<'EOF' or nested heredoc is preserved intact
+        reply_nested_doc = (
+            "Updating README with a usage example.\n\n"
+            + fence + "bash\n"
+            "run s453/2 <<'RUN_BLOCK'\n"
+            "cat <<'EOF' > example.md\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "git status -sb\n"
+            "RUN_BLOCK\n"
+            "EOF\n"
+            "echo after_nested_doc\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        res_nested = fn(reply_nested_doc)
+        self.assertTrue(res_nested["ok"])
+        self.assertEqual(res_nested["session"], "s453")
+        self.assertEqual(res_nested["step"], "2")
+        self.assertIn("cat <<'EOF' > example.md", res_nested["payload"])
+        self.assertIn("run s1/1 <<'RUN_BLOCK'", res_nested["payload"])
+        self.assertIn("echo after_nested_doc", res_nested["payload"])
+        out_split, err_split = self.mod._reassemble_split_payload(
+            "run s453/2 <<'RUN_BLOCK'\n" + res_nested["payload"] + "RUN_BLOCK\n"
+        )
+        self.assertIsNone(err_split)
+        self.assertEqual(out_split, res_nested["payload"])
 
         # 2. Missing RUN_BLOCK terminator before closing fence + duplicated identical block
         block_no_term = (
