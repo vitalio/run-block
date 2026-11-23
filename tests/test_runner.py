@@ -1619,8 +1619,8 @@ class TestRunner(RunBlockTestCase):
         step_out = (self.tmp / "s1" / "1" / "out").read_text(encoding="utf-8")
 
         # Step out log contains only the single-line diagnostics, NOT the TUI boxes
-        self.assertIn("run_block: session s1 marked completed\n", step_out)
-        self.assertIn("run_block: initialized session s2 (s2/0)\n", step_out)
+        self.assertIn("run: session s1 marked completed\n", step_out)
+        self.assertIn("run: initialized session s2 (s2/0)\n", step_out)
         self.assertNotIn("╭─ END SESSION", step_out)
         self.assertNotIn("╭─ START SESSION", step_out)
 

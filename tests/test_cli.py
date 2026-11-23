@@ -37,7 +37,7 @@ class TestCli(RunBlockTestCase):
         rv = self._run_subprocess([str(SCRIPT), "--version"])
         self._assert_ok(rv)
         ver_file = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-        self.assertEqual(rv.stdout.strip(), f"run_block {ver_file}")
+        self.assertEqual(rv.stdout.strip(), f"run {ver_file}")
 
         # Verify urllib.request and tiktoken are not loaded during normal CLI startup and token counting
         lazy_check = "\n".join([
@@ -142,9 +142,13 @@ class TestCli(RunBlockTestCase):
         self.assertIn("small, targeted patches", readme_md)
 
     def test_self_update_and_check_update(self):
-        installed = self.tmp / "my_block"
+        bin_dir = self.tmp / "up_bin"
+        bin_dir.mkdir()
+        installed = bin_dir / "my_block"
+        legacy_bin = bin_dir / "run_block"
         shutil.copy2(SCRIPT, installed)
-        remote_file = self.tmp / "remote_run_block"
+        shutil.copy2(SCRIPT, legacy_bin)
+        remote_file = self.tmp / "remote_run"
         cur_v = self.mod.VERSION
         src = SCRIPT.read_text(encoding="utf-8").replace(f'VERSION = "{cur_v}"', 'VERSION = "9.9.9"', 1)
         remote_file.write_text(src, encoding="utf-8")
@@ -158,11 +162,28 @@ class TestCli(RunBlockTestCase):
         r_up = self._run([str(installed), "--update"], capture_output=True, text=True, env=env, check=False)
         self.assertEqual(r_up.returncode, 0)
         self.assertIn(f"updated {cur_v} -> 9.9.9", r_up.stdout)
+        self.assertFalse(legacy_bin.exists(), "legacy run_block binary should be removed on --update")
+
+        # Invoking --update from legacy run_block binary installs run and removes run_block
+        shutil.copy2(SCRIPT, legacy_bin)
+        r_leg = self._run([str(legacy_bin), "--update"], capture_output=True, text=True, env=env, check=False)
+        self.assertEqual(r_leg.returncode, 0, msg=r_leg.stderr)
+        self.assertTrue((bin_dir / "run").is_file())
+        self.assertFalse(legacy_bin.exists())
 
     def test_install_sh_fresh_and_conflict(self):
         bin_dir = self.tmp / "bin"
         bin_dir.mkdir()
-        env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin"}
+        state_base = self.tmp / "inst_state"
+        legacy_state = state_base / "run_block"
+        (legacy_state / "s1").mkdir(parents=True)
+        # Seed a legacy run_block binary with legacy repo marker to verify cutover cleanup
+        legacy_bin = bin_dir / "run_block"
+        legacy_bin.write_text("#!/usr/bin/env python3\n# run_block-repo: vitalio/run_block\n", encoding="utf-8")
+        legacy_bin.chmod(0o755)
+        env = {**os.environ, "PATH": f"{bin_dir}:/usr/bin:/bin", "XDG_STATE_HOME": str(state_base)}
+        env.pop("RUN_BLOCK_DIR", None)
+        env.pop("IN_RUN_BLOCK", None)
 
         r1 = subprocess.run(
             ["sh", str(INSTALL_SH), "--dir", str(bin_dir), "--yes"],
@@ -172,11 +193,15 @@ class TestCli(RunBlockTestCase):
             check=False,
         )
         self.assertEqual(r1.returncode, 0, r1.stderr)
-        self.assertTrue((bin_dir / "run_block").is_file())
-        self.assertIn("Installed: run_block", r1.stdout)
+        self.assertTrue((bin_dir / "run").is_file())
+        self.assertFalse(legacy_bin.exists(), "legacy run_block binary should be removed by install.sh")
+        self.assertIn("Installed: run", r1.stdout)
+        self.assertIn("Removed legacy binary:", r1.stdout)
+        self.assertTrue((state_base / "run-block" / "s1").is_dir())
+        self.assertFalse(legacy_state.exists())
 
-        (bin_dir / "run_block").write_text("#!/bin/sh\necho other_tool\n", encoding="utf-8")
-        (bin_dir / "run_block").chmod(0o755)
+        (bin_dir / "run").write_text("#!/bin/sh\necho other_tool\n", encoding="utf-8")
+        (bin_dir / "run").chmod(0o755)
         r2 = subprocess.run(
             ["sh", str(INSTALL_SH), "--dir", str(bin_dir), "--yes"],
             capture_output=True,
@@ -185,8 +210,8 @@ class TestCli(RunBlockTestCase):
             check=False,
         )
         self.assertEqual(r2.returncode, 0, r2.stderr)
-        self.assertTrue((bin_dir / "run_term_block").is_file())
-        self.assertIn("Installed: run_term_block", r2.stdout)
+        self.assertTrue((bin_dir / "run_block").is_file())
+        self.assertIn("Installed: run_block", r2.stdout)
 
     def test_clean_sessions_and_build_py_check(self):
         r_bhelp = subprocess.run([sys.executable, str(ROOT / "build.py"), "-h"], capture_output=True, text=True, check=False)
@@ -597,7 +622,7 @@ class TestCli(RunBlockTestCase):
             check=False,
         )
         self._assert_ok(r_inst)
-        self.assertTrue((bin_dir / "run_block").is_file())
+        self.assertTrue((bin_dir / "run").is_file())
 
         r_sh_un = subprocess.run(
             ["sh", str(INSTALL_SH), "--dir", str(bin_dir), "--uninstall"],
@@ -608,7 +633,7 @@ class TestCli(RunBlockTestCase):
         )
         self._assert_ok(r_sh_un)
         self.assertIn("Removed:", r_sh_un.stdout)
-        self.assertFalse((bin_dir / "run_block").exists())
+        self.assertFalse((bin_dir / "run").exists())
         self.assertTrue(state_dir.is_dir())
 
         shutil.copy2(SCRIPT, bin_dir / "run_block")

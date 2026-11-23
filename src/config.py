@@ -1,8 +1,8 @@
 def prog_name() -> str:
-    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run_block"
+    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run"
     if raw.lower().endswith(".py") and len(raw) > 3:
         raw = raw[:-3]
-    return raw or "run_block"
+    return raw or "run"
 
 
 def _state_parent_dir() -> Path:

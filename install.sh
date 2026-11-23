@@ -1,16 +1,16 @@
 #!/usr/bin/env sh
 # Usage: install.sh [-h|--help] [--name CMD] [--dir DIR] [--yes] [--uninstall [--purge]]
 #
-# Installs, updates, or uninstalls run_block (https://github.com/vitalio/run_block).
+# Installs, updates, or uninstalls run (https://github.com/vitalio/run-block).
 # Checks for command name conflicts in PATH, offers an alternative name if
-# 'run_block' is already taken by another program, installs into ~/.local/bin
+# 'run' is already taken by another program, installs into ~/.local/bin
 # (or --dir). --uninstall removes installed binaries (--purge also removes state).
 # -h / --help prints this usage and exits 0 doing nothing.
 set -eu
 
-REPO_MARKER="run_block-repo: vitalio/run_block"
-ALT_REPO_MARKER="run-block-repo: vitalio/run-block"
-RAW_URL="${RUN_BLOCK_UPDATE_URL:-https://raw.githubusercontent.com/vitalio/run_block/main/run_block}"
+REPO_MARKER="run-block-repo: vitalio/run-block"
+LEGACY_REPO_MARKER="run_block-repo: vitalio/run_block"
+RAW_URL="${RUN_BLOCK_UPDATE_URL:-https://raw.githubusercontent.com/vitalio/run-block/main/run}"
 CMD_NAME="${RUN_BLOCK_NAME:-}"
 INSTALL_DIR="${RUN_BLOCK_INSTALL_DIR:-}"
 ASSUME_YES=0
@@ -70,7 +70,7 @@ if [ "$PURGE" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
 fi
 
 is_our_binary() {
-    [ -f "$1" ] && (grep -q "$REPO_MARKER" "$1" 2>/dev/null || grep -q "$ALT_REPO_MARKER" "$1" 2>/dev/null)
+    [ -f "$1" ] && (grep -q "$REPO_MARKER" "$1" 2>/dev/null || grep -q "$LEGACY_REPO_MARKER" "$1" 2>/dev/null)
 }
 
 if [ "$UNINSTALL" -eq 1 ]; then
@@ -119,11 +119,11 @@ if ! command -v bash >/dev/null 2>&1; then
 fi
 
 if [ -z "$CMD_NAME" ]; then
-    CMD_NAME="run_block"
+    CMD_NAME="run"
     EXISTING="$(command -v "$CMD_NAME" 2>/dev/null || true)"
     if [ -n "$EXISTING" ] && ! is_our_binary "$EXISTING"; then
         echo "Notice: '$CMD_NAME' already exists at $EXISTING (another program)." >&2
-        ALT_NAME="run_term_block"
+        ALT_NAME="run_block"
         if [ "$ASSUME_YES" -eq 0 ] && [ -r /dev/tty ] && [ -w /dev/tty ]; then
             printf "Enter an alternative command name [%s]: " "$ALT_NAME" >/dev/tty
             IFS= read -r USER_NAME </dev/tty || USER_NAME=""
@@ -144,7 +144,12 @@ if [ -z "$INSTALL_DIR" ]; then
     if [ -n "$EXISTING_OUR" ] && is_our_binary "$EXISTING_OUR"; then
         INSTALL_DIR="$(dirname "$EXISTING_OUR")"
     else
-        INSTALL_DIR="$HOME/.local/bin"
+        EXISTING_LEGACY="$(command -v run_block 2>/dev/null || true)"
+        if [ -n "$EXISTING_LEGACY" ] && is_our_binary "$EXISTING_LEGACY"; then
+            INSTALL_DIR="$(dirname "$EXISTING_LEGACY")"
+        else
+            INSTALL_DIR="$HOME/.local/bin"
+        fi
     fi
 fi
 
@@ -158,7 +163,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" 2>/dev/null && pwd || pwd)"
-if [ -z "${RUN_BLOCK_UPDATE_URL:-}" ] && [ -f "$SCRIPT_DIR/run_block" ] && is_our_binary "$SCRIPT_DIR/run_block"; then
+if [ -z "${RUN_BLOCK_UPDATE_URL:-}" ] && [ -f "$SCRIPT_DIR/run" ] && is_our_binary "$SCRIPT_DIR/run"; then
+    cp "$SCRIPT_DIR/run" "$TMP_FILE"
+elif [ -z "${RUN_BLOCK_UPDATE_URL:-}" ] && [ -f "$SCRIPT_DIR/run_block" ] && is_our_binary "$SCRIPT_DIR/run_block"; then
     cp "$SCRIPT_DIR/run_block" "$TMP_FILE"
 else
     if command -v curl >/dev/null 2>&1; then
@@ -171,12 +178,33 @@ else
 fi
 
 if ! is_our_binary "$TMP_FILE"; then
-    echo "Error: downloaded file is not a valid vitalio/run_block script." >&2
+    echo "Error: downloaded file is not a valid vitalio/run-block script." >&2
     exit 1
 fi
 
 chmod 0755 "$TMP_FILE"
 mv "$TMP_FILE" "$TARGET"
+
+if [ "$CMD_NAME" != "run_block" ] && [ -f "$INSTALL_DIR/run_block" ] && is_our_binary "$INSTALL_DIR/run_block"; then
+    rm -f "$INSTALL_DIR/run_block"
+    echo "Removed legacy binary: $INSTALL_DIR/run_block"
+fi
+
+if [ -z "${RUN_BLOCK_DIR:-}" ]; then
+    STATE_BASE="${XDG_STATE_HOME:-$HOME/.local/state}"
+    LEGACY_STATE="$STATE_BASE/run_block"
+    TARGET_STATE="$STATE_BASE/run-block"
+    if [ -L "$LEGACY_STATE" ]; then
+        if [ "${IN_RUN_BLOCK:-}" != "1" ]; then
+            rm -f "$LEGACY_STATE"
+        fi
+    elif [ -d "$LEGACY_STATE" ] && [ ! -e "$TARGET_STATE" ]; then
+        mv "$LEGACY_STATE" "$TARGET_STATE"
+        if [ "${IN_RUN_BLOCK:-}" = "1" ]; then
+            ln -s "run-block" "$LEGACY_STATE" 2>/dev/null || true
+        fi
+    fi
+fi
 
 VER="$("$TARGET" --version 2>/dev/null || echo "$CMD_NAME")"
 echo "============================================================"
@@ -215,5 +243,5 @@ case ":${PATH:-}:" in
         fi
         ;;
 esac
-echo "Tip: run '$CMD_NAME --init-start' and '$CMD_NAME --start' in any repo to build a session context bundle."
+echo "Tip: run '$CMD_NAME' or pipe a context bundle ('context | $CMD_NAME') to start a session."
 echo "============================================================"

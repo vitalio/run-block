@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# run_block-repo: vitalio/run_block
+# run-block-repo: vitalio/run-block
 """Safe, sequential terminal block execution protocol for AI coding agents."""
 from __future__ import annotations
 
@@ -36,10 +36,11 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.35.0"
-REPO_MARKER = "run_block-repo: vitalio/run_block"
-REPO_MARKERS = (REPO_MARKER, "run-block-repo: vitalio/run-block")
-DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
+VERSION = "0.36.0"
+REPO_MARKER = "run-block-repo: vitalio/run-block"
+LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
+REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run-block/main/run"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run}` Markdown code block:\n\n```bash\n{cmd:run} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks. If any command inside a block prints a traceback or error (even when a later command in the same block exits `0` without `set -e`), treat the step as failed and fix the error before proceeding.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is renumbered (`[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), continue sequentially from `<new+1>`. Pipe `<bundle_cmd> | {cmd:run}` to initialize a session (`--bundle-plan [<session>] [--part N]` inspects bundle parts). Never pass `-y` or `--yes` on a `{cmd:run}` command line.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Session completion & handoff (`--done`): `{cmd:run} --done [<session>] [-m "<note>"]` marks a session completed and can be followed inside the same block by `<bundle_cmd> | {cmd:run}` to initialize a new session (nested `<session>/<step>`, `--fix`, and `--retry` calls inside a running block are rejected). Emit `--done` only in a dedicated final block at the end of the session completion summary reply, after all commits, pushes, and verification checks have succeeded in earlier steps — never combine `--done` with verification commands, tests, or commits in the same block.'
 
 
@@ -66,7 +67,7 @@ HELP_COMMANDS = (
     ("{prog} --sandbox [MODE] [session]", "Show or set session sandbox mode (off, strict, nonet)"),
     ("{prog} --clean [opts] [session...]", "Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)"),
     ("{prog} --start [opts]", "Start a session from stdin or rule-only on TTY (--session NAME, --force)"),
-    ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/run_block)"),
+    ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/run-block)"),
     ("{prog} --check-update", "Check if a newer version is available"),
     ("{prog} --uninstall [--purge]", "Remove installed {prog} binary (--purge also removes {base_dir})"),
 )
@@ -90,10 +91,10 @@ HELP_ENV = (
 
 
 def prog_name() -> str:
-    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run_block"
+    raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run"
     if raw.lower().endswith(".py") and len(raw) > 3:
         raw = raw[:-3]
-    return raw or "run_block"
+    return raw or "run"
 
 
 def _state_parent_dir() -> Path:
@@ -11720,11 +11721,11 @@ def fetch_remote_script(url: str | None = None) -> str:
         target_url = f"{target_url}?t={int(time.time())}"
     req = urllib.request.Request(
         target_url,
-        headers={"User-Agent": f"run_block/{VERSION}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
+        headers={"User-Agent": f"run-block/{VERSION}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = resp.read().decode("utf-8")
-    if REPO_MARKER and REPO_MARKER not in data:
+    if REPO_MARKERS and not any(m in data for m in REPO_MARKERS):
         raise ValueError("downloaded file does not contain expected repository marker")
     ast.parse(data)
     return data
@@ -11745,16 +11746,38 @@ def cmd_check_update(url: str | None = None) -> int:
     return 0
 
 
+def _cleanup_legacy_binary_and_state(dest: Path) -> None:
+    _ = default_base_dir()
+    parent = dest.parent
+    if (parent / "build.py").is_file() and (parent / "src" / "header.py").is_file():
+        return
+    if dest.name != "run_block":
+        legacy_bin = parent / "run_block"
+        if _is_our_installed_binary(legacy_bin):
+            try:
+                legacy_bin.unlink()
+                sys.stdout.write(f"Removed legacy binary: {legacy_bin}\n")
+            except OSError:
+                pass
+
+
 def cmd_update(force: bool = False, url: str | None = None, target_path: Path | None = None) -> int:
     prog = prog_name()
     dest = target_path or Path(__file__).resolve()
+    if target_path is None and dest.name == "run_block":
+        parent = dest.parent
+        if not ((parent / "build.py").is_file() and (parent / "src" / "header.py").is_file()):
+            cand_run = parent / "run"
+            if not cand_run.exists() or _is_our_installed_binary(cand_run):
+                dest = cand_run
     try:
         remote_src = fetch_remote_script(url)
     except Exception as exc:
         sys.stderr.write(f"{prog}: update failed: {exc}\n")
         return 1
     remote_ver = parse_version_from_source(remote_src) or "unknown"
-    if not force and version_tuple(remote_ver) <= version_tuple(VERSION):
+    if not force and version_tuple(remote_ver) <= version_tuple(VERSION) and dest.is_file():
+        _cleanup_legacy_binary_and_state(dest)
         sys.stdout.write(f"{prog} {VERSION} is already up to date.\n")
         return 0
     try:
@@ -11771,6 +11794,7 @@ def cmd_update(force: bool = False, url: str | None = None, target_path: Path | 
     except Exception as exc:
         sys.stderr.write(f"{prog}: could not write updated binary to {dest}: {exc}\n")
         return 1
+    _cleanup_legacy_binary_and_state(dest)
     sys.stdout.write(f"{prog}: updated {VERSION} -> {remote_ver} ({dest})\n")
     return 0
 

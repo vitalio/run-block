@@ -80,16 +80,6 @@ Follow-up findings from F74 review:
 - Update `MODULE_ORDER` in `build.py`, rebuild `./run_block`, and update module boundary documentation in `AGENTS.md`.
 - Rename all remaining ticket-prefixed unit test methods (`test_f<N>_*` and `test_b<N>_*`) across `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py` to descriptive domain-behavior names.
 
-# 🎯 [NEXT] F72: Rename project to run-block and cut over CLI entrypoint from run_block to run
-
-- Depends on: F98
-- Complete the `run_block` -> `run-block` (`vitalio/run-block`) repository rename and `run` CLI binary cutover per `todo_flow:D8` (`docs/adr/0004-ecosystem-rename-and-cutover.md`) once `F98` runtime compatibility and state migration are in place:
-  - Switch `build.py` `OUT_FILE` to `ROOT / "run"` (updating docstrings and `--check` diagnostics) and remove the tracked `run_block` artifact (`git rm run_block`).
-  - Update `src/header.py` (`# run-block-repo: vitalio/run-block`, `REPO_MARKER = "run-block-repo: vitalio/run-block"`, `LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"`, `DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run-block/main/run"`, and `HELP_COMMANDS`), `src/config.py` (`prog_name()` default `"run"`), `tests/helpers.py` (`SCRIPT = ROOT / "run"`, `_normalize_cmd` accepting `"run"` and `"run_block"`), and `.github/workflows/ci.yml` (`python3 build.py --check` in `test` and `run` instead of `run_block` in `release` artifacts).
-  - Update `install.sh` and `cmd_update()` (`src/cli.py`) to default `CMD_NAME` to `run`, accept both `REPO_MARKER` and `LEGACY_REPO_MARKER` in `is_our_binary`, automatically remove any legacy `run_block` binary in `$INSTALL_DIR` during install or `--update`, migrate `~/.local/state/run_block` -> `~/.local/state/run-block` (cleaning up any transitional symlink), and update `AGENTS.md`, `README.md`, and unit tests (`tests/test_*.py`).
-  - Safe cutover execution order at the end of the session: first run `python3 build.py`, `python3 build.py --check`, `bash -n install.sh`, and `python3 -m unittest discover -s tests`; then rename the GitHub repository `vitalio/run_block` -> `vitalio/run-block` and update local `git remote` URL; finally run `./install.sh --yes` to install `run` and remove legacy `run_block` in `$INSTALL_DIR` (switching subsequent blocks in the session, including `--done`, to invoke `run` instead of `run_block`).
-- Acceptance criteria: GitHub repo is `vitalio/run-block`, `build.py` outputs `run` (and legacy `run_block` is removed from the repo and `$INSTALL_DIR`), `install.sh` and `--update` install `run` and clean up `run_block`, and `python3 build.py --check` and `python3 -m unittest discover -s tests` pass.
-
 # 🎯 [NEXT] F84: Add run_block -r / --run [session] full-reply editor mode with automatic block extraction, repair, and step inference
 
 - Depends on: F83
@@ -148,6 +138,10 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
   - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
   - Exact post-turn provider token and cache usage accounting (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) recorded in `<session>/chat.json` and `<session>/meta.json` and surfaced in `Stats:` across `END STEP` and `END SESSION` while preserving offline stdlib pre-flight estimation (`count_tokens()`, `format_stats()`).
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`).
+
+# ⚪ [NEW] F99: Update stale run_block and agents/blocks/bash.md references across open tasks in TODO.md
+
+Several open backlog items in TODO.md (such as B15, F96, D10, F93, F84, D4, F88, D7) still reference the legacy binary name 'run_block', build target './run_block', or 'agents/blocks/bash.md' after the F72 cutover to 'run-block' ('run') and 'agents/run.md'.
 
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 

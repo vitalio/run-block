@@ -2144,7 +2144,7 @@ class TestBundle(RunBlockTestCase):
         )
         self._assert_ok(r_child)
         # Inside the active step, stdout is only the single plain diagnostic line (no START SESSION box)
-        self.assertEqual(r_child.stdout, "run_block: initialized session s2 (s2/0)\n")
+        self.assertEqual(r_child.stdout, "run: initialized session s2 (s2/0)\n")
         self.assertNotIn("START SESSION", r_child.stdout)
 
         child_sdir = self.tmp / "s2"

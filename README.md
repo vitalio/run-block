@@ -1,11 +1,11 @@
-# run_block
+# run-block (`run`)
 
 **Safe, sequential terminal block execution protocol for AI coding agents.**
 
-`run_block` is a zero-dependency Python 3 CLI that connects any chat LLM to your
+`run` (`vitalio/run-block`) is a zero-dependency Python 3 CLI that connects any chat LLM to your
 local terminal without API keys or background daemons. It initializes a
-rule-only session on bare TTY invocation (`run_block`) or ingests a context
-bundle on `stdin` (`<command> | run_block` -> `~/.local/state/run_block/<session>/0`),
+rule-only session on bare TTY invocation (`run`) or ingests a context
+bundle on `stdin` (`<command> | run` -> `~/.local/state/run-block/<session>/0`),
 then executes numbered Bash or PowerShell blocks (`<session>/1`, `<session>/2`,
 ...) with syntax validation, a pre-execution safety scanner, PTY streaming, and
 one-keystroke clipboard handoff with Claude/GPT/Gemini token counts.
@@ -37,21 +37,21 @@ one-keystroke clipboard handoff with Claude/GPT/Gemini token counts.
 ## Quick Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/vitalio/run_block/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/vitalio/run-block/main/install.sh | sh
 ```
 
 ## Quick Start
 
-### 1. Start a session (`run_block` or `<cmd> | run_block`)
+### 1. Start a session (`run` or `<cmd> | run`)
 
 ```bash
-run_block
-run_block -p "Investigate failing test"
-cat context.txt | run_block -p "Focus on edge cases"
-run_block --start --session s1 -p "Implement feature" < context.txt
+run
+run -p "Investigate failing test"
+cat context.txt | run -p "Focus on edge cases"
+run --start --session s1 -p "Implement feature" < context.txt
 ```
 
-Run bare `run_block` (or `run_block --start`) in an interactive TTY to create a
+Run bare `run` (or `run --start`) in an interactive TTY to create a
 rule-only `<session>/0` bundle with embedded `bash` rules, or pipe any
 context bundle on `stdin` to inject rules and copy `<session>/0` to the
 clipboard. Repeatable `-p TEXT` / `--prompt TEXT` flags append prompt sections
@@ -60,7 +60,7 @@ to `===== Prompt =====` (joining multiple non-empty values with `\n\n`).
 ### 2. Run numbered blocks (`<session>/<step>`)
 
 ```bash
-run_block s1/1 <<'RUN_BLOCK'
+run s1/1 <<'RUN_BLOCK'
 git status -sb
 python3 -m unittest
 RUN_BLOCK
@@ -83,7 +83,7 @@ outcome, exit code, and duration.
 ### 3. Patch a failed block (`--fix`)
 
 ```bash
-run_block --fix s1/1 <<'RUN_FIX'
+run --fix s1/1 <<'RUN_FIX'
 old = 'wrong_arg'
 new = 'right_arg'
 assert text.count(old) == 1
@@ -113,14 +113,14 @@ tail, and shell syntax errors show a +-2 line context.
 ### 4. Complete or chain sessions (`--done`)
 
 ```bash
-run_block --done s1 -m "Completed feature and tests"
+run --done s1 -m "Completed feature and tests"
 ```
 
 `--done` persists completion metadata (`completed`, `completed_at`,
 `completed_note`) and accumulated step statistics in `<session>/meta.json` and
 renders the `END SESSION` summary card (`--list` marks completed sessions with
 `[DONE]`). Inside a running step (`IN_RUN_BLOCK=1`), `--done` and piped
-`<cmd> | run_block` session initialization queue deferred `END SESSION` ->
+`<cmd> | run` session initialization queue deferred `END SESSION` ->
 `START SESSION` cards after the outer `END STEP` and hand off the clipboard to
 the newly spawned `<child>/0` bundle.
 
@@ -144,7 +144,7 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
 | `STEP ALREADY EXISTS` | `[Y/n/r(enumber)/i(nfo)]:` | Copy existing `out` (`[r(enumber)/n/i(nfo)]:` when `out` is absent), `r(enumber)` to the next free step, or overwrite via `i(nfo)` |
 | `MISSING PREVIOUS STEP` | `[r(enumber)/n/i(nfo)]:` | `r(enumber)` block to the first missing sequential step number, cancel with `n`/`Esc`, or inspect in `i(nfo)` |
 | `SESSION COMPLETED` | `[y/N/i(nfo)]:` | Shown before running a block on a completed session (default `No`); `y` (or `-y`/`--yes`) clears completion and reopens |
-| `CLEAN SESSIONS` | `[y/N]:` | Confirm pruning target sessions during interactive `run_block --clean` |
+| `CLEAN SESSIONS` | `[y/N]:` | Confirm pruning target sessions during interactive `run --clean` |
 
 ### Prompt Action Keys
 
@@ -185,7 +185,7 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`) remain in
   `<session>/meta.json` only. When `RUN_BLOCK_CWD=auto`, an existing piped
   `Workdir` directory is preferred over the current directory or Git root.
-- **Rule injection & deduplication**: `run_block` injects embedded `bash`
+- **Rule injection & deduplication**: `run` injects embedded `bash`
   execution rules into `===== Rules =====`, deduplicating against existing
   `run` / `blocks/bash` parts or `## Terminal blocks (` headings, and wraps
   unlabeled plain text under `===== Prompt =====`.
@@ -229,27 +229,27 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   (`stdout` receives the part text; `stderr` receives a one-line summary):
 
 ```bash
-run_block --bundle-plan s1
-run_block --bundle-plan s1 --json
-run_block --show s1 --part 1
-run_block --bundle-plan s1 --part 2
+run --bundle-plan s1
+run --bundle-plan s1 --json
+run --show s1 --part 1
+run --bundle-plan s1 --part 2
 ```
 
 ## Safety Scanner, Sandboxing & Approval Hooks
 
-- **Pre-execution analysis (`--plan`)**: `run_block` parses Bash and Python
+- **Pre-execution analysis (`--plan`)**: `run` parses Bash and Python
   scripts via AST and regex rules before running, expanding multi-file or
   read+write Python operations into sub-items and flagging destructive commands,
   network calls, credential access, or history mutations. Pipe any script to
-  `run_block --plan` to emit the structured JSON execution and risk plan without
+  `run --plan` to emit the structured JSON execution and risk plan without
   running it.
 - **Session sandboxing (`--sandbox` & `RUN_BLOCK_SANDBOX`)**: Restrict block
   execution with `off` (default), `strict` (read-only filesystem outside working
   / temp directories and restricted network where supported), `nonet` (network
   disabled), or a custom wrapper command prefix. Query or update a session's
-  sandbox mode via `run_block --sandbox [MODE] [session]`; active non-`off`
+  sandbox mode via `run --sandbox [MODE] [session]`; active non-`off`
   modes are recorded in `<session>/0`'s `Sandbox:` header.
-- **External approval hook (`RUN_BLOCK_APPROVE_CMD`)**: When set, `run_block`
+- **External approval hook (`RUN_BLOCK_APPROVE_CMD`)**: When set, `run`
   pipes the `--plan` JSON to this validator command before execution: exit `0`
   approves automatically, exit `2` requires interactive user confirmation with
   the validator's note, and any other exit code rejects execution (`NOT RUN`).
@@ -261,30 +261,30 @@ run_block --bundle-plan s1 --part 2
 
 | Command | Description |
 | :--- | :--- |
-| `run_block [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
-| `<command> \| run_block [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
-| `run_block [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode; also reopens a completed session) |
-| `run_block --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
-| `run_block --bundle-plan [<session>] [--json] [--part N]` | Print the `Parts (<N>):` table and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
-| `run_block --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
-| `run_block --retry [-y] [session[/step]]` | Re-run a block, or the latest block of a session when only `<session>` is given (default: latest block overall) |
-| `run_block --list`, `-l [session \| --filter TEXT]` | List sessions with block count, size, UTC timestamp, `Workdir`/`Role`/`Task` headers, the last step outcome (`ok (<duration>)`, `exit <rc> (<duration>)`, `syntax-error (exit <rc>)`, `not-run`, `aborted`, `saved`) and `next: <session>/<step>` for open sessions (`[DONE]` marks completed sessions without `next:`); `--filter TEXT` keeps only sessions whose name or any header value contains `TEXT` (case-insensitive) |
-| `run_block --done [-y] [session] [-m NOTE]` | Mark a session (default: latest) as completed and print the `END SESSION` summary with accumulated statistics |
-| `run_block --info [session]` | Show session path, state, size, update time, statistics, all headers (including `Bundle-*` transport headers), and every block with its status and action summary (default: latest session); `--show <session>` is equivalent |
-| `run_block --show [session/step] [--script \| --out]` | Show saved script and output of a block, the `<session>/0` bundle, or the summary of a bare `<session>`; `--script` / `--out` print only the script or only the captured output (a bare `<session>` selects its latest block) |
-| `run_block --show [<session>[/0]] --part N` | Print only part `N` (1-based part `index` from `--bundle-plan --json`) of `<session>/0` (latest session when omitted); exits non-zero for non-zero steps or out-of-range parts |
-| `run_block --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
-| `run_block --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
-| `run_block --start [-p TEXT] [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
-| `run_block --update [--force]` | Self-update `run_block` from GitHub (`vitalio/run_block`) |
-| `run_block --check-update` | Check GitHub for a newer version |
-| `run_block --uninstall [--purge]` | Remove installed `run` / `run_block` binary (`--purge` also removes the state directory) |
-| `run_block -V`, `--version` | Print version and exit `0` |
-| `run_block -h`, `--help` | Print usage help and exit `0` |
+| `run [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
+| `<command> \| run [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
+| `run [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode; also reopens a completed session) |
+| `run --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
+| `run --bundle-plan [<session>] [--json] [--part N]` | Print the `Parts (<N>):` table and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
+| `run --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
+| `run --retry [-y] [session[/step]]` | Re-run a block, or the latest block of a session when only `<session>` is given (default: latest block overall) |
+| `run --list`, `-l [session \| --filter TEXT]` | List sessions with block count, size, UTC timestamp, `Workdir`/`Role`/`Task` headers, the last step outcome (`ok (<duration>)`, `exit <rc> (<duration>)`, `syntax-error (exit <rc>)`, `not-run`, `aborted`, `saved`) and `next: <session>/<step>` for open sessions (`[DONE]` marks completed sessions without `next:`); `--filter TEXT` keeps only sessions whose name or any header value contains `TEXT` (case-insensitive) |
+| `run --done [-y] [session] [-m NOTE]` | Mark a session (default: latest) as completed and print the `END SESSION` summary with accumulated statistics |
+| `run --info [session]` | Show session path, state, size, update time, statistics, all headers (including `Bundle-*` transport headers), and every block with its status and action summary (default: latest session); `--show <session>` is equivalent |
+| `run --show [session/step] [--script \| --out]` | Show saved script and output of a block, the `<session>/0` bundle, or the summary of a bare `<session>`; `--script` / `--out` print only the script or only the captured output (a bare `<session>` selects its latest block) |
+| `run --show [<session>[/0]] --part N` | Print only part `N` (1-based part `index` from `--bundle-plan --json`) of `<session>/0` (latest session when omitted); exits non-zero for non-zero steps or out-of-range parts |
+| `run --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
+| `run --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
+| `run --start [-p TEXT] [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
+| `run --update [--force]` | Self-update `run` from GitHub (`vitalio/run-block`) |
+| `run --check-update` | Check GitHub for a newer version |
+| `run --uninstall [--purge]` | Remove installed `run` / `run_block` binary (`--purge` also removes the state directory) |
+| `run -V`, `--version` | Print version and exit `0` |
+| `run -h`, `--help` | Print usage help and exit `0` |
 
 ## Environment Variables
 
-`run_block` works out of the box with zero configuration files and honors
+`run` works out of the box with zero configuration files and honors
 standard environment variables:
 
 | Environment Variable | Default | Description |

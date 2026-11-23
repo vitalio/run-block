@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# run_block-repo: vitalio/run_block
+# run-block-repo: vitalio/run-block
 """Safe, sequential terminal block execution protocol for AI coding agents."""
 from __future__ import annotations
 
@@ -37,9 +37,10 @@ except ImportError:
     HAS_PTY = False
 
 VERSION = "__VERSION__"
-REPO_MARKER = "run_block-repo: vitalio/run_block"
-REPO_MARKERS = (REPO_MARKER, "run-block-repo: vitalio/run-block")
-DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
+REPO_MARKER = "run-block-repo: vitalio/run-block"
+LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
+REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
+DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run-block/main/run"
 EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"
 
 
@@ -66,7 +67,7 @@ HELP_COMMANDS = (
     ("{prog} --sandbox [MODE] [session]", "Show or set session sandbox mode (off, strict, nonet)"),
     ("{prog} --clean [opts] [session...]", "Prune sessions in {base_dir} (--keep N, --older-than DAYS, --max-size MB, --all)"),
     ("{prog} --start [opts]", "Start a session from stdin or rule-only on TTY (--session NAME, --force)"),
-    ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/run_block)"),
+    ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/run-block)"),
     ("{prog} --check-update", "Check if a newer version is available"),
     ("{prog} --uninstall [--purge]", "Remove installed {prog} binary (--purge also removes {base_dir})"),
 )

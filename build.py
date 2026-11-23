@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Usage:
-  python3 build.py            Build standalone ./run_block from src/ modules
-  python3 build.py --check    Verify that ./run_block is up to date with src/ (exit 0 if clean, 1 if stale)
+  python3 build.py            Build standalone ./run from src/ modules
+  python3 build.py --check    Verify that ./run is up to date with src/ (exit 0 if clean, 1 if stale)
   python3 build.py -h|--help  Print this usage and exit 0
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SRC_DIR = ROOT / "src"
-OUT_FILE = ROOT / "run_block"
+OUT_FILE = ROOT / "run"
 
 MODULE_ORDER = [
     "header.py",
@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     expected = assemble_source()
     if "--check" in args:
         if not OUT_FILE.is_file() or OUT_FILE.read_text(encoding="utf-8") != expected:
-            sys.stderr.write("build.py: run_block is out of sync with src/ (run 'python3 build.py')\n")
+            sys.stderr.write("build.py: run is out of sync with src/ (run 'python3 build.py')\n")
             return 1
         return 0
     if args:

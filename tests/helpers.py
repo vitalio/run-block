@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared test helpers and base class for run_block unit tests."""
+"""Shared test helpers and base class for run-block unit tests."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from pathlib import Path
 from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "run_block"
+SCRIPT = ROOT / "run"
 INSTALL_SH = ROOT / "install.sh"
 
 _CACHED_MOD: ModuleType | None = None
@@ -79,7 +79,7 @@ class RunBlockTestCase(unittest.TestCase):
     def setUp(self) -> None:
         keys = set(_TRACKED_ENV_KEYS) | {k for k in os.environ if k.startswith("RUN_BLOCK_")}
         self._orig_env = {k: os.environ.get(k) for k in keys}
-        self._orig_argv0 = sys.argv[0] if sys.argv else "run_block"
+        self._orig_argv0 = sys.argv[0] if sys.argv else "run"
         if sys.argv:
             sys.argv[0] = str(SCRIPT)
         os.environ["RUN_BLOCK_NO_CLIPBOARD"] = "1"

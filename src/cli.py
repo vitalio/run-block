@@ -20,11 +20,11 @@ def fetch_remote_script(url: str | None = None) -> str:
         target_url = f"{target_url}?t={int(time.time())}"
     req = urllib.request.Request(
         target_url,
-        headers={"User-Agent": f"run_block/{VERSION}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
+        headers={"User-Agent": f"run-block/{VERSION}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
     )
     with urllib.request.urlopen(req, timeout=15) as resp:
         data = resp.read().decode("utf-8")
-    if REPO_MARKER and REPO_MARKER not in data:
+    if REPO_MARKERS and not any(m in data for m in REPO_MARKERS):
         raise ValueError("downloaded file does not contain expected repository marker")
     ast.parse(data)
     return data
@@ -45,16 +45,38 @@ def cmd_check_update(url: str | None = None) -> int:
     return 0
 
 
+def _cleanup_legacy_binary_and_state(dest: Path) -> None:
+    _ = default_base_dir()
+    parent = dest.parent
+    if (parent / "build.py").is_file() and (parent / "src" / "header.py").is_file():
+        return
+    if dest.name != "run_block":
+        legacy_bin = parent / "run_block"
+        if _is_our_installed_binary(legacy_bin):
+            try:
+                legacy_bin.unlink()
+                sys.stdout.write(f"Removed legacy binary: {legacy_bin}\n")
+            except OSError:
+                pass
+
+
 def cmd_update(force: bool = False, url: str | None = None, target_path: Path | None = None) -> int:
     prog = prog_name()
     dest = target_path or Path(__file__).resolve()
+    if target_path is None and dest.name == "run_block":
+        parent = dest.parent
+        if not ((parent / "build.py").is_file() and (parent / "src" / "header.py").is_file()):
+            cand_run = parent / "run"
+            if not cand_run.exists() or _is_our_installed_binary(cand_run):
+                dest = cand_run
     try:
         remote_src = fetch_remote_script(url)
     except Exception as exc:
         sys.stderr.write(f"{prog}: update failed: {exc}\n")
         return 1
     remote_ver = parse_version_from_source(remote_src) or "unknown"
-    if not force and version_tuple(remote_ver) <= version_tuple(VERSION):
+    if not force and version_tuple(remote_ver) <= version_tuple(VERSION) and dest.is_file():
+        _cleanup_legacy_binary_and_state(dest)
         sys.stdout.write(f"{prog} {VERSION} is already up to date.\n")
         return 0
     try:
@@ -71,6 +93,7 @@ def cmd_update(force: bool = False, url: str | None = None, target_path: Path | 
     except Exception as exc:
         sys.stderr.write(f"{prog}: could not write updated binary to {dest}: {exc}\n")
         return 1
+    _cleanup_legacy_binary_and_state(dest)
     sys.stdout.write(f"{prog}: updated {VERSION} -> {remote_ver} ({dest})\n")
     return 0
 

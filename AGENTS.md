@@ -1,4 +1,4 @@
-# `run_block` — Project-Specific Agent Rules
+# `run-block` (`run`) — Project-Specific Agent Rules
 
 Universal workflow, language, Git, SemVer, Python CLI, and single-file build
 rules are loaded via `.context.bundle`.
@@ -19,7 +19,7 @@ rules are loaded via `.context.bundle`.
   `agents/run.md` in the same commit whenever CLI flags, step
   numbering, `--fix` constraints, or session rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
-  `run_block --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
+  `run --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
 - `src/ui.py` — thin open-right box-drawing (`╭─ TITLE ───`, `│ `, `╰───`, ASCII fallback) TUI blocks with aligned metadata and TTY colors
   (`START STEP`, `START SESSION`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`), token
   statistics, and clipboard integration.
@@ -50,12 +50,12 @@ rules are loaded via `.context.bundle`.
   hierarchical table rendering, summary/parts/warning item formatters, and
   `--bundle-plan` text/CLI output (`cmd_bundle_plan()`).
 - `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
-  piped `stdin` (`run_block` / `<command> | run_block` -> `<session>/0` and
+  piped `stdin` (`run` / `<command> | run` -> `<session>/0` and
   `<session>/meta.json`), injecting embedded `bash` terminal block rules via
   `format_start_bundle()`. Parses
   optional leading `Key: Value` header lines (separated from the body by a
   blank line) into `<session>/meta.json`, keeping `<session>/0` limited to
-  `run_block`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
+  `run`'s own headers (`Session`, `Next-Block`, `Workdir`, `Sandbox`,
   `Date`) and the prompt body.
 - Session completion state (`--done`) and nested `IN_RUN_BLOCK=1` contract:
   persist `"completed": true` and `"completed_at"` (UTC ISO timestamp),
@@ -104,12 +104,12 @@ rules are loaded via `.context.bundle`.
     `aborted` marks a declined or rejected block and is removed when the block
     runs; `meta.json` records the structured outcome. Legacy `err` files are
     ignored.
-  - `run_block -l` / `--list [session]` displays session lifecycle state,
+  - `run -l` / `--list [session]` displays session lifecycle state,
     `last: <ref> (<step_status>)`, and `next: <session>/<next_free_step>` for
     open sessions (`active` / `bundle-only`) or `[DONE]` without `next:` for
     completed sessions.
-- `src/cli.py` — CLI argument routing and self-update (`--update`,
-  `--check-update`).
+- `src/cli.py` — CLI argument routing, self-update (`--update`,
+  `--check-update`), and `--uninstall [--purge]`.
 - `tests/helpers.py` — shared `ROOT`, `SCRIPT`, `INSTALL_SH`, cached
   `load_module()`, and `RunBlockTestCase` with in-process CLI helpers (`_run`,
   `_run_in_process`, `_run_subprocess`, `_assert_ok`) and `RUN_BLOCK_*`
