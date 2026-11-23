@@ -89,9 +89,44 @@ class TestCli(RunBlockTestCase):
     def test_help_lists_session_inspection_flags(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
         self._assert_ok(r)
-        for flag in ("--info", "--filter", "--script", "--out"):
+        for flag in ("--info", "--filter", "--script", "--out", "-r", "--run"):
             with self.subTest(flag=flag):
                 self.assertIn(flag, r.stdout)
+
+    def test_run_reply_cli_routing_and_validation(self):
+        self.mod.start_session("s1")
+        fence = chr(96) * 3
+        reply = (
+            "I will inspect the repository status and run checks.\n\n"
+            + fence + "bash\n"
+            "run s99/7 <<'RUN_BLOCK'\n"
+            "echo reply_routed_ok\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        r_pipe = self._run([str(SCRIPT), "-r", "-y", "s1"], input=reply)
+        self._assert_ok(r_pipe)
+        self.assertIn("[s1/1] START", r_pipe.stdout)
+        self.assertIn("Note: renumbered from s99/7 to s1/1", r_pipe.stdout)
+        self.assertIn("reply_routed_ok", r_pipe.stdout)
+
+        r_eq = self._run([str(SCRIPT), "--run=s1", "-y"], input=reply)
+        self._assert_ok(r_eq)
+        self.assertIn("[s1/2] START", r_eq.stdout)
+
+        bad_cases = (
+            (["-r", "s1", "s2"], 1, "usage:"),
+            (["-r", "--bogus"], 1, "usage:"),
+            (["--run="], 1, "usage:"),
+            (["-r", "-p", "x"], 1, "cannot be used"),
+            (["-r", "bad/name/extra"], 1, "invalid"),
+            (["-r", "-y", "s1"], 2, "empty reply"),
+        )
+        for args, exp_rc, needle in bad_cases:
+            with self.subTest(args=args):
+                rb = self._run([str(SCRIPT), *args], input="")
+                self.assertEqual(rb.returncode, exp_rc, msg=rb.stdout + rb.stderr)
+                self.assertIn(needle, rb.stderr)
 
     def test_done_cli_flags_and_help(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])

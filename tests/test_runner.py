@@ -1676,5 +1676,176 @@ class TestRunner(RunBlockTestCase):
         )
 
 
+    def test_extract_reply_block_repairs_fences_dedupes_and_prefers_final_block(self):
+        fence = chr(96) * 3
+        fn = self.mod.extract_reply_block
+
+        # 1. Standard reply with preceding prose, inline example, split inner fence, and indented terminator
+        reply_complex = (
+            "In the rules we saw an inline example:\n"
+            "- `run s1/1 <<'RUN_BLOCK'`\n"
+            "And an earlier example block:\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "echo example_only\n"
+            "RUN_BLOCK\n"
+            + fence + "\n\n"
+            "Now I will apply the actual update and run tests.\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "# run: s1/1\n"
+            "echo real_action\n"
+            + fence + "\n"
+            "echo after_inner_fence\n"
+            "  RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        res = fn(reply_complex)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["kind"], "normal")
+        self.assertEqual(res["session"], "s1")
+        self.assertEqual(res["step"], "1")
+        self.assertTrue(res["repaired"])
+        self.assertEqual(res["candidate_count"], 2)
+        self.assertEqual(res["reasoning"], "Now I will apply the actual update and run tests.")
+        self.assertEqual(res["payload"], "# run: s1/1\necho real_action\necho after_inner_fence\n")
+
+        # 2. Missing RUN_BLOCK terminator before closing fence + duplicated identical block
+        block_no_term = (
+            "Checking git status first.\n\n"
+            + fence + "bash\n"
+            "run s2/3 <<'RUN_BLOCK'\n"
+            "git status -sb\n"
+            + fence + "\n"
+        )
+        res_dup = fn(block_no_term + "\n" + block_no_term)
+        self.assertTrue(res_dup["ok"])
+        self.assertEqual(res_dup["session"], "s2")
+        self.assertEqual(res_dup["step"], "3")
+        self.assertEqual(res_dup["duplicate_count"], 1)
+        self.assertEqual(res_dup["payload"], "git status -sb\n")
+        self.assertEqual(res_dup["reasoning"], "Checking git status first.")
+
+        # 3. --fix block extraction and misplaced shell script in --fix auto-conversion
+        fix_reply = (
+            "Applying a targeted anchor fix.\n\n"
+            + fence + "bash\n"
+            "run --fix s3/2 <<'RUN_FIX'\n"
+            "old = 'a'\n"
+            "new = 'b'\n"
+            "assert text.count(old) == 1\n"
+            "text = text.replace(old, new, 1)\n"
+            "RUN_FIX\n"
+            + fence + "\n"
+        )
+        res_fix = fn(fix_reply)
+        self.assertTrue(res_fix["ok"])
+        self.assertEqual(res_fix["kind"], "fix")
+        self.assertEqual(res_fix["session"], "s3")
+        self.assertEqual(res_fix["step"], "2")
+        self.assertEqual(res_fix["reasoning"], "Applying a targeted anchor fix.")
+
+        misplaced_shell_fix = (
+            "Running a fresh command.\n\n"
+            "run --fix s3/2 <<'RUN_FIX'\n"
+            "git status -sb\n"
+            "RUN_FIX\n"
+        )
+        res_conv = fn(misplaced_shell_fix)
+        self.assertTrue(res_conv["ok"])
+        self.assertEqual(res_conv["kind"], "normal")
+        self.assertIsNone(res_conv["step"])
+
+        # 4. Fenced code block fallback when session is supplied
+        fenced_only = (
+            "Here is the command to run:\n\n"
+            + fence + "bash\n"
+            "echo fenced_fallback_ok\n"
+            + fence + "\n"
+        )
+        res_fenced = fn(fenced_only, default_session="s5")
+        self.assertTrue(res_fenced["ok"])
+        self.assertTrue(res_fenced["fenced_fallback"])
+        self.assertEqual(res_fenced["session"], "s5")
+        self.assertEqual(res_fenced["payload"], "echo fenced_fallback_ok\n")
+        self.assertEqual(res_fenced["reasoning"], "Here is the command to run:")
+
+    def test_run_reply_tty_editor_session_inference_step_renumber_and_reasoning_persistence(self):
+        fence = chr(96) * 3
+        self.mod.start_session("s1")
+        # Step 1 via piped reply without explicit CLI session (resolved from block/latest session)
+        reply1 = (
+            "First, I will create a greeting file and verify its contents.\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "echo hello_step1\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc1 = self.mod.cmd_run_reply(None, reply1, auto_yes=True)
+        self.assertEqual(rc1, 0)
+        meta1 = self.mod.read_step_meta(self.tmp / "s1" / "1")
+        self.assertEqual(meta1.get("outcome"), "ok")
+        self.assertEqual(
+            meta1.get("reasoning"),
+            "First, I will create a greeting file and verify its contents.",
+        )
+        self.assertEqual(
+            (self.tmp / "s1" / "1" / "plan.md").read_text(encoding="utf-8").strip(),
+            "First, I will create a greeting file and verify its contents.",
+        )
+
+        # Step 2 via TTY editor mode with stale step number s1/1 -> auto-renumbers to s1/2
+        reply2 = (
+            "Second, I will run the next verification command.\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "# run: s1/1\n"
+            "echo hello_step2\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+
+        def fake_editor(path: Path, _r, _w) -> None:
+            path.write_text(reply2, encoding="utf-8")
+
+        fake_stdin = io.StringIO()
+        fake_stdin.isatty = lambda: True  # type: ignore[method-assign]
+        tty_w = io.StringIO()
+        tty_r = io.StringIO()
+        with unittest.mock.patch.object(self.mod.sys, "stdin", fake_stdin), \
+             unittest.mock.patch.object(self.mod, "open_tty", return_value=(tty_w, tty_r)), \
+             unittest.mock.patch.object(self.mod, "open_script_in_editor", side_effect=fake_editor), \
+             contextlib.redirect_stdout(io.StringIO()):
+            rc2 = self.mod.cmd_run_reply(None, None, auto_yes=True)
+        self.assertEqual(rc2, 0)
+        meta2 = self.mod.read_step_meta(self.tmp / "s1" / "2")
+        self.assertEqual(meta2.get("renumbered_from"), "s1/1")
+        self.assertEqual(meta2.get("reasoning"), "Second, I will run the next verification command.")
+        self.assertIn("# run: s1/2", (self.tmp / "s1" / "2" / "block.sh").read_text(encoding="utf-8"))
+        out2 = (self.tmp / "s1" / "2" / "out").read_text(encoding="utf-8")
+        self.assertIn("Note: renumbered from s1/1 to s1/2", out2)
+
+        # --fix via cmd_run_reply infers latest step when fix ref has stale step and persists reasoning
+        reply_fix = (
+            "Patching step 2 output message.\n\n"
+            + fence + "bash\n"
+            "run --fix s1/2 <<'RUN_FIX'\n"
+            "old = 'echo hello_step2'\n"
+            "new = 'echo hello_step2_patched'\n"
+            "assert text.count(old) == 1\n"
+            "text = text.replace(old, new, 1)\n"
+            "RUN_FIX\n"
+            + fence + "\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_fix = self.mod.cmd_run_reply("s1", reply_fix, auto_yes=True)
+        self.assertEqual(rc_fix, 0)
+        meta_fix = self.mod.read_step_meta(self.tmp / "s1" / "2_1")
+        self.assertEqual(meta_fix.get("reasoning"), "Patching step 2 output message.")
+        self.assertIn("hello_step2_patched", (self.tmp / "s1" / "2_1" / "out").read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

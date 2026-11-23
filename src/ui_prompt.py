@@ -616,6 +616,7 @@ def confirm_execution(
     summary: dict[str, object] | None = None,
     script_path: Path | None = None,
     auto_yes: bool = False,
+    reasoning: str | None = None,
 ) -> tuple[bool, str]:
     if in_run_block():
         return True, ""
@@ -656,6 +657,7 @@ def confirm_execution(
         edited=is_edited,
         term_cols=prev_cols,
         term_rows=prev_rows,
+        reasoning=reasoning,
     )
     _, border_col = _block_colors("START STEP")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
@@ -694,6 +696,7 @@ def confirm_execution(
                             edited=is_edited,
                             term_cols=new_cols,
                             term_rows=new_rows,
+                            reasoning=reasoning,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
                         ce_lines = box.splitlines()
@@ -771,6 +774,7 @@ def confirm_execution(
                             edited=is_edited,
                             term_cols=new_cols,
                             term_rows=new_rows,
+                            reasoning=reasoning,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
                         ce_lines = box.splitlines()
@@ -840,6 +844,37 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
         return r.returncode == 0
     except Exception:
         return False
+
+
+def prompt_reply_in_editor(tty_streams: tuple[object, object] | None = None) -> str:
+    fd, name = tempfile.mkstemp(prefix="run_block_reply_", suffix=".md")
+    os.close(fd)
+    tmp_path = Path(name)
+    close_after = False
+    tty_w = None
+    tty_r = None
+    try:
+        if tty_streams is not None:
+            tty_w, tty_r = tty_streams
+        else:
+            tty_w, tty_r = open_tty()
+            close_after = True
+        open_script_in_editor(tmp_path, tty_r, tty_w)
+        return tmp_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    finally:
+        if close_after:
+            for stream in (tty_w, tty_r):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
 
 
 def _prompt_append_text(tty_r, tty_w) -> str:

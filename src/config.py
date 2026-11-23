@@ -508,11 +508,15 @@ def write_step_meta(
     outcome: str | None = None,
     reason: str | None = None,
     fix_target: str | None = None,
+    reasoning: str | None = None,
 ) -> Path:
     if outcome is None:
         outcome = "ok" if exit_code == 0 else "failed"
     if outcome not in STEP_OUTCOMES:
         raise ValueError(f"unknown step outcome: {outcome!r}")
+    prev = read_step_meta(step_dir)
+    if reasoning is None and isinstance(prev.get("reasoning"), str):
+        reasoning = str(prev["reasoning"])
     meta_file = step_dir / "meta.json"
     data: dict[str, object] = {
         "outcome": outcome,
@@ -523,6 +527,8 @@ def write_step_meta(
         data["reason"] = str(reason)
     if fix_target:
         data["fix_target"] = str(fix_target)
+    if reasoning and str(reasoning).strip():
+        data["reasoning"] = str(reasoning).strip()
     if operations:
         data["operations"] = list(operations)
     if failed_step is not None and exit_code != 0:

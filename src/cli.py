@@ -415,6 +415,24 @@ def main(argv: list[str] | None = None) -> int:
     if args[0] in ("--start", "--bundle"):
         return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)
 
+    if args[0] in ("-r", "--run") or args[0].startswith("--run="):
+        run_usage = f"{prog} --run [-y] [session]"
+        if prompt_args:
+            _reject_prompt_for(args[0].split("=", 1)[0], run_usage)
+        run_session: str | None = None
+        if args[0].startswith("--run="):
+            val = args[0].split("=", 1)[1]
+            if not val or len(args) > 1:
+                raise SystemExit(f"{prog}: usage: {run_usage}")
+            run_session = val
+        elif len(args) > 2 or (len(args) == 2 and args[1].startswith("-")):
+            raise SystemExit(f"{prog}: usage: {run_usage}")
+        elif len(args) == 2:
+            run_session = args[1]
+        return cmd_run_reply(
+            run_session, auto_yes=auto_yes, sandbox_override=sandbox_override
+        )
+
     if args[0] == "--fix":
         if prompt_args:
             _reject_prompt_for("--fix", f"{prog} --fix [-y] <session>/<target>")

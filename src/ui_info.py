@@ -867,9 +867,14 @@ def _collect_info_report(
     any_edited = bool(edited if edited is not None else (out_edited or script_edited))
 
     body_sections = []
+    step_reasoning = _resolve_step_reasoning(summary=summary, script_path=resolved_script, step_dir=step_dir)
+    if step_reasoning:
+        body_sections.extend(_format_reasoning_lines(step_reasoning, max_content_w, max_lines=None))
     step_ops = _info_operation_steps(resolved_script, resolved_sdir, label)
     total_ms = int(round(duration_s * 1000.0)) if duration_s is not None else None
     if kind != "START STEP" and op_timings and out_path is not None and out_path.is_file():
+        if body_sections:
+            body_sections.append("")
         body_sections.extend(
             _format_output_breakdown(
                 op_timings,
@@ -884,6 +889,8 @@ def _collect_info_report(
             )
         )
     elif step_ops and resolved_script is not None:
+        if body_sections:
+            body_sections.append("")
         body_sections.extend(
             _format_script_breakdown(step_ops, resolved_script, edited=any_edited, max_width=max_content_w)
         )

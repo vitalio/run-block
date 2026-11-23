@@ -509,6 +509,7 @@ def not_run_exit(
     headless: bool = False,
     fix_target: str | None = None,
     outcome: str | None = "not-run",
+    reasoning: str | None = None,
 ) -> int:
     step_dir = _step_dir(sdir, step_name)
     step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -528,6 +529,7 @@ def not_run_exit(
                 outcome=outcome,
                 reason=detail_lines[0],
                 fix_target=fix_target,
+                reasoning=reasoning,
             )
     except Exception:
         pass
@@ -943,6 +945,7 @@ def _validate_step_script_syntax(
     headless: bool = False,
     footer_on_fail: str | None = None,
     renumbered_from: str | None = None,
+    reasoning: str | None = None,
 ) -> int:
     chk_cmd = [shell_bin, "-n", str(script_path)]
     chk = subprocess.run(
@@ -977,6 +980,7 @@ def _validate_step_script_syntax(
         outcome="syntax-error",
         reason=(msg.strip().splitlines() or [""])[0] or None,
         renumbered_from=renumbered_from,
+        reasoning=reasoning,
     )
     if headless:
         sys.stdout.write(full_output)
@@ -1009,6 +1013,15 @@ def _validate_step_script_syntax(
     return chk.returncode
 
 
+def _persist_step_reasoning(step_dir: Path, reasoning: str | None) -> str | None:
+    clean = (reasoning or "").strip()
+    if not clean:
+        return None
+    step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    write_private(step_dir / "plan.md", clean + "\n", overwrite=True)
+    return clean
+
+
 def run_script(
     label: str,
     script_path: Path,
@@ -1019,10 +1032,12 @@ def run_script(
     sandbox_override: str | None = None,
     footer_on_fail: str | None = None,
     renumbered_from: str | None = None,
+    reasoning: str | None = None,
 ) -> int:
     headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     step_dir = script_path.parent
     sdir = step_dir.parent
+    clean_reasoning = _persist_step_reasoning(step_dir, reasoning) or _resolve_step_reasoning(step_dir=step_dir) or None
     work_dir = get_work_dir(sdir)
     sandbox_mode = get_sandbox_mode(sdir, override=sandbox_override)
     shell_bin, _ = get_setting("shell")
@@ -1039,6 +1054,7 @@ def run_script(
         headless=headless,
         footer_on_fail=footer_on_fail,
         renumbered_from=renumbered_from,
+        reasoning=clean_reasoning,
     )
     if rc_syn != 0:
         return rc_syn
@@ -1046,6 +1062,8 @@ def run_script(
     aborted_marker = step_dir / "aborted"
     summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
     summary_obj["sandbox"] = sandbox_mode
+    if clean_reasoning:
+        summary_obj["reasoning"] = clean_reasoning
     approved, abort_reason = confirm_execution(
         label, script_text, summary=summary_obj, script_path=script_path, auto_yes=headless
     )
@@ -1060,6 +1078,7 @@ def run_script(
             outcome="aborted",
             reason=None if user_aborted else reason_str,
             renumbered_from=renumbered_from,
+            reasoning=clean_reasoning,
         )
         if user_aborted:
             return 130
@@ -1083,11 +1102,14 @@ def run_script(
                 headless=headless,
                 footer_on_fail=footer_on_fail,
                 renumbered_from=renumbered_from,
+                reasoning=clean_reasoning,
             )
             if rc_syn != 0:
                 return rc_syn
             summary_obj = summarize_script_actions(script_text, work_dir=work_dir)
             summary_obj["sandbox"] = sandbox_mode
+            if clean_reasoning:
+                summary_obj["reasoning"] = clean_reasoning
 
     start_line = f"[{label}] START\n"
     log_chunks: list[str] = [start_line]
@@ -1275,6 +1297,7 @@ def run_script(
         operations=op_timings,
         failed_step=failed_step,
         renumbered_from=renumbered_from,
+        reasoning=clean_reasoning,
     )
     write_private(out_path, full_output)
     try:
@@ -1410,6 +1433,400 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     out = (joined + "\n") if joined and not joined.endswith("\n") else joined
     return out, None
 
+REPLY_CMD_HEADER_RE = re.compile(
+    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*)?(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b([^\n]*?)<<-?\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
+)
+FENCE_OPEN_RE = re.compile(r"^\s*`{3,}([A-Za-z0-9_-]*)\s*$")
+FENCE_CLOSE_RE = re.compile(r"^\s*`{3,}\s*$")
+PROSE_BULLET_HDR_RE = re.compile(
+    r"^\s*(?:[-*+]|\d+\.)\s+`?(?:run(?:_block)?\b|```)"
+)
+
+
+def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | None:
+    try:
+        tokens = shlex.split(arg_str)
+    except ValueError:
+        tokens = arg_str.strip().split()
+    is_fix = delim == "RUN_FIX"
+    ref: str | None = None
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "--fix":
+            is_fix = True
+            i += 1
+        elif tok in ("-y", "--yes", "--headless", "--no-sandbox"):
+            i += 1
+        elif tok == "--sandbox":
+            if i + 1 < len(tokens) and tokens[i + 1].lower() in _SANDBOX_MODE_TOKENS:
+                i += 2
+            else:
+                i += 1
+        elif tok.startswith("--sandbox="):
+            i += 1
+        elif tok.startswith("-"):
+            return None
+        elif ref is None:
+            ref = tok
+            i += 1
+        else:
+            return None
+    session: str | None = None
+    step: str | None = None
+    if ref is not None:
+        if "<" in ref or ">" in ref or "..." in ref:
+            return None
+        if "/" in ref:
+            s_part, st_part = ref.split("/", 1)
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", s_part):
+                return None
+            step_pat = r"\d+(?:_\d+)?" if is_fix else r"\d+(?:_\d+)?"
+            if not re.fullmatch(step_pat, st_part):
+                return None
+            session, step = s_part, st_part
+        else:
+            if not re.fullmatch(r"[A-Za-z0-9._-]+", ref):
+                return None
+            session = ref
+    return {
+        "kind": "fix" if is_fix else "normal",
+        "delim": delim,
+        "ref": ref,
+        "session": session,
+        "step": step,
+    }
+
+
+def _clean_reply_reasoning(lines: list[str]) -> str:
+    cleaned = list(lines)
+    while cleaned and not cleaned[-1].strip():
+        cleaned.pop()
+    if cleaned and FENCE_OPEN_RE.match(cleaned[-1]):
+        cleaned.pop()
+    while cleaned and not cleaned[0].strip():
+        cleaned.pop()
+    while cleaned and not cleaned[-1].strip():
+        cleaned.pop()
+    return "\n".join(cleaned).strip()
+
+
+def extract_reply_block(
+    reply_text: str,
+    default_session: str | None = None,
+    *,
+    allow_fenced_fallback: bool = False,
+) -> dict[str, object]:
+    """Extract the actionable run / --fix block and preceding model reasoning from a full reply."""
+    norm = reply_text.replace("\r\n", "\n")
+    lines = norm.split("\n")
+
+    candidates: list[dict[str, object]] = []
+    idx = 0
+    n_lines = len(lines)
+    while idx < n_lines:
+        line = lines[idx]
+        if not PROSE_BULLET_HDR_RE.match(line):
+            m = REPLY_CMD_HEADER_RE.match(line)
+            if m:
+                parsed = _parse_reply_cmd_tokens(m.group(1), m.group(2))
+                if parsed is not None:
+                    delim = str(parsed["delim"])
+                    start_line = idx
+                    if idx > 0 and FENCE_OPEN_RE.match(lines[idx - 1]):
+                        start_line = idx - 1
+                    body_start = idx + 1
+                    end_idx = -1
+                    repaired = False
+                    next_hdr_idx = n_lines
+                    for j in range(body_start, n_lines):
+                        if _is_heredoc_terminator(lines[j], delim):
+                            if lines[j] != delim:
+                                repaired = True
+                            end_idx = j
+                            break
+                        if not PROSE_BULLET_HDR_RE.match(lines[j]):
+                            m_next = REPLY_CMD_HEADER_RE.match(lines[j])
+                            if m_next and _parse_reply_cmd_tokens(m_next.group(1), m_next.group(2)) is not None:
+                                next_hdr_idx = j
+                                break
+                    if end_idx == -1:
+                        repaired = True
+                        close_fence_before_next = [
+                            j for j in range(body_start, next_hdr_idx) if FENCE_CLOSE_RE.match(lines[j])
+                        ]
+                        if close_fence_before_next:
+                            end_idx = close_fence_before_next[-1]
+                        elif next_hdr_idx < n_lines:
+                            end_idx = next_hdr_idx
+                            while end_idx > body_start and FENCE_OPEN_RE.match(lines[end_idx - 1]):
+                                end_idx -= 1
+                        else:
+                            nonblank = [j for j in range(body_start, n_lines) if lines[j].strip()]
+                            if nonblank:
+                                end_idx = n_lines
+                    if end_idx != -1:
+                        inner = list(lines[body_start:end_idx])
+                        while True:
+                            first_nb = next((k for k, ln in enumerate(inner) if ln.strip()), None)
+                            if first_nb is None:
+                                break
+                            m_inner = REPLY_CMD_HEADER_RE.match(inner[first_nb])
+                            if not m_inner or _parse_reply_cmd_tokens(m_inner.group(1), m_inner.group(2)) is None:
+                                break
+                            inner = inner[first_nb + 1 :]
+                            repaired = True
+                        rebuilt: list[str] = []
+                        for ln in inner:
+                            if FENCE_LINE_RE.match(ln.strip()):
+                                repaired = True
+                                continue
+                            rebuilt.append(ln)
+                        payload_body = "\n".join(rebuilt).strip("\n")
+                        payload = (payload_body + "\n") if payload_body else ""
+                        block_end = end_idx + 1
+                        while block_end < n_lines and (
+                            not lines[block_end].strip() or FENCE_CLOSE_RE.match(lines[block_end])
+                        ):
+                            block_end += 1
+                        candidates.append({
+                            **parsed,
+                            "payload": payload,
+                            "start_line": start_line,
+                            "end_line": block_end,
+                            "repaired": repaired,
+                            "fenced_fallback": False,
+                        })
+                        idx = max(idx + 1, end_idx + 1)
+                        continue
+        idx += 1
+
+    if not candidates and (allow_fenced_fallback or default_session is not None):
+        fenced_blocks: list[dict[str, object]] = []
+        i = 0
+        while i < n_lines:
+            m_open = FENCE_OPEN_RE.match(lines[i])
+            if m_open:
+                lang = (m_open.group(1) or "").lower()
+                close_idx = -1
+                for j in range(i + 1, n_lines):
+                    if FENCE_CLOSE_RE.match(lines[j]):
+                        close_idx = j
+                        break
+                repaired_fence = False
+                if close_idx == -1:
+                    close_idx = n_lines
+                    repaired_fence = True
+                f_body = "\n".join(lines[i + 1 : close_idx]).strip("\n")
+                if f_body.strip() and lang in ("", "bash", "sh", "shell", "zsh", "python", "py"):
+                    is_py_fix = lang in ("python", "py") and ("text.replace" in f_body or "text.count" in f_body)
+                    fenced_blocks.append({
+                        "kind": "fix" if is_py_fix else "normal",
+                        "delim": "RUN_FIX" if is_py_fix else "RUN_BLOCK",
+                        "ref": None,
+                        "session": default_session,
+                        "step": None,
+                        "payload": f_body + "\n",
+                        "start_line": i,
+                        "end_line": min(n_lines, close_idx + 1),
+                        "repaired": repaired_fence,
+                        "fenced_fallback": True,
+                    })
+                i = close_idx + 1
+                continue
+            i += 1
+        if fenced_blocks:
+            candidates = fenced_blocks
+
+    non_empty = [c for c in candidates if str(c.get("payload") or "").strip()]
+    if not non_empty:
+        if candidates:
+            return {"ok": False, "error": "extracted block is empty"}
+        return {
+            "ok": False,
+            "error": "no executable 'run <session>/<step> <<\'RUN_BLOCK\'' or '--fix' block found in reply",
+        }
+
+    # Deduplicate consecutive or repeated identical blocks while tracking count
+    unique_candidates: list[dict[str, object]] = []
+    duplicate_count = 0
+    for cand in non_empty:
+        c_key = (cand.get("kind"), cand.get("ref"), str(cand.get("payload") or "").strip())
+        if unique_candidates:
+            prev = unique_candidates[-1]
+            p_key = (prev.get("kind"), prev.get("ref"), str(prev.get("payload") or "").strip())
+            if c_key == p_key:
+                duplicate_count += 1
+                continue
+        unique_candidates.append(cand)
+
+    # Prefer the final actionable block over earlier inline prose examples
+    chosen = unique_candidates[-1]
+    if len(unique_candidates) > 1:
+        first_start = int(unique_candidates[0]["start_line"])
+        chosen_start = int(chosen["start_line"])
+        prev_end = int(unique_candidates[-2]["end_line"])
+        between_reasoning = _clean_reply_reasoning(lines[prev_end:chosen_start])
+        lead_reasoning = _clean_reply_reasoning(lines[:first_start])
+        reasoning = between_reasoning or lead_reasoning
+    else:
+        reasoning = _clean_reply_reasoning(lines[: int(chosen["start_line"])])
+
+    session = default_session or (str(chosen["session"]) if chosen.get("session") else None)
+    step = str(chosen["step"]) if chosen.get("step") else None
+    kind = str(chosen["kind"])
+    payload = str(chosen["payload"])
+    if kind == "fix" and _looks_like_shell_script(payload) and not (
+        "text.replace" in payload or "text.count" in payload or "re.sub" in payload
+    ):
+        kind = "normal"
+        step = None
+
+    return {
+        "ok": True,
+        "kind": kind,
+        "session": session,
+        "step": step,
+        "ref": chosen.get("ref"),
+        "payload": payload,
+        "reasoning": reasoning,
+        "repaired": bool(chosen.get("repaired")),
+        "fenced_fallback": bool(chosen.get("fenced_fallback")),
+        "duplicate_count": duplicate_count,
+        "candidate_count": len(unique_candidates),
+    }
+
+
+def _resolve_reply_session(explicit_session: str | None, extracted_session: str | None) -> str:
+    base = ensure_base()
+    if explicit_session:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", explicit_session):
+            raise SystemExit(f"{prog_name()}: invalid session name: {explicit_session!r}")
+        return explicit_session
+    if extracted_session and (base / extracted_session).is_dir():
+        return extracted_session
+    sdirs = sorted(
+        [p for p in base.iterdir() if p.is_dir()],
+        key=lambda p: (_session_mtime(p), p.name),
+        reverse=True,
+    )
+    if sdirs:
+        cwd = get_work_dir().resolve()
+        open_matching = [
+            d for d in sdirs
+            if not is_session_completed(d) and _session_bundle_workdir(d) == cwd
+        ]
+        if open_matching:
+            return open_matching[0].name
+        any_matching = [d for d in sdirs if _session_bundle_workdir(d) == cwd]
+        if any_matching:
+            return any_matching[0].name
+        if extracted_session and re.fullmatch(r"[A-Za-z0-9._-]+", extracted_session):
+            return extracted_session
+        open_any = [d for d in sdirs if not is_session_completed(d)]
+        if open_any:
+            return open_any[0].name
+        return sdirs[0].name
+    if extracted_session and re.fullmatch(r"[A-Za-z0-9._-]+", extracted_session):
+        return extracted_session
+    raise SystemExit(f"{prog_name()}: no sessions found in {base}")
+
+
+def _resolve_latest_fix_target(sdir: Path) -> str:
+    scripts = [p.parent.name for p in _iter_session_scripts(sdir)]
+    if scripts:
+        return scripts[-1]
+    steps = [d.name for d in _iter_session_steps(sdir)]
+    if steps:
+        return steps[-1].split("_", 1)[0]
+    return "1"
+
+
+def cmd_run_reply(
+    session_arg: str | None = None,
+    reply_text: str | None = None,
+    *,
+    auto_yes: bool = False,
+    sandbox_override: str | None = None,
+) -> int:
+    prog = prog_name()
+    if in_run_block():
+        target = f"--run {session_arg}" if session_arg else "--run"
+        return _reject_nested_step_execution(target)
+    if session_arg is not None:
+        if "/" in session_arg:
+            s_part, _ = parse_ref(session_arg, allow_fix_step=True)
+            session_arg = s_part
+        elif not re.fullmatch(r"[A-Za-z0-9._-]+", session_arg):
+            raise SystemExit(f"{prog}: invalid session name: {session_arg!r}")
+
+    if reply_text is None:
+        if sys.stdin.isatty():
+            reply_text = prompt_reply_in_editor()
+        else:
+            reply_text = sys.stdin.read()
+
+    if not reply_text or not reply_text.strip():
+        sys.stderr.write(f"{prog}: empty reply (nothing to run)\n")
+        return 2
+
+    extracted = extract_reply_block(
+        reply_text,
+        default_session=session_arg,
+        allow_fenced_fallback=True,
+    )
+    if not extracted.get("ok"):
+        err_msg = str(extracted.get("error") or "no executable block found in reply")
+        sys.stderr.write(f"{prog}: {err_msg}\n")
+        return 2
+
+    extracted_sess = str(extracted["session"]) if extracted.get("session") else None
+    session = _resolve_reply_session(session_arg, extracted_sess)
+    base = ensure_base()
+    sdir = base / session
+    sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ensure_session_bundle(sdir, sandbox_mode=sandbox_override)
+
+    kind = str(extracted.get("kind") or "normal")
+    payload = str(extracted.get("payload") or "")
+    reasoning = str(extracted.get("reasoning") or "").strip() or None
+    raw_step = str(extracted["step"]) if extracted.get("step") else None
+    orig_ref = str(extracted["ref"]) if extracted.get("ref") and "/" in str(extracted["ref"]) else None
+
+    if kind == "fix":
+        target_step = raw_step if raw_step else _resolve_latest_fix_target(sdir)
+        base_target = target_step.split("_", 1)[0]
+        if not _find_fix_chain_scripts(sdir, base_target):
+            target_step = _resolve_latest_fix_target(sdir)
+        return cmd_fix(
+            f"{session}/{target_step}",
+            payload,
+            auto_yes=auto_yes,
+            sandbox_override=sandbox_override,
+            reasoning=reasoning,
+        )
+
+    inferred_step = str(next_free_step(sdir, min_step=1))
+    target_ref = f"{session}/{inferred_step}"
+    renumbered_from: str | None = None
+    if orig_ref and orig_ref != target_ref:
+        renumbered_from = orig_ref
+        payload = _rewrite_script_step_header(payload, orig_ref, target_ref)
+    elif raw_step and raw_step != inferred_step:
+        old_lbl = f"{ extracted_sess or session }/{raw_step}"
+        renumbered_from = old_lbl
+        payload = _rewrite_script_step_header(payload, old_lbl, target_ref)
+
+    return cmd_normal(
+        target_ref,
+        payload,
+        auto_yes=auto_yes,
+        sandbox_override=sandbox_override,
+        reasoning=reasoning,
+        renumbered_from=renumbered_from,
+    )
+
+
 
 def _done_badge(sdir: Path) -> str:
     return " [DONE]" if is_session_completed(sdir) else ""
@@ -1532,7 +1949,13 @@ def _reject_nested_step_execution(action: str) -> int:
 
 
 def cmd_normal(
-    ref: str, payload: str, auto_yes: bool = False, sandbox_override: str | None = None
+    ref: str,
+    payload: str,
+    auto_yes: bool = False,
+    sandbox_override: str | None = None,
+    *,
+    reasoning: str | None = None,
+    renumbered_from: str | None = None,
 ) -> int:
     if in_run_block():
         return _reject_nested_step_execution(f"block {ref}")
@@ -1558,7 +1981,6 @@ def cmd_normal(
         return rc_done
 
     aborted_marker = step_dir / "aborted"
-    renumbered_from: str | None = None
 
     overwrite = aborted_marker.exists()
     if overwrite:
@@ -1702,6 +2124,7 @@ def cmd_normal(
         return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: empty script on stdin", headless=headless)
 
     step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _persist_step_reasoning(step_dir, reasoning)
     write_private(script_path, payload, overwrite=overwrite)
     return run_script(
         label,
@@ -1711,6 +2134,7 @@ def cmd_normal(
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         renumbered_from=renumbered_from,
+        reasoning=reasoning,
     )
 
 
@@ -1720,6 +2144,8 @@ def cmd_fix(
     auto_yes: bool = False,
     sandbox_override: str | None = None,
     _repair: bool = True,
+    *,
+    reasoning: str | None = None,
 ) -> int:
     if in_run_block():
         return _reject_nested_step_execution(f"--fix {ref}")
@@ -1856,7 +2282,7 @@ def cmd_fix(
         if _repair and not headless and sys.stdout.isatty() and not no_clipboard():
             repaired = _propose_anchor_repair(fix_code, primary_text, primary_ns, label, sdir)
             if repaired is not None:
-                return cmd_fix(ref, repaired, auto_yes=auto_yes, sandbox_override=sandbox_override, _repair=False)
+                return cmd_fix(ref, repaired, auto_yes=auto_yes, sandbox_override=sandbox_override, _repair=False, reasoning=reasoning)
         reason = primary_err or f"fix made no changes to {primary[1]}"
         hints = _fix_anchor_hints(fix_code, primary_text, primary_ns, next_seq_ref, get_work_dir(sdir))
         if hints:
@@ -1865,6 +2291,7 @@ def cmd_fix(
 
     ext = chosen_script.suffix or _script_ext()
     new_step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _persist_step_reasoning(new_step_dir, reasoning)
     script_path = new_step_dir / f"block{ext}"
     write_private(fix_path, fix_code)
     write_private(script_path, chosen_new)
@@ -1886,6 +2313,7 @@ def cmd_fix(
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         footer_on_fail=stop_directive if reach_limit else None,
+        reasoning=reasoning,
     )
 
 

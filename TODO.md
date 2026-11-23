@@ -69,16 +69,6 @@ Follow-up findings from F74 review:
   `Steps:` / `Duration:` / `Started:` / `Completed:` layout, and
   `SESSION COMPLETED` headers.
 
-# 🎯 [NEXT] F84: Add run -r / --run [session] full-reply editor mode with automatic block extraction, repair, and step inference
-
-- Depends on: F83
-- Depends on: F74 -> B14 -> F92
-- Add `run -r [session]` / `run --run [session]` in `src/cli.py`, `src/header.py`, `src/runner.py`, and `src/ui.py` to ingest a complete model reply (chat prose + code block) without manual block extraction or fence fixing:
-  - Input acquisition: when `stdin` is a TTY, open a temporary file in the user's editor (`$VISUAL` / `$EDITOR` via the editor helper in `src/ui.py`) where the user pastes the full model reply and saves; when `stdin` is piped (e.g. `wl-paste | run -r` or `pbpaste | run -r`), read the full reply directly from `stdin`.
-  - Block extraction & repair engine (`extract_reply_block()` in `src/runner.py`): locate the executable `run [<session>/<step>] <<'RUN_BLOCK' ... RUN_BLOCK` or `run --fix [<session>/<target>] <<'RUN_FIX' ... RUN_FIX` block (or fenced code block when `[session]` is supplied) inside the full reply, reassemble fences split by inner triple backticks, repair missing/indented closing terminators, deduplicate repeated blocks, and prefer the final actionable block over inline prose examples.
-  - Automatic session & step resolution: resolve target `<session>` from the explicit CLI `[session]` argument, the extracted block header, or `_find_latest_session()` for the current `Workdir`, and automatically derive the next sequential step number via `next_free_step(sdir)` (auto-renumbering stale or mismatched step numbers without manual editing).
-  - Model reasoning display & persistence: extract the model's prose commentary preceding the block, persist it in `<session>/<step>/meta.json` (or `plan.md`), and render a compact commentary/reasoning section at the top of the `START STEP` (`BLOCK PLAN`) card in `src/ui.py` so the same reply-ingestion pipeline serves both web-chat (`-r`) and built-in API transport (`D10`).
-
 # ⚪ [NEW] F93: Split src/runner.py by responsibility
 
 - Depends on: F94, B15

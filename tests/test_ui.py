@@ -2156,5 +2156,41 @@ class TestUi(RunBlockTestCase):
         self.assertEqual(self.mod.bundle_row_heavy_level(plain[2]), "accent")
 
 
+    def test_start_step_and_info_render_model_reasoning(self):
+        sdir = self.mod.start_session("s1")
+        step_dir = sdir / "1"
+        step_dir.mkdir(parents=True, exist_ok=True)
+        script_path = step_dir / "block.sh"
+        script_path.write_text("git status -sb\npython3 -m unittest\n", encoding="utf-8")
+        reasoning_text = (
+            "I will check the repository status and run the unit test suite to verify the changes."
+        )
+        (step_dir / "plan.md").write_text(reasoning_text + "\n", encoding="utf-8")
+        summary = self.mod.summarize_script_actions(script_path.read_text(encoding="utf-8"))
+        summary["reasoning"] = reasoning_text
+
+        with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((88, 28))):
+            box, _, _ = self.mod.format_safety_box(
+                "s1/1",
+                [],
+                default_yes=True,
+                summary=summary,
+                script_path=script_path,
+            )
+        self.assertIn("Reasoning:", box)
+        self.assertIn("I will check the repository status", box)
+        self.assertLess(box.index("Reasoning:"), box.index("Operations:"))
+
+        report = self.mod._build_plain_info_report(
+            title_kind="START STEP",
+            label="s1/1",
+            sdir=sdir,
+            script_path=script_path,
+            summary=summary,
+        )
+        self.assertIn("Reasoning:", report)
+        self.assertIn(reasoning_text, report)
+
+
 if __name__ == "__main__":
     unittest.main()

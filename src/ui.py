@@ -635,7 +635,7 @@ def _wrap_box_line(line: str, max_width: int) -> list[str]:
 
 
 _SECTION_HDR_RE = re.compile(
-    r"^(?:Operations:|Safety warnings(?: \(\d+\))?:|Analyzer:|Bundle warnings(?: \(\d+\))?:|Parts(?: \(\d+\))?:)$"
+    r"^(?:Reasoning:|Operations:|Safety warnings(?: \(\d+\))?:|Analyzer:|Bundle warnings(?: \(\d+\))?:|Parts(?: \(\d+\))?:)$"
 )
 
 
@@ -1261,7 +1261,7 @@ def _is_step_meta_file(meta_path: Path) -> bool:
         if isinstance(data, dict):
             if "headers" in data or "bundle_plan" in data or "completed" in data:
                 return False
-            if "duration_ms" in data or "exit_code" in data or "operations" in data:
+            if "duration_ms" in data or "exit_code" in data or "operations" in data or "reasoning" in data or "outcome" in data:
                 return True
     except (OSError, ValueError):
         pass
@@ -1406,6 +1406,55 @@ def _safety_prompt_suffix(default_yes: bool) -> str:
     return "[Y/n/i(nfo)]:" if default_yes else "[y/n/i(nfo)]:"
 
 
+def _format_reasoning_lines(reasoning: str, max_width: int, *, max_lines: int | None = 6) -> list[str]:
+    clean = reasoning.strip()
+    if not clean:
+        return []
+    hdr = f"{_KEY_COLOR}Reasoning:{_ANSI_RESET}" if _use_color() else "Reasoning:"
+    wrapped: list[str] = []
+    avail = max(16, max_width - 2)
+    raw_lines = [ln.strip() for ln in clean.splitlines() if ln.strip()]
+    for rline in raw_lines:
+        wrapped.extend(
+            textwrap.wrap(rline, width=avail, initial_indent="  ", subsequent_indent="  ")
+            or [f"  {rline}"]
+        )
+    if max_lines is not None and max_lines > 0 and len(wrapped) > max_lines:
+        kept = max(1, max_lines - 1)
+        hidden = len(wrapped) - kept
+        hint = f"  ... +{hidden} more"
+        if _use_color():
+            hint = f"{_KEY_COLOR}{hint}{_ANSI_RESET}"
+        wrapped = [*wrapped[:kept], hint]
+    return [hdr, *wrapped]
+
+
+def _resolve_step_reasoning(
+    reasoning: str | None = None,
+    summary: dict[str, object] | None = None,
+    script_path: Path | None = None,
+    step_dir: Path | None = None,
+) -> str:
+    if reasoning and str(reasoning).strip():
+        return str(reasoning).strip()
+    if summary and isinstance(summary.get("reasoning"), str) and str(summary["reasoning"]).strip():
+        return str(summary["reasoning"]).strip()
+    target_dir = step_dir if step_dir is not None else (script_path.parent if script_path is not None else None)
+    if target_dir is not None:
+        meta = read_step_meta(target_dir)
+        if isinstance(meta.get("reasoning"), str) and str(meta["reasoning"]).strip():
+            return str(meta["reasoning"]).strip()
+        plan_md = target_dir / "plan.md"
+        if plan_md.is_file():
+            try:
+                txt = plan_md.read_text(encoding="utf-8", errors="replace").strip()
+                if txt:
+                    return txt
+            except OSError:
+                pass
+    return ""
+
+
 def format_safety_box(
     label: str,
     findings: list[dict[str, object]],
@@ -1416,6 +1465,7 @@ def format_safety_box(
     edited: bool = False,
     term_cols: int | None = None,
     term_rows: int | None = None,
+    reasoning: str | None = None,
 ) -> tuple[str, int, int]:
     meta_str = str(summary.get("meta", "")) if summary else ""
     title = " START STEP "
@@ -1441,6 +1491,11 @@ def format_safety_box(
         cd_dirs=cd_dirs,
         clamp_width=max_row_len,
     )
+    resolved_reasoning = _resolve_step_reasoning(reasoning, summary=summary, script_path=script_path)
+    if resolved_reasoning:
+        if content_lines:
+            content_lines.append("")
+        content_lines.extend(_format_reasoning_lines(resolved_reasoning, max_row_len))
     if summary:
         detail_lines: list[str] = []
         if meta_str:

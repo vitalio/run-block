@@ -33,8 +33,9 @@ rules are loaded via `.context.bundle`.
   interactive confirmation and clipboard prompts (`confirm_execution()`,
   `prompt_yes_no_box()`, `offer_clipboard_copy()`).
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
-  `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
-  headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
+  `-r`/`--run [session]` full-reply ingestion (`extract_reply_block()`,
+  `cmd_run_reply()`), `--fix` patching, `--retry`, `--list`, `--show`,
+  `--clean`, and `-y`/`--yes` headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
   slave or the capture pipe write end), so `out` keeps exact write order and
   the `END STEP` box takes its `Error:` line from the last meaningful line of
   `out`; there is no separate `err` artifact. Exports non-interactive
@@ -94,7 +95,8 @@ rules are loaded via `.context.bundle`.
   - Step execution outcomes (`write_step_meta`, `_step_outcome`,
     `_step_status`): persist structured `"outcome"` (`"ok"`, `"failed"`,
     `"syntax-error"`, `"not-run"`, `"aborted"`, `"saved"`), `"exit_code"`,
-    `"duration_ms"`, optional `"reason"`, and `"fix_target"` in
+    `"duration_ms"`, optional `"reason"`, `"fix_target"`, and model
+    `"reasoning"` (also written to `<step>/plan.md`) in
     `<session>/<step>/meta.json` across all exit paths (falling back to
     `aborted`/`out`/`error`/`block.*` artifacts for legacy step directories).
     Keep `[<session>/<step>] END (...)` exclusively as the agent stream marker

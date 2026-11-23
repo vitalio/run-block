@@ -57,18 +57,29 @@ context bundle on `stdin` to inject rules and copy `<session>/0` to the
 clipboard. Repeatable `-p TEXT` / `--prompt TEXT` flags append prompt sections
 to `===== Prompt =====` (joining multiple non-empty values with `\n\n`).
 
-### 2. Run numbered blocks (`<session>/<step>`)
+### 2. Run numbered blocks (`<session>/<step>`) or full replies (`-r` / `--run`)
 
 ```bash
 run s1/1 <<'RUN_BLOCK'
 git status -sb
 python3 -m unittest
 RUN_BLOCK
+
+run -r
+wl-paste | run -r s1
 ```
 
-Before execution, `START STEP` displays the resolved working directory,
-numbered operations (with AST-expanded Python sub-items), and any safety
-warnings. During execution, live `[N/M]` progress markers and per-operation
+With `run -r [session]` / `run --run [session]`, you can paste or pipe an entire
+model reply (reasoning prose + code block): when `stdin` is a TTY, `run -r`
+opens a temporary buffer in `$VISUAL` / `$EDITOR`; when piped, it reads from
+`stdin`. It automatically extracts the final actionable `RUN_BLOCK` or
+`--fix` / `RUN_FIX` block, repairs split fences or missing terminators, infers
+the target session and next free step (`next_free_step()`), and persists the
+model's preceding prose in `<session>/<step>/meta.json` and `plan.md`.
+
+Before execution, `START STEP` displays the model's `Reasoning:` commentary (if
+present), the resolved working directory, numbered operations (with
+AST-expanded Python sub-items), and any safety warnings. During execution, live `[N/M]` progress markers and per-operation
 timings stream to the terminal, and `END STEP` offers one-keystroke clipboard
 copy of the combined step header, output, and token stats.
 
@@ -264,6 +275,7 @@ run --bundle-plan s1 --part 2
 | `run [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
 | `<command> \| run [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
 | `run [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode; also reopens a completed session) |
+| `run -r`, `--run [-y] [session]` | Ingest a full model reply from `$VISUAL`/`$EDITOR` (on TTY `stdin`) or piped `stdin`, extract and repair the `RUN_BLOCK` / `RUN_FIX` block (or fenced code block when `[session]` is given), infer `<session>/<next_step>`, and display model reasoning in `START STEP` |
 | `run --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
 | `run --bundle-plan [<session>] [--json] [--part N]` | Print the `Parts (<N>):` table and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
 | `run --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
