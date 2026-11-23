@@ -1,13 +1,4 @@
-# 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
-
-- Depends on: D3
-- Bump: `MINOR`
-- In `src/config.py`, define canonical `CHILD_PAGER_ENV_VARS = ("PAGER", "GIT_PAGER", "GH_PAGER", "MANPAGER", "SYSTEMD_PAGER", "BAT_PAGER", "AWS_PAGER", "PSQL_PAGER", "DELTA_PAGER")` and add `get_setting("pager")` reading `RUN_BLOCK_PAGER` (default `"cat"`; values `"0"`, `"false"`, `"no"`, `"off"`, `"inherit"`, `"keep"`, `"passthrough"` return `""` to preserve the parent environment's pager variables unchanged).
-- In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
-- Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
-- Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
-
-# 🎯 [NEXT] D10: Design built-in API agent mode in run-block (single run tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
+# 🔵 [WIP] D10: Design built-in API agent mode in run-block (single run tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
 
 - Depends on: F86, F89, F82, F74, F95
 - Design candidate for `role=design` adding a built-in LLM API agent transport mode directly inside `run` (preserving `c(opy)` clipboard workflow and `run -r` full-reply paste mode as fallbacks, and remaining directly runnable via `todo <ID> | context | run`):

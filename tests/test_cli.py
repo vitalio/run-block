@@ -89,7 +89,7 @@ class TestCli(RunBlockTestCase):
     def test_help_lists_session_inspection_flags(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
         self._assert_ok(r)
-        for flag in ("--info", "--filter", "--script", "--out", "-r", "--run"):
+        for flag in ("--info", "--filter", "--script", "--out", "-r", "--run", "RUN_BLOCK_PAGER=cat|inherit"):
             with self.subTest(flag=flag):
                 self.assertIn(flag, r.stdout)
 

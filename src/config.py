@@ -1,3 +1,17 @@
+CHILD_PAGER_ENV_VARS = (
+    "PAGER",
+    "GIT_PAGER",
+    "GH_PAGER",
+    "MANPAGER",
+    "SYSTEMD_PAGER",
+    "BAT_PAGER",
+    "AWS_PAGER",
+    "PSQL_PAGER",
+    "DELTA_PAGER",
+)
+_PAGER_PASSTHROUGH_VALUES = ("0", "false", "no", "off", "inherit", "keep", "passthrough")
+
+
 def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run"
     if raw.lower().endswith(".py") and len(raw) > 3:
@@ -65,6 +79,14 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
             v = os.environ["RUN_BLOCK_PROGRESS"].strip().lower()
             return ("false" if v in ("0", "false", "no", "off") else "true"), "env"
         return "true", "default"
+    if key == "pager":
+        raw_pager = os.environ.get("RUN_BLOCK_PAGER")
+        if raw_pager is not None and raw_pager.strip():
+            val_pager = raw_pager.strip()
+            if val_pager.lower() in _PAGER_PASSTHROUGH_VALUES:
+                return "", "env"
+            return val_pager, "env"
+        return "cat", "default"
     if key == "shell":
         if os.environ.get("RUN_BLOCK_SHELL"):
             return os.environ["RUN_BLOCK_SHELL"].strip(), "env"

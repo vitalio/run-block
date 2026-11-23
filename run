@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.37.4"
+VERSION = "0.38.0"
 REPO_MARKER = "run-block-repo: vitalio/run-block"
 LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
 REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
@@ -86,11 +86,26 @@ HELP_OPTIONS = (
 
 HELP_ENV = (
     ("RUN_BLOCK_CWD=auto|cwd|PATH", "Working directory (auto prefers piped/session Workdir, project root, or $PWD)"),
+    ("RUN_BLOCK_PAGER=cat|inherit", "Non-interactive pager for child steps (PAGER, GIT_PAGER, GH_PAGER, MANPAGER, ...; inherit/off keeps parent env)"),
     ("RUN_BLOCK_PROGRESS=0", "Disable live step progress markers during interactive runs"),
     ("RUN_BLOCK_BUNDLE_MAX_TOKENS=100000", "Warn when total bundle exceeds token budget (0 disables)"),
     ("RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000", "Warn when a single bundle part exceeds token limit (0 disables)"),
     ("VISUAL / EDITOR", "Editor/viewer for e(dit), s(cript), o(utput), and v(iew) inside i(nfo) (keeps *.orig backups)"),
 )
+
+
+CHILD_PAGER_ENV_VARS = (
+    "PAGER",
+    "GIT_PAGER",
+    "GH_PAGER",
+    "MANPAGER",
+    "SYSTEMD_PAGER",
+    "BAT_PAGER",
+    "AWS_PAGER",
+    "PSQL_PAGER",
+    "DELTA_PAGER",
+)
+_PAGER_PASSTHROUGH_VALUES = ("0", "false", "no", "off", "inherit", "keep", "passthrough")
 
 
 def prog_name() -> str:
@@ -160,6 +175,14 @@ def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
             v = os.environ["RUN_BLOCK_PROGRESS"].strip().lower()
             return ("false" if v in ("0", "false", "no", "off") else "true"), "env"
         return "true", "default"
+    if key == "pager":
+        raw_pager = os.environ.get("RUN_BLOCK_PAGER")
+        if raw_pager is not None and raw_pager.strip():
+            val_pager = raw_pager.strip()
+            if val_pager.lower() in _PAGER_PASSTHROUGH_VALUES:
+                return "", "env"
+            return val_pager, "env"
+        return "cat", "default"
     if key == "shell":
         if os.environ.get("RUN_BLOCK_SHELL"):
             return os.environ["RUN_BLOCK_SHELL"].strip(), "env"
@@ -10308,9 +10331,12 @@ def run_script(
 
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
+    pager_cmd, _ = get_setting("pager")
+    pager_env = {k: pager_cmd for k in CHILD_PAGER_ENV_VARS} if pager_cmd else {}
     child_env = scrub_child_env(
         {
             **os.environ,
+            **pager_env,
             "IN_RUN_BLOCK": "1",
             "RUN_BLOCK_PARENT_SESSION": sdir.name,
             "RUN_BLOCK_PARENT_STEP": step_dir.name,

@@ -2277,6 +2277,74 @@ class TestRunner(RunBlockTestCase):
             self.assertNotEqual(self.mod.cmd_normal("s1/5", "if true; then\n", auto_yes=True), 0)
             self.assertEqual(clip_calls, [("s1/5", "SYNTAX ERROR")])
 
+    def test_child_pager_env_vars_defaults_override_and_passthrough(self):
+        expected_vars = (
+            "PAGER",
+            "GIT_PAGER",
+            "GH_PAGER",
+            "MANPAGER",
+            "SYSTEMD_PAGER",
+            "BAT_PAGER",
+            "AWS_PAGER",
+            "PSQL_PAGER",
+            "DELTA_PAGER",
+        )
+        self.assertEqual(self.mod.CHILD_PAGER_ENV_VARS, expected_vars)
+        os.environ.pop("RUN_BLOCK_PAGER", None)
+        self.assertEqual(self.mod.get_setting("pager"), ("cat", "default"))
+
+        dump_script = (
+            "python3 - <<'PY'\n"
+            "import json, os\n"
+            f"keys = {expected_vars!r}\n"
+            "print('PAGER_JSON=' + json.dumps({k: os.environ.get(k) for k in keys}, sort_keys=True))\n"
+            "PY\n"
+        )
+
+        def _extract_pagers(step_num: int) -> dict[str, str | None]:
+            out_text = (self.tmp / "spager" / str(step_num) / "out").read_text(encoding="utf-8")
+            for ln in out_text.splitlines():
+                if ln.startswith("PAGER_JSON="):
+                    return json.loads(ln[len("PAGER_JSON="):])
+            self.fail(f"missing PAGER_JSON in step {step_num} output:\n{out_text}")
+
+        # 1. Default ("cat") overrides any parent pager environment variables
+        for k in expected_vars:
+            os.environ[k] = f"parent_{k.lower()}"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("spager/1", dump_script, auto_yes=True), 0)
+        self.assertEqual(_extract_pagers(1), {k: "cat" for k in expected_vars})
+
+        # 2. Custom RUN_BLOCK_PAGER override exports the custom command to all CHILD_PAGER_ENV_VARS
+        os.environ["RUN_BLOCK_PAGER"] = "less -FRX"
+        self.assertEqual(self.mod.get_setting("pager"), ("less -FRX", "env"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("spager/2", dump_script, auto_yes=True), 0)
+        self.assertEqual(_extract_pagers(2), {k: "less -FRX" for k in expected_vars})
+
+        # 3. Passthrough tokens return ("", "env") and preserve parent pager env unchanged
+        for token in ("0", "false", "no", "off", "inherit", "keep", "passthrough", "INHERIT", "Off"):
+            with self.subTest(token=token):
+                os.environ["RUN_BLOCK_PAGER"] = token
+                self.assertEqual(self.mod.get_setting("pager"), ("", "env"))
+
+        os.environ["RUN_BLOCK_PAGER"] = "inherit"
+        os.environ["PAGER"] = "less -R"
+        os.environ["GIT_PAGER"] = "delta"
+        for k in expected_vars[2:]:
+            os.environ.pop(k, None)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("spager/3", dump_script, auto_yes=True), 0)
+        expected_passthrough = {k: None for k in expected_vars}
+        expected_passthrough["PAGER"] = "less -R"
+        expected_passthrough["GIT_PAGER"] = "delta"
+        self.assertEqual(_extract_pagers(3), expected_passthrough)
+
+        os.environ["RUN_BLOCK_PAGER"] = "off"
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("spager/4", dump_script, auto_yes=True), 0)
+        self.assertEqual(_extract_pagers(4), expected_passthrough)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1277,9 +1277,12 @@ def run_script(
 
     bundle_file = sdir / "0"
     bundle_snapshot = bundle_file.read_bytes() if bundle_file.is_file() else None
+    pager_cmd, _ = get_setting("pager")
+    pager_env = {k: pager_cmd for k in CHILD_PAGER_ENV_VARS} if pager_cmd else {}
     child_env = scrub_child_env(
         {
             **os.environ,
+            **pager_env,
             "IN_RUN_BLOCK": "1",
             "RUN_BLOCK_PARENT_SESSION": sdir.name,
             "RUN_BLOCK_PARENT_STEP": step_dir.name,

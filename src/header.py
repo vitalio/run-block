@@ -86,6 +86,7 @@ HELP_OPTIONS = (
 
 HELP_ENV = (
     ("RUN_BLOCK_CWD=auto|cwd|PATH", "Working directory (auto prefers piped/session Workdir, project root, or $PWD)"),
+    ("RUN_BLOCK_PAGER=cat|inherit", "Non-interactive pager for child steps (PAGER, GIT_PAGER, GH_PAGER, MANPAGER, ...; inherit/off keeps parent env)"),
     ("RUN_BLOCK_PROGRESS=0", "Disable live step progress markers during interactive runs"),
     ("RUN_BLOCK_BUNDLE_MAX_TOKENS=100000", "Warn when total bundle exceeds token budget (0 disables)"),
     ("RUN_BLOCK_FRAGMENT_MAX_TOKENS=20000", "Warn when a single bundle part exceeds token limit (0 disables)"),

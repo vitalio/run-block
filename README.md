@@ -312,6 +312,7 @@ standard environment variables:
 | `RUN_BLOCK_TOKEN_STATS` | `true` | Show char size and Claude/GPT/Gemini token counts (`true` / `false`) |
 | `RUN_BLOCK_BUNDLE_MAX_TOKENS` | `100000` | Warn in `START SESSION` / `--bundle-plan` when total tokens exceed budget (`0` disables) |
 | `RUN_BLOCK_FRAGMENT_MAX_TOKENS` | `20000` | Warn in `START SESSION` / `--bundle-plan` when a single fragment exceeds limit (`0` disables) |
+| `RUN_BLOCK_PAGER` | `cat` | Non-interactive pager command exported to child steps across `PAGER`, `GIT_PAGER`, `GH_PAGER`, `MANPAGER`, `SYSTEMD_PAGER`, `BAT_PAGER`, `AWS_PAGER`, `PSQL_PAGER`, and `DELTA_PAGER` (`inherit`/`off`/`0`/`false` preserves parent pager variables) |
 | `RUN_BLOCK_PROGRESS` | `1` | Show live `[N/M]` step progress markers and elapsed timings during interactive execution (`0`/`false` to disable) |
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
@@ -329,6 +330,7 @@ Every block runs with these variables in its environment:
 | `IN_RUN_BLOCK` | Always `1` inside a running step |
 | `RUN_BLOCK_PARENT_SESSION` / `RUN_BLOCK_PARENT_STEP` | Session name and step directory of the running block |
 | `RUN_BLOCK_STEP_STDOUT_INO` | `<st_dev>:<st_ino>` of the step capture stdout (PTY slave or pipe write end); a producer compares it with `fstat(1)` to tell direct step console output from a shell pipeline inside the step |
+| `PAGER`, `GIT_PAGER`, `GH_PAGER`, `MANPAGER`, `SYSTEMD_PAGER`, `BAT_PAGER`, `AWS_PAGER`, `PSQL_PAGER`, `DELTA_PAGER` | Set to `RUN_BLOCK_PAGER` (default `cat`) unless disabled via `RUN_BLOCK_PAGER=inherit\|off\|0\|false` |
 
 ## License
 
