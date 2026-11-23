@@ -254,7 +254,7 @@ class TestUi(RunBlockTestCase):
                 self.mod.start_session("s9", force=False)
         self.assertIn("already exists (use --force to overwrite)", str(cm_dup.exception))
 
-    def test_f26_ascii_fallback_kv_alignment_and_tty_colors(self):
+    def test_ascii_fallback_kv_alignment_and_tty_colors(self):
         # 1. ASCII fallback when stdout encoding is not UTF-8
         with io.TextIOWrapper(io.BytesIO(), encoding="ascii") as ascii_stream:
             with unittest.mock.patch.object(self.mod.sys, "stdout", ascii_stream), \
@@ -295,7 +295,7 @@ class TestUi(RunBlockTestCase):
             else:
                 os.environ["NO_COLOR"] = saved_no_color
 
-    def test_f27_visual_hierarchy_border_colors_and_block_plan_highlights(self):
+    def test_visual_hierarchy_border_colors_and_block_plan_highlights(self):
         tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
         tty_stream.isatty = lambda: True  # type: ignore[method-assign]
         saved_no_color = os.environ.pop("NO_COLOR", None)
@@ -375,7 +375,7 @@ class TestUi(RunBlockTestCase):
             else:
                 os.environ["NO_COLOR"] = saved_no_color
 
-    def test_f41_status_box_exit_error_and_dim_metadata(self):
+    def test_status_box_exit_error_and_dim_metadata(self):
         tty_stream = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
         tty_stream.isatty = lambda: True  # type: ignore[method-assign]
         saved_no_color = os.environ.pop("NO_COLOR", None)
@@ -438,7 +438,7 @@ class TestUi(RunBlockTestCase):
             else:
                 os.environ["NO_COLOR"] = saved_no_color
 
-    def test_f40_distinct_operation_tag_colors(self):
+    def test_distinct_operation_tag_colors(self):
         expected = {
             "read": "\x1b[1;94m",
             "write": "\x1b[1;33m",
@@ -552,7 +552,7 @@ class TestUi(RunBlockTestCase):
             else:
                 os.environ["NO_COLOR"] = saved_no_color
 
-    def test_f43_bright_error_title_border_and_distinct_prompt(self):
+    def test_bright_error_title_border_and_distinct_prompt(self):
         self.assertEqual(self.mod._ERROR_COLOR, "\x1b[1;91m")
         self.assertFalse(self.mod._BORDER_COLOR.startswith("\x1b[2;"))
         self.assertEqual(self.mod._BORDER_COLOR, "\x1b[96m")
@@ -593,7 +593,7 @@ class TestUi(RunBlockTestCase):
             if saved_nc is not None:
                 os.environ["NO_COLOR"] = saved_nc
 
-    def test_f53_conditional_sandbox_header_visibility(self):
+    def test_conditional_sandbox_header_visibility(self):
         # 1. Disabled / empty sandbox modes omit Sandbox: in format_session_header_lines
         sdir_off = self.tmp / "s_off"
         sdir_off.mkdir(parents=True, exist_ok=True)
@@ -709,7 +709,7 @@ class TestUi(RunBlockTestCase):
         )
         self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", end_box_act)
 
-    def test_b10_end_not_run_syntax_error_headers_with_step_meta(self):
+    def test_end_not_run_syntax_error_headers_with_step_meta(self):
         import json
 
         # 1. _resolve_session_dir ignores <session>/<step>/meta.json and resolves parent session dir
@@ -829,7 +829,7 @@ class TestUi(RunBlockTestCase):
             if saved_cwd_env is not None:
                 os.environ["RUN_BLOCK_CWD"] = saved_cwd_env
 
-    def test_f59_sigwinch_in_place_box_redraw(self):
+    def test_sigwinch_in_place_box_redraw(self):
         import pty
         import signal
         import threading
@@ -1059,7 +1059,7 @@ class TestUi(RunBlockTestCase):
             os.close(m_fd4)
             os.close(s_fd4)
 
-    def test_f58_tui_box_wrapping_and_hanging_indents(self):
+    def test_tui_box_wrapping_and_hanging_indents(self):
         def _assert_box_fits(box: str, max_cols: int, context: str) -> None:
             lines = box.splitlines()
             self.assertGreaterEqual(len(lines), 3, context)
@@ -1313,7 +1313,7 @@ class TestUi(RunBlockTestCase):
         finally:
             self.mod.BASE_DIR = old_base
 
-    def test_f56_progress_alignment_colors_and_silent_collapse(self):
+    def test_progress_alignment_colors_and_silent_collapse(self):
         step_map = {
             1: {"step": 1, "tag": "exec", "desc": "mkdir -p out"},
             2: {"step": 2, "tag": "read", "desc": "cat a.txt"},
@@ -1424,7 +1424,7 @@ class TestUi(RunBlockTestCase):
         self.assertIn("▸ [3/3] [exec] echo err_f56 >&2\nerr_f56\n✓ [3/3] (", live_e2e)
         self.assertNotIn("  ✓ [", live_e2e)
 
-    def test_b11_height_clamping_altscreen_details_and_display_width(self):
+    def test_height_clamping_altscreen_details_and_display_width(self):
         import pty
         import signal
         import threading
@@ -1670,7 +1670,7 @@ class TestUi(RunBlockTestCase):
                 os.close(m_fd3)
                 os.close(s_fd3)
 
-    def test_f54_end_drops_steps_and_info_viewer(self):
+    def test_end_drops_steps_and_info_viewer(self):
         old_base = self.mod.BASE_DIR
         self.mod.BASE_DIR = self.tmp
         try:
@@ -1829,7 +1829,7 @@ class TestUi(RunBlockTestCase):
         finally:
             self.mod.BASE_DIR = old_base
 
-    def test_f77_borderless_info_home_shortened_title_prompt_and_tab_cursor(self):
+    def test_borderless_info_home_shortened_title_prompt_and_tab_cursor(self):
         # 1. read_clipboard_key supports p/P in raw TTY and p/prompt in line mode
         for line_in in ("p\n", "P\n", "prompt\n", "PROMPT\n"):
             with self.subTest(line_in=line_in):

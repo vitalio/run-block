@@ -20,9 +20,18 @@ rules are loaded via `.context.bundle`.
   numbering, `--fix` constraints, or session rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
   `run --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
-- `src/ui.py` — thin open-right box-drawing (`╭─ TITLE ───`, `│ `, `╰───`, ASCII fallback) TUI blocks with aligned metadata and TTY colors
-  (`START STEP`, `START SESSION`, `END STEP`, `NOT RUN`, `SYNTAX ERROR`), token
-  statistics, and clipboard integration.
+- `src/ui.py` — terminal/ANSI/UTF-8 and display-width primitives, token
+  counting and stats formatting (`count_tokens()`, `format_stats()`), and thin
+  open-right box-drawing (`╭─ TITLE ───`, `│ `, `╰───`, ASCII fallback) TUI card
+  layout and rendering (`START STEP`, `START SESSION`, `END STEP`, `NOT RUN`,
+  `SYNTAX ERROR`).
+- `src/ui_info.py` — fullscreen `i(nfo)` inspector, pager navigation and frame
+  composition, bundle/operation breakdown tables, and `PART N/M`, `BUNDLE R/M`,
+  and step operation `PART k/N` subviews.
+- `src/ui_prompt.py` — `/dev/tty` lifecycle, `SIGWINCH` debounce watcher,
+  editor launch and `.orig` backups, clipboard command resolution/copying, and
+  interactive confirmation and clipboard prompts (`confirm_execution()`,
+  `prompt_yes_no_box()`, `offer_clipboard_copy()`).
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
   `--fix` patching, `--retry`, `--list`, `--show`, `--clean`, and `-y`/`--yes`
   headless mode. Child `stdout` and `stderr` share one descriptor (the PTY

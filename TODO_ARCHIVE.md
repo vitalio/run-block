@@ -1,3 +1,14 @@
+# ✅ [DONE] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests — *2026-11-23, Split src/ui.py into src/ui.py, src/ui_info.py, and src/ui_prompt.py and renamed ticket-prefixed unit tests*
+
+- Depends on: B14
+- Bump: `PATCH`
+- Split `src/ui.py` (>4,100 lines) into three single-responsibility modules under `src/`:
+  - `src/ui.py`: terminal/ANSI/UTF-8 and display-width primitives, token counting and stats formatting (`count_tokens()`, `format_stats()`), and box-drawing card layout/rendering (`_wrap_box_line()`, `_clamp_body_rows()`, `_render_block()`, `format_safety_box()`, `build_box_body_lines()`, `format_clipboard_box()`).
+  - `src/ui_info.py`: fullscreen `i(nfo)` inspector, pager navigation/frame composition, bundle/operation breakdown tables, and `PART N/M`, `BUNDLE R/M`, and step operation `PART k/N` subviews (`_parse_pager_line()`..`_show_bundle_details_fullscreen()`).
+  - `src/ui_prompt.py`: `/dev/tty` lifecycle, `SIGWINCH` debounce watcher, editor launch and `.orig` backups, clipboard command resolution/copying, and interactive confirmation/clipboard prompts (`open_tty()`..`confirm_execution()`, `resolve_clipboard_target()`..`copy_file_to_clipboard()`, `offer_clipboard_copy()`).
+- Update `MODULE_ORDER` in `build.py`, rebuild `./run`, and update module boundary documentation in `AGENTS.md`.
+- Rename all remaining ticket-prefixed unit test methods (`test_f<N>_*` and `test_b<N>_*`) across `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py` to descriptive domain-behavior names.
+
 # ✅ [DONE] F99: Update stale run_block and agents/blocks/bash.md references across open tasks in TODO.md — *2026-11-23, Updated legacy run_block, agents/blocks/bash.md, todo_md, and agents_bundle references across open tasks in TODO.md*
 
 Several open backlog items in TODO.md (such as B15, F96, D10, F93, F84, D4, F88, D7) still reference the legacy binary name 'run_block', build target './run_block', or 'agents/blocks/bash.md' after the F72 cutover to 'run-block' ('run') and 'agents/run.md'.

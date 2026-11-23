@@ -188,7 +188,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_imp2.returncode, 0, r_imp2.stderr)
         self.assertIn(str(proj.resolve()), r_imp2.stdout)
 
-    def test_f28_stdin_preamble_metadata_and_legacy_fallback(self):
+    def test_stdin_preamble_metadata_and_legacy_fallback(self):
         self.assertNotIn("bundle-command", self.mod.HIDDEN_SESSION_HEADER_KEYS)
         self.assertNotIn("chat-lang", self.mod.HIDDEN_SESSION_HEADER_KEYS)
 
@@ -244,7 +244,7 @@ class TestBundle(RunBlockTestCase):
         legacy_lines = self.mod.format_session_header_lines(label="s9/1", sdir=legacy_dir)
         self.assertTrue(any("Role:" in ln and "audit" in ln for ln in legacy_lines))
 
-    def test_f33_start_bundle_edit_prompt_and_editor_flow(self):
+    def test_start_bundle_edit_prompt_and_editor_flow(self):
         bundle_file = self.tmp / "s1" / "0"
         bundle_file.parent.mkdir(parents=True, exist_ok=True)
         bundle_file.write_text("Session: s1\nNext-Block: s1/1\n\nOriginal prompt\n", encoding="utf-8")
@@ -313,7 +313,7 @@ class TestBundle(RunBlockTestCase):
         mock_copy_esc.assert_not_called()
         self.assertIn("Skipped clipboard copy.", tty_w_esc.getvalue())
 
-    def test_f45_stdin_workdir_header_preference(self):
+    def test_stdin_workdir_header_preference(self):
         target = self.tmp / "piped_target"
         target.mkdir()
         other_cwd = self.tmp / "other_cwd"
@@ -395,7 +395,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_step.returncode, 0, r_step.stderr)
         self.assertIn(str(target.resolve()), r_step.stdout)
 
-    def test_f50_start_bundle_edit_recalculates_stats_and_redraws_box(self):
+    def test_start_bundle_edit_recalculates_stats_and_redraws_box(self):
         sdir = self.tmp / "s1"
         sdir.mkdir(parents=True, exist_ok=True)
         bundle_file = sdir / "0"
@@ -820,7 +820,7 @@ class TestBundle(RunBlockTestCase):
                 self.assertEqual(self.mod.normalize_fragment_kind(removed_kind), removed_kind)
                 self.assertNotIn(removed_kind, self.mod._BUNDLE_TAG_COLORS)
 
-    def test_f68_top_style_table_kinds_groups_heavy_and_header(self) -> None:
+    def test_top_style_table_kinds_groups_heavy_and_header(self) -> None:
         def _part(idx, kind, name, chain, chars, share):
             return {
                 "index": idx, "kind": kind, "name": name, "chain": chain, "lines": 1,
@@ -880,7 +880,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(rec["parts"][1]["index"], 2)
         self.assertGreater(hdr["chars"], 0)
 
-    def test_f47_bundle_diagnostics_details_view_and_cli(self):
+    def test_bundle_diagnostics_details_view_and_cli(self):
         proj = self.tmp / "f47_proj"
         proj.mkdir()
         sessions = self.tmp / "f47_sessions"
@@ -1109,7 +1109,7 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
         self.assertIn("--bundle-plan", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
 
-    def test_f55_hide_bundle_transport_headers_and_clamp_long_title(self):
+    def test_hide_bundle_transport_headers_and_clamp_long_title(self):
         proj = self.tmp / "f55_proj"
         proj.mkdir()
         sessions = self.tmp / "f55_sessions"
@@ -1239,7 +1239,7 @@ class TestBundle(RunBlockTestCase):
         self.assertTrue(ascii_title[0].endswith("..."))
         self.assertLessEqual(self.mod.display_width(ascii_title[0]), 58)
 
-    def test_f63_unified_chars_chain_hierarchy_tabular_and_preamble(self):
+    def test_unified_chars_chain_hierarchy_tabular_and_preamble(self):
         # 1. count_tokens / format_stats / Script: / format_start_bundle use chars
         sample = "hello мир\n"
         tok = self.mod.count_tokens(sample.encode("utf-8"))
@@ -1389,7 +1389,7 @@ class TestBundle(RunBlockTestCase):
         self.assertIn("chars ·", r_bp.stdout)
         self.assertNotIn(" B ·", r_bp.stdout)
 
-    def test_f66_embedded_block_rules_injection_dedup_and_tty_bare_start(self):
+    def test_embedded_block_rules_injection_dedup_and_tty_bare_start(self):
         # 1. Built ./run_block embeds run.md without '# Description:' lines
         built_text = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn('EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"', built_text)
@@ -1762,7 +1762,7 @@ class TestBundle(RunBlockTestCase):
             self.assertIn(f"PART {idx['p1']}/{total}", shown)
             self.assertIn("Do the task", shown)
 
-    def test_f73_prompt_flag_embedding_and_cli_validation(self):
+    def test_prompt_flag_embedding_and_cli_validation(self):
         proj = self.tmp / "f73_proj"
         proj.mkdir()
         nonce = "f73nonce"
@@ -1976,7 +1976,7 @@ class TestBundle(RunBlockTestCase):
             else:
                 os.environ["RUN_BLOCK_CWD"] = old_cwd_env
 
-    def test_f57_start_session_append_creates_prompt_section_and_backup(self):
+    def test_start_session_append_creates_prompt_section_and_backup(self):
         sdir = self.tmp / "s1"
         sdir.mkdir(parents=True, exist_ok=True)
         bundle_file = sdir / "0"
@@ -2010,7 +2010,7 @@ class TestBundle(RunBlockTestCase):
         self.assertNotEqual(self.mod.stats_line(bundle_file), initial_stats)
         self.assertEqual(tty_out.count("╭─ START SESSION "), 3)
 
-    def test_f57_start_session_append_extends_existing_prompt_section(self):
+    def test_start_session_append_extends_existing_prompt_section(self):
         sdir = self.tmp / "s1"
         sdir.mkdir(parents=True, exist_ok=True)
         bundle_file = sdir / "0"
@@ -2030,7 +2030,7 @@ class TestBundle(RunBlockTestCase):
         self.assertGreater(text.index("follow-up question"), text.index("===== Prompt ====="))
         self.assertEqual((sdir / "0.orig").read_text(encoding="utf-8"), initial_text)
 
-    def test_f57_start_session_empty_append_leaves_files_untouched(self):
+    def test_start_session_empty_append_leaves_files_untouched(self):
         sdir = self.tmp / "s1"
         sdir.mkdir(parents=True, exist_ok=True)
         bundle_file = sdir / "0"
@@ -2047,7 +2047,7 @@ class TestBundle(RunBlockTestCase):
                 self.assertNotIn("(edited)", tty_out)
                 mock_copy.assert_called_once_with(["pbcopy"], bundle_file)
 
-    def test_f77_in_order_parts_hierarchical_pct_and_total_rows(self):
+    def test_in_order_parts_hierarchical_pct_and_total_rows(self):
         nonce = "f77bnd"
         stdin_text = (
             f"Bundle-Boundary: {nonce}\n"
@@ -2124,7 +2124,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(pct_end_1 - pct_end_0, 2)
         self.assertEqual(pct_end_2 - pct_end_1, 2)
 
-    def test_f79_nested_cmd_start_defers_card_and_links_parent_child_meta(self):
+    def test_nested_cmd_start_defers_card_and_links_parent_child_meta(self):
         # Initialize parent session s1 and create active step directory s1/1
         self._assert_ok(self._run(["--start", "--session", "s1"], input="Task: F79\n\nparent body\n"))
         parent_sdir = self.tmp / "s1"

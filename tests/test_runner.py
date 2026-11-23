@@ -289,7 +289,7 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("│ Exit:   ", rendered)
         self.assertIn("│ Output: ", rendered)
 
-    def test_f42_session_state_helpers(self):
+    def test_session_state_helpers(self):
         sdir = self.mod.start_session("s9")
         self.assertFalse(self.mod.is_session_completed(sdir))
         self.mod.update_session_stats(sdir, ok=True, duration_s=1.5)
@@ -320,7 +320,7 @@ class TestRunner(RunBlockTestCase):
         self.assertFalse(self.mod.is_session_completed(sdir))
         self.assertNotIn("stats", self.mod.read_session_meta(sdir))
 
-    def test_f42_done_stats_card_and_list_badge(self):
+    def test_done_stats_card_and_list_badge(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n"), 0)
             self.assertNotEqual(self.mod.cmd_normal("s1/2", "exit 3\n"), 0)
@@ -356,7 +356,7 @@ class TestRunner(RunBlockTestCase):
         self._assert_ok(r_latest)
         self.assertIn("[s2] END SESSION", r_latest.stdout)
 
-    def test_f42_completed_session_blocks_runs_until_reopened(self):
+    def test_completed_session_blocks_runs_until_reopened(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n"), 0)
             self.assertEqual(self.mod.cmd_done("s1"), 0)
@@ -392,7 +392,7 @@ class TestRunner(RunBlockTestCase):
             self.assertEqual(self.mod.cmd_retry("s1/2"), 0)
         self.assertFalse(self.mod.is_session_completed(sdir))
 
-    def test_f42_completed_session_interactive_confirmation(self):
+    def test_completed_session_interactive_confirmation(self):
         class _Tty(io.StringIO):
             def isatty(self):
                 return True
@@ -581,7 +581,7 @@ class TestRunner(RunBlockTestCase):
         self.assertNotIn("first_step", r_retry.stdout)
         self.assertNotEqual(self._run(["--retry", "no-such-session"]).returncode, 0)
 
-    def test_f61_step_collision_interactive_renumbering(self):
+    def test_step_collision_interactive_renumbering(self):
         # 1. next_free_step and first_missing_step scan existing step & fix directories cleanly
         s_scan = self.tmp / "s_scan"
         s_scan.mkdir(parents=True, exist_ok=True)
@@ -787,7 +787,7 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(bundle_file.read_text(encoding="utf-8"), orig_bundle)
         self.assertIn("SECURITY WARNING: block attempted to modify 0 (reverted)", buf2.getvalue())
 
-    def test_b5_python_stdin_traceback_and_enriched_end_not_run_boxes(self):
+    def test_python_stdin_traceback_and_enriched_end_not_run_boxes(self):
         # 1. Embedded python3 heredoc failure resolves File "<stdin>", line <N> into output before END
         py_fail_script = (
             "python3 - <<'PY'\n"
@@ -853,7 +853,7 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("Error:  boom", end_stop_rendered)
         self.assertIn("Fix:    STOP --fix (2/2 failed attempts; emit a fresh s1/3 block instead)", end_stop_rendered)
 
-    def test_f29_operation_step_lines_and_instrumented_scripts(self):
+    def test_operation_step_lines_and_instrumented_scripts(self):
         # 1. Top-level line mapping keeps nested Python AST sub-entries under parent Python step
         many_src = ", ".join(f'"src/f{i}.py"' for i in range(6))
         many_tests = ", ".join(f'"tests/t{i}.py"' for i in range(6))
@@ -939,7 +939,7 @@ class TestRunner(RunBlockTestCase):
         for skipped in ("__RB_STEP__:2", "__RB_STEP__:3", "__RB_STEP__:4", "__RB_STEP__:5", "__RB_STEP__:6"):
             self.assertNotIn(skipped, inst_complex)
 
-    def test_f30_numbered_block_plan_and_live_progress_execution(self):
+    def test_numbered_block_plan_and_live_progress_execution(self):
         # 1. PLAN numbers top-level operations and keeps Python AST sub-entries unnumbered
         many_src = ", ".join(f'"src/f{i}.py"' for i in range(6))
         many_tests = ", ".join(f'"tests/t{i}.py"' for i in range(6))
@@ -1116,7 +1116,7 @@ class TestRunner(RunBlockTestCase):
         expected = ["before"] + [x for i in range(200) for x in ("out%d" % i, "err%d" % i)] + ["after"]
         self.assertEqual(got, expected)
 
-    def test_f51_block_plan_edit_backup_recalc_and_syntax_error(self):
+    def test_block_plan_edit_backup_recalc_and_syntax_error(self):
         # 1. START STEP prompt shows i(nfo), keeps d(etails) as alias
         self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/i(nfo)]:")
         self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/i(nfo)]:")
@@ -1222,7 +1222,7 @@ class TestRunner(RunBlockTestCase):
         sh_path = step2 / "block.sh"
         self.assertEqual(self.mod._orig_backup_path(sh_path), step2 / "block.orig.sh")
 
-    def test_f52_end_output_edit_backup_recalc_and_show_markers(self):
+    def test_end_output_edit_backup_recalc_and_show_markers(self):
         # 1. END STEP prompt unifies behind i(nfo)
         f = self.tmp / "s1" / "1" / "out"
         f.parent.mkdir(parents=True, exist_ok=True)
@@ -1325,7 +1325,7 @@ class TestRunner(RunBlockTestCase):
         self.assertIn(f"(edited) (original: {b_orig})", show1_out)
         self.assertIn(f"Output: {f} (edited) (original: {orig_out})", show1_out)
 
-    def test_f49_block_and_operation_durations_and_sub_items(self):
+    def test_block_and_operation_durations_and_sub_items(self):
         # 1. format_duration covers ms, s, m, and h ranges cleanly
         self.assertEqual(self.mod.format_duration(0.0), "0ms")
         self.assertEqual(self.mod.format_duration(0.015), "15ms")
@@ -1550,7 +1550,7 @@ class TestRunner(RunBlockTestCase):
             if saved_nc is not None:
                 os.environ["NO_COLOR"] = saved_nc
 
-    def test_f57_append_note_to_step_output_cards(self):
+    def test_append_note_to_step_output_cards(self):
         cases = (
             ("END STEP", False, 2, None),
             ("SYNTAX ERROR", False, 2, "extra"),
@@ -1581,7 +1581,7 @@ class TestRunner(RunBlockTestCase):
                 self.assertIn("(edited)", tty_out)
                 self.assertEqual(tty_out.count("╭─ " + kind + " "), 3)
 
-    def test_f57_empty_append_to_step_output_keeps_file_and_no_backup(self):
+    def test_empty_append_to_step_output_keeps_file_and_no_backup(self):
         f = self.tmp / "s1" / "1" / "out"
         f.parent.mkdir(parents=True, exist_ok=True)
         initial_out = "[s1/1] START\nok\n\n[s1/1] END (exit 0)\n"
@@ -1592,7 +1592,7 @@ class TestRunner(RunBlockTestCase):
         self.assertNotIn("(edited)", tty_out)
         mock_copy.assert_called_once_with(["pbcopy"], f)
 
-    def test_f79_deferred_end_session_and_start_session_ordering_and_clipboard_handoff(self):
+    def test_deferred_end_session_and_start_session_ordering_and_clipboard_handoff(self):
         # 1. Start session s1
         self._assert_ok(self._run(["--start", "--session", "s1"], input="Task: F79\n\ninitial session\n"))
 
@@ -1654,7 +1654,7 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(s2_meta.get("parent_session"), "s1")
         self.assertEqual(s2_meta.get("parent_step"), "1")
 
-    def test_f79_deferred_end_session_without_child_keeps_outer_end_step_clipboard(self):
+    def test_deferred_end_session_without_child_keeps_outer_end_step_clipboard(self):
         self._assert_ok(self._run(["--start", "--session", "s1"], input="Task: F79\n\nbody\n"))
         script_body = f'"{sys.executable}" "{SCRIPT}" --done -m "wrap up"\n'
         offer_calls: list[tuple[str, Path, str]] = []

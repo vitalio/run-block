@@ -302,7 +302,7 @@ class TestSafety(RunBlockTestCase):
             ],
         )
 
-    def test_b2_continuations_quoted_echo_external_paths_and_multidir_python(self):
+    def test_continuations_quoted_echo_external_paths_and_multidir_python(self):
         # 1. Backslash continuations joined before classifying & scanning risks (but not inside heredocs)
         cont_script = (
             "git status \\\n"
@@ -380,7 +380,7 @@ class TestSafety(RunBlockTestCase):
         fs_risks = [r for r in p_risks if r["category"] == "fs-destructive"]
         self.assertGreaterEqual(len(fs_risks), 2)
 
-    def test_b6_multiline_quoted_strings_in_plan_and_instrumentation(self):
+    def test_multiline_quoted_strings_in_plan_and_instrumentation(self):
         # 1. Multiline ANSI-C single-quoted ($'...') and double-quoted ("...") arguments
         #    with escaped quotes/backslashes stay collapsed as single operations.
         script = (
@@ -442,7 +442,7 @@ class TestSafety(RunBlockTestCase):
         self.assertIn("printf '%s\\n' '__RB_STEP__:2'\ngit status -sb", nested_inst)
         self.assertNotIn("__RB_STEP__:1", nested_inst)
 
-    def test_b9_quoted_var_assignments_and_eval_risk_matching(self):
+    def test_quoted_var_assignments_and_eval_risk_matching(self):
         # 1. Multiline quoted EX='--exclude-dir=eval ...' assignment and grep with --exclude-dir=eval
         multiline_script = (
             "EX='--exclude-dir=bumps\n"
@@ -512,7 +512,7 @@ class TestSafety(RunBlockTestCase):
                 ev_risks = self.mod.scan_script_risks(ev_cmd)
                 self.assertEqual([r["category"] for r in ev_risks], ["remote-exec"])
 
-    def test_f60_unified_python_tree_expansion(self):
+    def test_unified_python_tree_expansion(self):
         # 1. Multi-file Python block in repository root expands with tree markers
         root_multi_rw = (
             "python3 - <<'PY'\n"
@@ -610,7 +610,7 @@ class TestSafety(RunBlockTestCase):
         self.assertIn("     |- [write]   build.py, run_block", ascii_box)
         self.assertIn("     `- [read]    VERSION", ascii_box)
 
-    def test_f75_safety_warning_explicit_choice_no_default_n(self):
+    def test_safety_warning_explicit_choice_no_default_n(self):
         # 1. Suffix/prefix/box formatting without default N when default_yes=False
         self.assertEqual(self.mod._safety_prompt_suffix(True), "[Y/n/i(nfo)]:")
         self.assertEqual(self.mod._safety_prompt_suffix(False), "[y/n/i(nfo)]:")

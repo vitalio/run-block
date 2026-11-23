@@ -93,7 +93,7 @@ class TestCli(RunBlockTestCase):
             with self.subTest(flag=flag):
                 self.assertIn(flag, r.stdout)
 
-    def test_f42_done_cli_flags_and_help(self):
+    def test_done_cli_flags_and_help(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
         self._assert_ok(r)
         self.assertIn("--done [session] [-m NOTE]", r.stdout)
@@ -476,7 +476,7 @@ class TestCli(RunBlockTestCase):
         s5_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s5")
         self.assertEqual(Path(s5_hdrs["workdir"]).resolve(), explicit_dir.resolve())
 
-    def test_f79_nested_in_run_block_subcommand_guards(self):
+    def test_nested_in_run_block_subcommand_guards(self):
         # Create an initial session and step so retry/fix/show/list/sandbox have targets
         self._assert_ok(self._run(["--start", "--session", "s1"], input="Task: F79\n\nhello\n"))
         self._assert_ok(self._run(["-y", "s1/1"], input="echo first\n"))
