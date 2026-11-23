@@ -1,3 +1,9 @@
+# 🎯 [NEXT] F100: Refine README.md progressive disclosure, add Options table, and update producer chain example
+
+- Keep the introduction and `Quick Start` scenario-focused by moving low-level step descriptor/artifact details (`<session>/<step>/out`, `aborted`, `error`, `meta.json`) and `--fix` fuzzy-anchor heuristics (`similarity >= 0.85`, traceback tail extraction) into a dedicated reference section in the second half of `README.md`.
+- Add a structured `Options` table under `CLI Reference` matching `run --help` and `agents/stack/cli/docs.md`.
+- Update the legacy producer chain example `chain: ["todo_md"]` to `chain: ["vitalio/todo-md"]`.
+
 # 🎯 [NEXT] F101: Add model/role profile resolution and unconditional child env API key scrubbing
 
 - Depends on: D10, F85
@@ -77,12 +83,6 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
 - Depends on: D5
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
-
-# ⚪ [NEW] F100: Refine README.md progressive disclosure, add Options table, and update producer chain example
-
-- Keep the introduction and `Quick Start` scenario-focused by moving low-level step descriptor/artifact details (`<session>/<step>/out`, `aborted`, `error`, `meta.json`) and `--fix` fuzzy-anchor heuristics (`similarity >= 0.85`, traceback tail extraction) into a dedicated reference section in the second half of `README.md`.
-- Add a structured `Options` table under `CLI Reference` matching `run --help` and `agents/stack/cli/docs.md`.
-- Update the legacy producer chain example `chain: ["todo_md"]` to `chain: ["vitalio/todo-md"]`.
 
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
