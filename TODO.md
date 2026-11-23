@@ -1,12 +1,27 @@
-# 🎯 [NEXT] F101: Add model/role profile resolution and unconditional child env API key scrubbing
+# 🎯 [NEXT] F101: Add unified config.json settings loader, model/role profile resolution, and unconditional child env API key scrubbing
 
 - Depends on: D10, F85
 - Bump: `MINOR`
-- Implement model profile resolution and unconditional secret isolation per `docs/adr/0001-built-in-api-agent-mode.md`:
-  - In `src/config.py`, resolve model profiles from `$XDG_CONFIG_HOME/run-block/models.json` (`default_profile`, `profiles.<name>.{provider, model, base_url, api_key_env, api_key_cmd, max_tokens, thinking, cache}`, `roles.<role>.{profile, mode, max_steps}`) and environment variables (`RUN_BLOCK_MODEL`, `RUN_BLOCK_MODEL_<ROLE>`, `RUN_BLOCK_CACHE=auto|system|off`, `RUN_BLOCK_COMPACT_TOKENS`, `RUN_BLOCK_MAX_STEPS`), routing session `Role:` headers (`plan`, `design`, `work`, `review`, `law`) to their configured profile and execution mode.
-  - Resolve provider API keys in parent memory (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `RUN_BLOCK_API_KEY`, profile `api_key_env`, or `api_key_cmd` / macOS Keychain / Linux `secret-tool`).
-  - In `src/config.py` / `src/runner.py` (`scrub_child_env()`), unconditionally strip all provider API key environment variables (and any profile-configured `api_key_env`) from `child_env` across all sandbox modes (`off`, `nonet`, `strict`).
-  - Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering profile/role resolution and unconditional secret scrubbing in `scrub_child_env()`.
+- Implement a unified configuration system, model/role profile resolution, and unconditional secret isolation in `src/config.py`, `src/runner.py`, `src/cli.py`, and `src/header.py` per `docs/adr/0001-built-in-api-agent-mode.md`:
+  - Support a canonical user config file at `$XDG_CONFIG_HOME/run-block/config.json` (overridable via `RUN_BLOCK_CONFIG`, with automatic fallback to `$XDG_CONFIG_HOME/run-block/models.json`) and an optional project-level `.run-block.json` in `Workdir`.
+  - Extend `get_setting(key)` to resolve all settings (`base_dir`, `work_dir`, `clipboard`, `token_stats`, `progress`, `pager`, `shell`, `editor`, `safety_disable`, `safety_rules`, `sandbox`, `approve_cmd`, `max_fix_attempts`, `max_state_mb`, `bundle_max_tokens`, `fragment_max_tokens`, `update_url`, plus `model`, `cache`, `compact_tokens`, `max_steps`) with precedence `env > project (.run-block.json) > config (config.json) > default`, returning `(value, source)` where `source` is `'env'`, `'project'`, `'config'`, or `'default'`. Restrict project-level `.run-block.json` to a safe non-privileged allowlist (ignoring security-sensitive keys such as `approve_cmd`, `safety_disable`, `api_key_cmd`, `shell`, and `base_dir`).
+  - Resolve named model profiles (`default_profile`, `profiles.<name>.{provider, model, base_url, api_key_env, api_key_cmd, max_tokens, thinking, cache}`) and role routing (`roles.<role>.{profile, mode, max_steps}` for `plan`, `design`, `work`, `review`, `law`) from `config.json` / `models.json` and environment variables (`RUN_BLOCK_MODEL`, `RUN_BLOCK_MODEL_<ROLE>`, `RUN_BLOCK_CACHE=auto|system|off`, `RUN_BLOCK_COMPACT_TOKENS`, `RUN_BLOCK_MAX_STEPS`).
+  - Add `run --config [KEY[=VALUE] | --edit | --path]` in `src/cli.py` and `src/header.py` (`--help`) to inspect active settings with their resolution sources and configured profiles/roles (redacting any secrets), get or set a persistent key in `config.json` (written with `0600` permissions), or open `config.json` in the configured editor.
+  - Resolve provider API keys in parent memory (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `RUN_BLOCK_API_KEY`, profile `api_key_env`, or `api_key_cmd`) and unconditionally strip all provider API key environment variables from `child_env` in `scrub_child_env()` across all sandbox modes (`off`, `nonet`, `strict`).
+  - Document `config.json` / `--config` in `README.md` and `AGENTS.md`, and add unit tests in `tests/test_cli.py` and `tests/test_runner.py` covering config precedence, project allowlist filtering, `--config` CLI operations, profile/role resolution, and unconditional secret scrubbing.
+
+# 🎯 [NEXT] F104: Inject protocol reminder into step output when reply contains multiple blocks or trailing prose
+
+- Depends on: B16
+- Bump: `PATCH`
+- Detect multi-block / malformed reply violations across both `extract_reply_block()` (`run -r` / `--run`) and `_reassemble_split_payload()` (direct `stdin` paste) in `src/runner.py`:
+  - Record discarded trailing block references (e.g. `s479/5..s479/7`) and count (`ignored_trailing_blocks`), consecutive duplicate blocks (`duplicate_count`), non-empty trailing prose after the closing fence of the executed block (`trailing_prose`), and fence lines glued to prose on the same line (e.g. closing fence followed immediately by text without a newline, violating column-0 standalone fence rules).
+  - When any violation is detected, inject a compact warning and rule reminder immediately after `[<session>/<step>] START` in `<session>/<step>/out` (alongside any `Note: renumbered from ...` line) and persist the violation summary in `<session>/<step>/meta.json`:
+    - `[<label>] WARNING: discarded <N> trailing run block(s) (<refs>) and trailing prose after <label> — they were NOT executed.`
+    - `[<label>] Rule reminder: emit at most ONE run block per reply at the very end, batch all related commands inside that single block, place opening/closing markdown fences alone on their own lines at column 0, and stop immediately after the closing fence.`
+  - Keep `<session>/<step>/out` completely unchanged (zero extra tokens) when the model reply contains a single clean block at the end.
+- Tighten `agents/run.md` rule 1 and rule 2 to state explicitly that prose glued to the same line as a closing fence or emitted after the block causes trailing blocks to be discarded with a protocol warning.
+- Add unit tests in `tests/test_runner.py` covering multi-block replies, prose glued to closing fences, trailing prose after a block, and direct `stdin` paste truncation warnings.
 
 # 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
 
@@ -22,7 +37,8 @@
 # 🎯 [NEXT] F103: Add proposed step state machine, safe autopilot, and supervisor-session CLI (run --step)
 
 - Depends on: F93
-- Depends on: F102
+- Depends on: F101 -> F102
+- Depends on: F104
 - Bump: `MINOR`
 - Implement the step proposal state machine (`outcome: "proposed"`), reply recovery, safe autopilot, and supervisor-session CLI in `src/agent.py`, `src/runner.py`, and `src/cli.py` per `docs/adr/0001-built-in-api-agent-mode.md`:
   - Normalize tool-call `run(script, fix_target?)` and plain-text fallback replies via `extract_reply_block()` (stripping accidental fence/heredoc wrappers, converting misplaced shell scripts in `fix_target` to sequential steps, and pausing when the model asks a prose question without a block).
