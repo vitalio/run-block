@@ -1,3 +1,14 @@
+# 🎯 [NEXT] F98: Prepare run-block state migration, dual run/run_block parsing, agents/run.md, and --uninstall
+
+- Depends on: F89, F95, F97
+- Prepare runtime compatibility and state migration ahead of the final `run_block` -> `run` binary cutover (`F72`) so an active `run_block` session cannot break mid-step:
+  - Flatten `agents/blocks/bash.md` to `agents/run.md` (removing `agents/blocks/`) using `{cmd:run}` (`run s1/1 <<'RUN_BLOCK'`, `run --fix s1/1 <<'RUN_FIX'`), update `build.py` to load `agents/run.md`, and update `src/bundle_parse.py` to emit embedded rule `id: "vitalio/run-block:run"` and `chain: ["vitalio/run-block"]` while recognizing both `run` and legacy `blocks/bash` in `EMBEDDED_RULE_ID_RE` and replacing both `{cmd:run}` and `{cmd:run_block}` with `prog_name()`.
+  - Recognize both `run` and `run_block` in `SPLIT_HEADER_RE`, step-renumber comments (`# run:` / `# run_block:`), and shell-command heuristics in `src/runner.py`; keep `RUN_BLOCK_*` environment variables.
+  - Use fixed state directory `${XDG_STATE_HOME:-~/.local/state}/run-block` in `_os_default_base_dir()` (`src/config.py`, independent of `argv[0]`). When `RUN_BLOCK_DIR` is not set, atomically migrate `~/.local/state/run_block` -> `~/.local/state/run-block` via `os.replace`: if `IN_RUN_BLOCK=1` (running inside a live parent `run_block` step that still holds `~/.local/state/run_block/<session>/<step>` for post-step `meta.json` and `out` writes), leave a transitional symlink `~/.local/state/run_block -> run-block` immediately after `os.replace`, and clean up the symlink on subsequent outer invocations (`IN_RUN_BLOCK!=1`). Track `XDG_STATE_HOME` in `_TRACKED_ENV_KEYS` (`tests/helpers.py`) so unit tests never touch host `~/.local/state`.
+  - Add hyphen/underscore fallback in `_resolve_existing_dir()` (`src/config.py`) so existing sessions with `Workdir: .../run_block` resolve cleanly after the checkout directory is renamed to `run-block` (and vice versa).
+  - Add `--uninstall [--purge]` to `src/cli.py`, `src/header.py`, and `install.sh` (removing installed `run` / `run_block` binaries verified by repo marker while preserving `~/.local/state/run-block` unless `--purge` is passed).
+- Acceptance criteria: `agents/run.md` replaces `agents/blocks/bash.md`, `_os_default_base_dir()` uses `run-block` with live-step-safe `os.replace` migration and workdir `_`/`-` fallback, `SPLIT_HEADER_RE` accepts `run` and `run_block`, `--uninstall [--purge]` works in CLI and `install.sh`, and `python3 build.py --check` and `python3 -m unittest discover -s tests` pass.
+
 # 🎯 [NEXT] B15: Fix --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, and AssertionError root-cause hints
 
 - Depends on: F74
@@ -80,15 +91,15 @@ Follow-up findings from F74 review:
 - Update `MODULE_ORDER` in `build.py`, rebuild `./run_block`, and update module boundary documentation in `AGENTS.md`.
 - Rename all remaining ticket-prefixed unit test methods (`test_f<N>_*` and `test_b<N>_*`) across `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py` to descriptive domain-behavior names.
 
-# 🎯 [NEXT] F72: Rename project to run-block and CLI utility to run
+# 🎯 [NEXT] F72: Rename project to run-block and cut over CLI entrypoint from run_block to run
 
-- Depends on: F89, F95, F97
-- Rename project/repository references from `run_block` to `run-block` (`vitalio/run-block`) and CLI entrypoint to `run` per `todo_flow:D8` (`docs/adr/0004-ecosystem-rename-and-cutover.md`):
-  - Flatten `agents/blocks/bash.md` to `agents/run.md` (removing the legacy `agents/blocks/` directory) using `{cmd:run}` (`run s1/1 <<'RUN_BLOCK'`, `run --fix s1/1 <<'RUN_FIX'`), emit embedded rule `id: "vitalio/run-block:run"`, `chain: ["vitalio/run-block"]`, and repo marker `# run-block-repo: vitalio/run-block`.
-  - Recognize both `run` and `run_block` in `SPLIT_HEADER_RE`, step-renumber comments, and shell-command heuristics in `src/runner.py`; keep `RUN_BLOCK_*` environment variables.
-  - Use fixed state directory `${XDG_STATE_HOME:-~/.local/state}/run-block` in `_os_default_base_dir()` (independent of `argv[0]`) and atomically migrate `~/.local/state/run_block` -> `~/.local/state/run-block` via `os.replace` on startup and in `install.sh`, plus fallback hyphen/underscore workdir resolution for existing sessions.
-  - Replace any existing `run_block` binary in `$INSTALL_DIR` during `install.sh` / `--update`, add `--uninstall [--purge]` to `run` and `install.sh` (preserving `~/.local/state/run-block` unless `--purge` is passed), rename the GitHub repository `vitalio/run_block` -> `vitalio/run-block` and update local `git remote` URL, and run `python3 build.py && ./install.sh --yes` to migrate the local machine.
-- Acceptance criteria: GitHub repo is `vitalio/run-block`, `build.py` outputs `run`, `install.sh` installs `run`, migrates `~/.local/state/run-block`, and removes legacy `run_block`, `--uninstall [--purge]` works as specified, and `python3 -m unittest discover -s tests` passes.
+- Depends on: F98
+- Complete the `run_block` -> `run-block` (`vitalio/run-block`) repository rename and `run` CLI binary cutover per `todo_flow:D8` (`docs/adr/0004-ecosystem-rename-and-cutover.md`) once `F98` runtime compatibility and state migration are in place:
+  - Switch `build.py` `OUT_FILE` to `ROOT / "run"` (updating docstrings and `--check` diagnostics) and remove the tracked `run_block` artifact (`git rm run_block`).
+  - Update `src/header.py` (`# run-block-repo: vitalio/run-block`, `REPO_MARKER = "run-block-repo: vitalio/run-block"`, `LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"`, `DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run-block/main/run"`, and `HELP_COMMANDS`), `src/config.py` (`prog_name()` default `"run"`), `tests/helpers.py` (`SCRIPT = ROOT / "run"`, `_normalize_cmd` accepting `"run"` and `"run_block"`), and `.github/workflows/ci.yml` (`python3 build.py --check` in `test` and `run` instead of `run_block` in `release` artifacts).
+  - Update `install.sh` and `cmd_update()` (`src/cli.py`) to default `CMD_NAME` to `run`, accept both `REPO_MARKER` and `LEGACY_REPO_MARKER` in `is_our_binary`, automatically remove any legacy `run_block` binary in `$INSTALL_DIR` during install or `--update`, migrate `~/.local/state/run_block` -> `~/.local/state/run-block` (cleaning up any transitional symlink), and update `AGENTS.md`, `README.md`, and unit tests (`tests/test_*.py`).
+  - Safe cutover execution order at the end of the session: first run `python3 build.py`, `python3 build.py --check`, `bash -n install.sh`, and `python3 -m unittest discover -s tests`; then rename the GitHub repository `vitalio/run_block` -> `vitalio/run-block` and update local `git remote` URL; finally run `./install.sh --yes` to install `run` and remove legacy `run_block` in `$INSTALL_DIR` (switching subsequent blocks in the session, including `--done`, to invoke `run` instead of `run_block`).
+- Acceptance criteria: GitHub repo is `vitalio/run-block`, `build.py` outputs `run` (and legacy `run_block` is removed from the repo and `$INSTALL_DIR`), `install.sh` and `--update` install `run` and clean up `run_block`, and `python3 build.py --check` and `python3 -m unittest discover -s tests` pass.
 
 # 🎯 [NEXT] F84: Add run_block -r / --run [session] full-reply editor mode with automatic block extraction, repair, and step inference
 
