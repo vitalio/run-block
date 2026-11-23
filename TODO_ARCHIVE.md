@@ -1,3 +1,12 @@
+# ✅ [DONE] F97: Remove transitional Bundle-Expose/Bundle-Hide headers and legacy fragment kind aliases — *2026-11-23*
+
+- Depends on: F95, F96
+- Remove transitional `Bundle-Expose` and `Bundle-Hide` header constants and filtering (`BUNDLE_EXPOSE_HEADER`, `BUNDLE_HIDE_HEADER`) from `src/bundle_parse.py`, documentation, and tests.
+- Remove legacy fragment kind aliases (`LEGACY_FRAGMENT_KIND_ALIASES`: `include`, `task`, `context`, `PROMPT_FRAGMENT_KINDS` legacy entries, and `ruleset`/`include`/`task`/`context` entries in `_BUNDLE_TAG_COLORS`) from `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, and `src/ui.py`, keeping only the 4 canonical ADR-0003 fragment kinds (`rule`, `file`, `cmd`, `prompt`).
+- Recognize `.ctx.bundle` alongside `.agents_bundle` and `AGENTS.md` in workspace/project root detection (`src/config.py`).
+- Strip historical `- Role:` and `- Target files:` lines from `TODO_ARCHIVE.md`.
+- Acceptance criteria: `Bundle-Expose`/`Bundle-Hide` and legacy fragment kind aliases are removed, `.ctx.bundle` is recognized in root detection, `AGENTS.md`/`README.md`/`tests/test_*.py` are updated, and `./build.py` and `python3 -m unittest discover -s tests` pass.
+
 # ✅ [DONE] B14: Fix fullscreen i(nfo) meta hotkey in START SESSION part viewer, END STEP table refresh on out edit, and progress line range edge cases — *2026-11-23*
 
 - Depends on: F86 -> F74
@@ -15,7 +24,6 @@
   - In `src/bundle_parse.py`, normalize legacy `"include"` -> `"file"` and `"task"` / `"context"` -> `"prompt"`, and check `kind == "prompt"` (plus legacy `"task"`, `"context"`) for `fragment_empty` warnings so any empty prompt fragment from an upstream producer warns cleanly.
   - In `src/bundle_parse.py` (`append_note_to_raw_bundle()` and `_dedupe_fragments()`) and `src/bundle_plan.py` (`refresh_bundle_plan_after_edit()`), distinguish upstream/bundle prompt fragments (which carry a non-empty `chain`, such as `chain: ["todo_md"]` or `chain: [".agents_bundle"]`) from the user's root session prompt fragment (`chain: []`, `name: "Prompt"`): allow deduplication on upstream/bundle prompt fragments with non-empty `chain`, and when appending a user `p(rompt)` note, merge only into a trailing root user prompt fragment (`chain: []`) and otherwise append a new `{"kind": "prompt", "name": "Prompt"}` fragment.
   - Update `tests/test_bundle.py`, `README.md`, and `AGENTS.md`.
-- Target files: `src/bundle_parse.py`, `src/bundle_plan.py`, `tests/test_bundle.py`, `README.md`.
 
 # ✅ [DONE] F95: Drop Windows and PowerShell support (install.ps1, agents/blocks/pwsh.md, windows-latest CI) and accept export-driven preamble headers — *2026-11-22, Dropped Windows/PowerShell support (install.ps1, agents/blocks/pwsh.md, pwsh/nt branches) and enabled export-driven preamble headers by default with Bundle-Name transport recognition.*
 
@@ -30,7 +38,6 @@
 - Extend the pre-flight stdlib `~lo–hi tokens` estimator in `src/ui.py` (`count_tokens()`, `format_stats()`) and `src/bundle_plan.py` (`analyze_bundle_plan()`) with model-aware token accounting once `D10` specifies the built-in LLM API agent mode:
   - Keep fast offline stdlib heuristic estimation for pre-flight TUI cards (`START SESSION`, `START STEP`, `END STEP`, `--bundle-plan`) before a request is sent to the model.
   - Record exact post-turn token usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) returned by the provider API response in `<session>/chat.json` and `<session>/meta.json`, and surface optional provider `count_tokens` / profile-tuned pre-flight estimates when an API profile is active.
-- Target files: `src/ui.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `tests/test_ui.py`, `tests/test_bundle.py`, `tests/test_runner.py`.
 
 # ✅ [DONE] F74: Diagnose broken blocks, root-cause errors, and interactively repair --fix anchors — *2026-11-22*
 
@@ -43,7 +50,6 @@
 - Offer interactive anchor repair in `NOT RUN` (`src/runner.py`, `src/ui.py` `offer_clipboard_copy()`): when running in an interactive TTY and a single unambiguous high-confidence anchor match is found (`>= 0.85` similarity with clear margin over the runner-up), display a compact diff (`old` -> matched line) and allow accepting the replacement (`f(ix)` / `i(nfo)`), re-evaluating in memory, and proceeding straight into `START STEP` without an extra agent turn; never auto-apply fuzzy replacements in headless `-y` mode or on ambiguous matches.
 - Improve root-cause `Error:` extraction and failure hints in `END STEP` (`src/runner.py` `run_script()`): parse structured `Traceback` / `AssertionError` / `SyntaxError` (`file:line` and exception summary) from captured `stderr` instead of showing only generic runner tails like `FAILED (failures=1)`, and when `AssertionError: '<needle>' not found in ...` occurs, surface the closest matching line from the captured output.
 - Add code-context snippets (`+-2` lines) and escaping hints on `SyntaxError` / `IndentationError` in `--fix` (`cmd_fix()`) and shell/heredoc syntax failures (`_validate_step_script_syntax()` in `src/runner.py`, `src/safety.py`).
-- Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `README.md`, `tests/test_runner.py`, `tests/test_ui.py`.
 
 # ✅ [DONE] F86: Unify fullscreen i(nfo) inspector with END STEP output breakdown table, step-output slice viewer, and artifact hotkeys — *2026-11-22*
 
@@ -66,7 +72,6 @@
 - Add `m(eta)` hotkey and clean up fullscreen footer hints (`_parse_pager_line()`, `_read_pager_key()`, `_compose_pager_frame()`, `_build_info_screen()`, `_show_info_fullscreen()` in `src/ui.py:2400-2585`, `src/ui.py:3286-3324`, `src/ui.py:3663-3746`):
   - Support `m(eta)` (`m`/`M` in raw TTY mode and `m`/`meta` in line mode) across all fullscreen views to open `<session>/meta.json` (in `START SESSION`) or `<session>/<step>/meta.json` (in step cards), while keeping `e(dit)` and `o(utput)` as synonyms for editing `<step>/out` in `END STEP` and `s(cript)` for `block.sh`.
   - Omit `Lines 1-N/N` and `Up/Down j/k PgUp/PgDn: scroll` from the footer bar when all body rows fit within a single viewport (`total_items <= viewport_rows`), show scroll position only when `total_items > viewport_rows`, show `Part <k>/<N>` in `Tab` cursor mode, and shorten the footer back hint to `Esc: back` (while keeping `Esc`, `q`, and `i` active as back keys).
-- Target files: `src/runner.py:389-602`, `src/runner.py:850-1035`, `src/bundle_view.py:_format_tok_pair..format_bundle_parts_lines`, `src/ui.py:1443-1572`, `src/ui.py:2400-3770`, `README.md`, `tests/test_ui.py:1800-2027`, `tests/test_runner.py:1350-1508`.
 
 # ✅ [DONE] F90: Always render full Parts table in --bundle-plan (remove Summary/--full) and wrap --help to 100 columns — *2026-11-22*
 
@@ -75,7 +80,6 @@
 - Replace the raw docstring `(__doc__ or "").format(...)` help output in `src/header.py` and `usage_text()` (`src/config.py`) with table-driven `--help` rendering (matching `todo_md` and `vitalio/agents-rules:stack/cli`): compute each section's description column after expanding `{prog}` and `{base_dir}`, align all descriptions and wrapped continuation lines to that column, and keep every `-h`/`--help` line at most 100 columns wide (prose at 80 columns).
 - Remove `[--full]` from `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `src/header.py`, and `README.md`, and rebuild `./run_block` via `python3 build.py`.
 - Update unit tests in `tests/test_bundle.py` and `tests/test_cli.py` to verify that `--bundle-plan` renders the full `Parts (<N>):` table by default, rejects `--full`, and keeps every `--help` line `<= 100` columns with aligned description columns.
-- Target files: `src/header.py`, `src/config.py:usage_text`, `src/cli.py`, `src/bundle_view.py:format_bundle_summary_lines..cmd_bundle_plan`, `src/ui.py:3160-3180`, `agents/blocks/bash.md`, `agents/blocks/pwsh.md`, `README.md`, `tests/test_bundle.py:745-1315`, `tests/test_cli.py`.
 
 # ✅ [DONE] F91: Refresh stale Target files symbol slices in F90 and F86 after the bundle_plan.py split — *2026-11-22, Removed stale src/bundle_plan.py symbol slices from F90 and F86 after F89 split*
 
@@ -89,7 +93,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
   - `src/bundle_plan.py` (`_part_chars`..`refresh_bundle_plan_meta` and `_enrich_bundle_plan`..`load_session_bundle_plan`): `bundle_plan` data model, provenance chain helpers (`_part_chars()`, `_resolve_part_chain()`, `_join_chain_label()`, `_child_rel_label()`, `_recompute_share_pct()`), 1-based line range assignment and `--part N` extraction (`_collapse_blank_runs()`, `_assign_part_ranges()`, `_body_line_offset()`, `_shift_part_ranges()`, `parse_part_option()`, `extract_bundle_part()`, `format_part_header()`), plan construction and header reconciliation (`reconcile_bundle_plan()`, `group_bundle_parts()`, `_build_bundle_plan()`, `_split_section_fallback()`, `_collect_unframed_parts()`, `parse_bundle_fragments()`), and `<session>/meta.json` persistence (`refresh_bundle_plan_meta()`, `_enrich_bundle_plan()`, `load_session_bundle_plan()`).
   - `src/bundle_view.py` (`_format_tok_pair`..`format_bundle_warning_items` and `format_bundle_plan_text`..`cmd_bundle_plan`): provenance tree construction (`_format_tok_pair()`, `_new_tree_node()`, `_add_part_to_node()`, `_build_bundle_tree()`), heavy-row threshold classification (`HEAVY_*`, `_heavy_level()`, `_parse_tok_hi()`, `bundle_row_heavy_level()`), hierarchical table row collection and rendering (`_tree_connector()`, `_make_table_row()`, `_part_extras_suffix()`, `_collect_hierarchy_rows()`, `_render_bundle_table()`, `format_bundle_summary_lines()`, `format_bundle_parts_lines()`, `format_bundle_group_items()`, `format_bundle_part_items()`, `format_bundle_warning_items()`), and `--bundle-plan` text/CLI output (`format_bundle_plan_text()`, `cmd_bundle_plan()`).
 - Update `MODULE_ORDER` in `build.py` (`"bundle_parse.py"`, `"bundle_plan.py"`, `"bundle_view.py"`), update `AGENTS.md` Architecture & Module Boundaries and Bundle Input Protocol sections, rebuild `./run_block` via `python3 build.py`, and verify that all existing unit tests in `tests/test_bundle.py`, `tests/test_ui.py`, and `tests/test_cli.py` pass without symbol regression.
-- Target files: `build.py`, `src/bundle_plan.py:BUNDLE_BOUNDARY_HEADER.._strip_rule_description`, `src/bundle_plan.py:analyze_bundle_warnings.._resolve_part_chain`, `src/bundle_plan.py:refresh_bundle_plan_meta.._build_bundle_tree`, `src/bundle_plan.py:format_bundle_warning_items..cmd_bundle_plan`, `src/bundle_parse.py`, `src/bundle_view.py`.
 
 # ✅ [DONE] B13: Keep <session>/0 free of raw boundary markers during and after START SESSION editor (_edit_artifact) — *2026-11-22*
 
@@ -97,7 +100,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
   - Stage `0.raw` into a temporary file (or restore `before_clean_bytes` inside a `try ... finally:` guard whenever the editor exits without saving changes or is interrupted by an exception/signal) so `<session>/0` on disk is never left overwritten with `0.raw` if the editor is still open, copied externally, or aborted.
   - When the user saves edits to the raw bundle stage, write the updated raw text to `0.raw` and immediately invoke `refresh_bundle_plan_meta(resolved_sdir, target)` / `_apply_edit_callbacks(target)` so `<session>/0` is always written with stripped clean text and `<session>/meta.json` `bundle_plan` stays in sync.
 - Add a regression test in `tests/test_bundle.py` verifying that editing `START SESSION` when `0.raw` exists (both when unchanged/aborted and when modified) always leaves `<session>/0` free of `<!-- bundle:<nonce>:` markers while preserving raw markers in `0.raw`.
-- Target files: `src/ui.py:_apply_edit_callbacks.._edit_artifact`, `src/bundle_plan.py:refresh_bundle_plan_meta`, `tests/test_bundle.py:TestBundle.test_bundle_raw_markup_preservation_on_edit_and_sandbox_off_omission..TestBundle.test_bundle_fragment_dedup_and_overlap_warnings`.
 
 # ✅ [DONE] F87: Deduplicate identical or contained bundle fragments and warn on partial text overlaps in bundle plan — *2026-11-22*
 
@@ -107,7 +109,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
     - If a fragment's normalized payload is 100% identical to an earlier fragment (e.g., `include AGENTS.md` and `$ cat AGENTS.md`, or a duplicate rule/file), or if its normalized payload (`>= 3` non-empty lines) is a contiguous sub-slice of an earlier fragment's normalized payload, omit the duplicate fragment from `stripped_lines` / `raw_parts` so `<session>/0` does not contain duplicate text, and record a `fragment_deduped` warning in `plan["warnings"]` referencing the kept part index and saved line/token counts.
   - In `analyze_bundle_warnings()` (`src/bundle_plan.py:400-505`), detect partial contiguous text overlaps across remaining non-empty fragments: when two fragments share a contiguous block of `>= 5` non-empty normalized lines (and `>= 200` characters) that is not a full duplicate, emit a `fragment_overlap` warning (`severity: "warn"`, `part_index`, `part_name`, `overlap_with`, `shared_lines`, `shared_chars`, and `message` showing `#<earlier_idx>`, shared line count, and overlap percentage).
   - Add unit tests in `tests/test_bundle.py:2050-2136` covering 100% duplicate removal (`include` vs `cmd`), contiguous sub-slice containment removal, and partial overlap warning generation (`fragment_overlap`).
-- Target files: `src/bundle_plan.py:390-510`, `src/bundle_plan.py:815-1010`, `tests/test_bundle.py:2050-2136`.
 
 # ✅ [DONE] F20: Enhance session management CLI for searching, inspecting headers/bundles/blocks, and retrying steps — *2026-11-22*
 
@@ -117,7 +118,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
 - Enhance `cmd_show()` in `src/runner.py:1903-1970` to accept `<session>`, `<session>/0` (bundle), or `<session>/<step>`, with optional `--script` or `--out` flags to print only the script or only the output.
 - Enhance `cmd_retry()` in `src/runner.py:1969-2010` to accept either `<session>/<step>` or `<session>` (re-running the latest block of that session) and update `src/header.py`, `README.md`, and tests.
 - Note: `HIDDEN_SESSION_HEADER_KEYS` filtering (`src/config.py`, `src/bundle_plan.py`, `src/ui.py`) is already implemented; remaining scope covers `--list` filtering/columns, `--info [session]`, `--show --script/--out`, and `--retry <session>`.
-- Target files: `src/header.py`, `src/cli.py`, `src/runner.py:1757-2014`, `README.md`, `tests/test_cli.py:1-260`, `tests/test_runner.py:1150-1404`.
 
 # ✅ [DONE] B8: Preserve stdout/stderr interleaving order in captured out after separate stderr capture — *2026-11-22*
 
@@ -126,7 +126,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
 - Reproduce with a deterministic unit test in `tests/test_runner.py` that interleaves `stdout` and `stderr` lines alongside `__RB_STEP__` markers in `_prepare_progress_script()` and `run_script()` (`src/runner.py`).
 - Preserve write-order interleaving in `<session>/<step>/out` while still capturing `<session>/<step>/err` for root-cause `Error:` extraction in `END STEP` (`run_script()` in `src/runner.py`).
 - Document `<session>/<step>/out`, `err`, `error`, `aborted`, and `meta.json` ordering and artifact guarantees in `README.md` and `AGENTS.md`.
-- Target files: `src/runner.py`, `README.md`, `AGENTS.md`, `tests/test_runner.py`.
 
 # ✅ [DONE] F82: Support Bundle-Protocol: 1, task/context fragment kinds, and RUN_BLOCK_STEP_STDOUT_INO — *2026-11-21*
 
@@ -179,7 +178,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
   - Render `PART <k>/<N> · <label>` with header metadata (`Source: [<tag>] <desc>`, optional directory/timing/failure status from `op_timings`, and `Range: lines <line>-<end_line> of <~script_path>`) followed by the extracted script lines `line..end_line` from `block.sh` / `block.ps1`.
   - Support vertical scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`, `g`/`G`), `n`/`N` next/prev operation navigation, `e(dit)` / `s(cript)` to edit the block script in place and refresh the analyzed operations on return, and `Esc`/`q`/`i`/`Tab` to return to `i(nfo)` at the active operation cursor.
 - Update `README.md`, rebuild `run_block` via `python3 build.py`, and add offline unit tests in `tests/test_safety.py` and `tests/test_ui.py`.
-- Target files: `src/safety.py`, `src/ui.py`, `README.md`, `tests/test_safety.py`, `tests/test_ui.py`.
 
 # ✅ [DONE] F80: Restructure README.md with Quick Start workflow, TUI shortcut table, and scannable feature sections — *2026-11-21, Restructured README.md with Key Features, Quick Start workflow, TUI shortcut tables, and scannable feature sections*
 
@@ -191,7 +189,6 @@ After the F89 split, the Target files bullets of F90 and F86 still name symbol s
   5. `## Context Bundles & Part Inspection` covering `Key: Value` preamble headers, `Bundle-*` protocol, `--bundle-plan`, and `--part N`.
   6. `## Safety Scanner, Sandboxing & Approval Hooks` covering `--plan`, `--sandbox` (`off`, `strict`, `nonet`), `RUN_BLOCK_APPROVE_CMD`, and `RUN_BLOCK_SAFETY_*`.
   7. `## CLI Reference` and `## Environment Variables` reference tables.
-- Target files: `README.md` (verifying consistency with `src/header.py`, `src/ui.py`, `src/runner.py`, `src/bundle_plan.py`, and `AGENTS.md`).
 
 # ✅ [DONE] B12: Stabilize flaky test_f56_progress_alignment_colors_and_silent_collapse (stdout/stderr ordering in live progress output) — *2026-11-21, Use single-threaded select loop prioritizing stdout before stderr in _iter_child_streams*
 
@@ -293,7 +290,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 # ❌ [CANCELED] F48: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Re-prefixed as D9 per ADR 0001*
 
 - Depends on: F42, D2
-- Role: design
 - Design candidate for `role=design` to let an external API/TUI client drive `run_block` cleanly without parsing TUI frames or overloading `-y`/`--yes`.
 - Evaluate structured `--json` execution output for `<session>/<step>` (status: `ok`/`syntax_error`/`not_run`/`completed`, `exit_code`, safety findings, and clean `[sN/k]` LLM payload), two-phase `plan -> approve -> execute` non-TTY handshake, and env sanitization so client LLM API keys do not leak into executed step scripts.
 - Coordinate with `F42` (`--done` completion state) and `F46` (`bundle_plan` metadata).
@@ -301,7 +297,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 # ❌ [CANCELED] F38: Design explicit parent-step DAG lineage for session branches and retries — *Re-prefixed as D8 per ADR 0001*
 
 - Depends on: F35
-- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
@@ -309,7 +304,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 # ❌ [CANCELED] F36: Design pre-flight sandbox dry-run preview via temporary git worktree — *Re-prefixed as D7 per ADR 0001*
 
 - Depends on: F37
-- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
 - Define how actual mutated files and diff summaries are presented in `START STEP` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_runner.py` and `tests/test_safety.py`.
@@ -317,7 +311,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 # ❌ [CANCELED] F37: Design session execution policies and post-step revert guards — *Re-prefixed as D6 per ADR 0001*
 
 - Depends on: F34
-- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Evaluate declarative session-level execution constraints in `meta.json` / `.agents_bundle` (`src/bundle.py`, `src/config.py`), such as allowed write path globs, maximum modified file count, or network-access restrictions.
 - Define enforcement and rollback semantics in `src/runner.py` and `src/safety.py` (pre-execution policy checks plus post-step diff verification with automatic revert on violation) and cover with `tests/test_runner.py` and `tests/test_safety.py`.
@@ -325,21 +318,18 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 # ❌ [CANCELED] F35: Design tamper-evident hash chain and parent-step verification for session history — *Re-prefixed as D5 per ADR 0001*
 
 - Depends on: F34
-- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
 - Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`), a `run_block --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # ❌ [CANCELED] F34: Design workspace state fingerprinting and drift detection across steps — *Re-prefixed as D4 per ADR 0001*
 
-- Role: design
 - Design candidate for `role=design` before decomposing into implementation tasks.
 - Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
 - Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_runner.py` and `tests/test_safety.py`.
 
 # ❌ [CANCELED] F16: Prevent unintended interactive pagers during block execution — *Re-prefixed as D3 per ADR 0001*
 
-- Role: design
 - Encountered a stall during block execution when a model-generated inspection command (`git diff HEAD`) opened an interactive pager inside the PTY, forcing manual `q` / `Ctrl+C` intervention.
 - Need to design a balanced approach in `run_block` rules (and/or runner defaults) that prevents trivial interactive pagination/stalls when reading output without blocking intentional human-in-the-loop prompts, keeping in mind a future automation layer that will introduce stricter non-interactive rules.
 
@@ -350,7 +340,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 
 # ✅ [DONE] F78: Speed up test suite and CLI startup (remove tiktoken, lazy urllib, in-process runner) and split test_run_block.py into modular tests/test_*.py — *2026-11-20, Removed tiktoken, made urllib.request lazy, split tests/ into modular files with in-process runner, and fixed test_f59 SIGWINCH race*
 
-- Role: work
 - In `src/ui.py` (`gpt_encoder()`, `count_tokens()`) and `src/bundle_plan.py` (`parse_bundle_fragments()`), remove the optional third-party `import tiktoken` (`o200k_base`) path so `run_block` strictly obeys `stack/python-stdlib`, has deterministic token estimates across machines, and avoids the ~190 ms BPE load penalty on every CLI and test invocation.
 - Move `import urllib.request` out of top-level `src/header.py` into `fetch_remote_script()` in `src/cli.py` so regular CLI startups do not pay the `urllib.request` import overhead (~40 ms), and verify in tests that `urllib.request` and `tiktoken` are not loaded during normal commands.
 - Create `tests/helpers.py` containing `ROOT`, `SCRIPT`, `INSTALL_SH`, `load_module()`, and a shared base class `RunBlockTestCase(unittest.TestCase)` that loads `./run_block` once, preserves/restores `RUN_BLOCK_*` environment variables in `setUp()`/`tearDown()`, and provides in-process CLI helpers `_assert_ok()`, `_run_in_process()`, `_run_subprocess()`, and `_run()` (capturing `stdout`/`stderr` via `contextlib.redirect_stdout` / `redirect_stderr` and including diagnostic `stdout`/`stderr` in `msg=` on exit-code checks, keeping real `subprocess.run` for CLI entrypoint and `install.sh` smoke tests and using `sys.executable` instead of `"python3"` literals).
@@ -399,7 +388,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 
 # ✅ [DONE] F76: Show only Parts without duplicate Summary in START SESSION i(nfo) — *2026-11-19*
 
-- Role: work
 - Update `_collect_info_report()` in `src/ui.py` for `title_kind == "START SESSION"` to remove the redundant `Summary (N parts):` block (`format_bundle_summary_lines()`) and display only `Parts (N parts):` via `_build_start_bundle_parts(..., details=True)` (`format_bundle_parts_lines()`) alongside `Bundle warnings`.
 - Keep `Summary` in `run_block --bundle-plan` (`src/bundle_plan.py`, with `--full` adding `Parts`) and keep `Session Bundle Summary` in step `i(nfo)` views (`START STEP`, `END STEP`, etc.) unchanged.
 - Coordinate with `F68`, `F64`, and `F69`: `Parts` retains the full tree hierarchy with group totals and leaf parts needed by `F64` part selection and `F69` markup-preserving edits, without duplicating the collapsed tree in `START SESSION` `i(nfo)`.
@@ -407,7 +395,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 
 # ✅ [DONE] F75: Require explicit choice on safety warnings without default N — *2026-11-20*
 
-- Role: work
 - Update `_safety_prompt_suffix()`, `_safety_prompt_prefix()`, `format_safety_box()`, and `confirm_execution()` in `src/ui.py` so when `default_yes` is `False` (safety warnings `findings` present or `RUN_BLOCK_APPROVE_CMD` returns `prompt`), the `START STEP` prompt renders `[y/n/i(nfo)]:` (no capitalized default) instead of `[y/N/i(nfo)]:`.
 - Pass `default_no=False` alongside `default_yes=False` to `read_confirm_key()` in `confirm_execution()` (`src/ui.py`) when safety warnings or explicit approval prompt are active so pressing `Enter` is ignored until the user explicitly chooses `y` (run), `n`/`q`/`Esc` (abort), or `i` (inspect).
 - Verify `_parse_confirm_line()` (`src/ui.py`) returns `"invalid"` on empty newline `"\n"` when both `default_yes` and `default_no` are `False`, while still returning `"no"` on EOF (`""`) and keeping `[Y/n/i(nfo)]:` (`default_yes=True`) unchanged when no safety warnings are present (also distinct from `F42` `SESSION COMPLETED` `[y/N/i(nfo)]:`).
@@ -438,7 +425,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
   - When `out` is missing, prompt `-> Renumber to <next_label>? [r(enumber)/n/s(cript)]:` with no `Enter` default.
 - Redesign `MISSING PREVIOUS STEP` in `src/runner.py` and `src/ui.py`: compute `<first_missing_label>` as the first missing/free step starting from `1` for strictly sequential steps, prompt `-> Renumber to <first_missing_label>? [r(enumber)/n]:` with no `Enter` default (until `F54` adds `i(nfo)`), and on `r` renumber and proceed into `START STEP`.
 - When a step is renumbered (`STEP ALREADY EXISTS` or `MISSING PREVIOUS STEP`), record an explicit notice in the captured step output `out` (alongside `renumbered_from` in `meta.json`) informing the agent of the executed step number, and update `src/rules/blocks/bash.md` and `src/rules/blocks/pwsh.md` so the agent trusts and continues from the renumbered step.
-- Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `src/header.py`, `src/rules/blocks/bash.md`, `src/rules/blocks/pwsh.md`, `README.md`, `tests/test_run_block.py`.
 
 # ✅ [DONE] B11: Fix TUI box height overflow, header duplication on redraw, and keep inline boxes minimal — *2026-11-19*
 
@@ -446,7 +432,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Display expanded bundle details in an alternate-screen fullscreen panel (`\033[?1049h` / `\033[?1049l`, modeled after `top`/`less`) with keyboard scrolling (`Up`/`Down`, `j`/`k`, `PgUp`/`PgDn`), clean return (`Esc`/`q`/`d`/`i`), and clipboard copy on `Enter` so toggling details never leaves duplicate headers or stale lines in scrollback.
 - Fix `display_width()` in `src/ui.py` to count Unicode combining and zero-width format characters (`Mn`, `Me`, `Cf`) as width `0` and normalize/expand tabs (`\t`) during rendering so `_box_rows_above_prompt()` always matches actual terminal row wrapping.
 - Track both `cols` and `rows` (`term_rows`) across `offer_clipboard_copy()`, `confirm_execution()`, and `prompt_yes_no_box()` (`src/ui.py`) so `SIGWINCH` height or width changes reflow cleanly without leaving stale `╭─ ...` rows.
-- Target files: `src/ui.py`, `src/runner.py`, `src/bundle.py`, `README.md`, `tests/test_run_block.py`.
 - Acceptance criteria: toggling details, resizing terminal width or height, or returning from `e(dit)` never produces duplicate `╭─ ...` headers; inline boxes fit within `term_rows`; fullscreen details scroll cleanly on alternate screen; `README.md` and offline tests in `tests/test_run_block.py` cover height clamping, alternate-screen redraw, and `display_width()` edge cases.
 
 # ✅ [DONE] F67: Remove obsolete src/bundles/run_block.bundle export and bundle references — *2026-11-19*
@@ -568,7 +553,6 @@ Intermittent failure observed in `tests/test_ui.py` `test_f56_progress_alignment
 - Include formatted duration in the trailing `[<session>/<step>] END` marker written to `out` (e.g. `[s1/1] END (3.4s)` or `[s1/1] END (exit 1, 3.4s)`, keeping `_step_status()` parsing compatible) and append duration to `Stats:` in the `END` box (`src/ui.py`).
 - Track per-operation elapsed durations in `_ProgressLineFilter` (`src/runner.py`) via `__RB_STEP__:N` markers, showing step timing in live progress output and surfacing per-operation timings (plus step `duration_ms` metadata) for `END` diagnostics and `run_block -l` / `--info` (`D1`, `F20`).
 - Visually distinguish unnumbered AST-expanded sub-items (`[read]`, `[write]`) under a numbered parent step (such as `1. [python]`) in `BLOCK PLAN` (`src/ui.py`, `src/safety.py`) with a subordinate marker or nested indent so sub-operations clearly belong to their parent step.
-- Target files: `src/runner.py`, `src/ui.py`, `src/safety.py`, `src/config.py`, `README.md`, `tests/test_run_block.py`.
 
 # ✅ [DONE] F52: Support e(dit) on END output (and 0.orig on START BUNDLE) with original backup and stats recalculation — *2026-11-17*
 

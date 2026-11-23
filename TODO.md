@@ -1,12 +1,3 @@
-# 🎯 [NEXT] F97: Remove transitional Bundle-Expose/Bundle-Hide headers and legacy fragment kind aliases
-
-- Depends on: F95, F96
-- Remove transitional `Bundle-Expose` and `Bundle-Hide` header constants and filtering (`BUNDLE_EXPOSE_HEADER`, `BUNDLE_HIDE_HEADER`) from `src/bundle_parse.py`, documentation, and tests.
-- Remove legacy fragment kind aliases (`LEGACY_FRAGMENT_KIND_ALIASES`: `include`, `task`, `context`, `PROMPT_FRAGMENT_KINDS` legacy entries, and `ruleset`/`include`/`task`/`context` entries in `_BUNDLE_TAG_COLORS`) from `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, and `src/ui.py`, keeping only the 4 canonical ADR-0003 fragment kinds (`rule`, `file`, `cmd`, `prompt`).
-- Recognize `.ctx.bundle` alongside `.agents_bundle` and `AGENTS.md` in workspace/project root detection (`src/config.py`).
-- Strip historical `- Role:` and `- Target files:` lines from `TODO_ARCHIVE.md`.
-- Acceptance criteria: `Bundle-Expose`/`Bundle-Hide` and legacy fragment kind aliases are removed, `.ctx.bundle` is recognized in root detection, `AGENTS.md`/`README.md`/`tests/test_*.py` are updated, and `./build.py` and `python3 -m unittest discover -s tests` pass.
-
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3

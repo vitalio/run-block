@@ -224,6 +224,9 @@ def _git_toplevel() -> Path | None:
     return None
 
 
+PROJECT_ROOT_MARKERS = (".ctx.bundle", ".agents_bundle", "AGENTS.md")
+
+
 def _git_toplevel_or_cwd() -> Path:
     cwd = Path.cwd().resolve()
     top = _git_toplevel()
@@ -231,7 +234,7 @@ def _git_toplevel_or_cwd() -> Path:
         if cwd == top or top in cwd.parents:
             cur = cwd
             while True:
-                if (cur / ".agents_bundle").is_file() or (cur / "AGENTS.md").is_file():
+                if any((cur / marker).is_file() for marker in PROJECT_ROOT_MARKERS):
                     return cur
                 if cur == top or cur.parent == cur:
                     break
@@ -255,8 +258,6 @@ HIDDEN_SESSION_HEADER_KEYS = frozenset({
 
 FULLSCREEN_HIDDEN_HEADER_KEYS = frozenset({
     "bundle-boundary",
-    "bundle-expose",
-    "bundle-hide",
     "bundle-name",
     "bundle-protocol",
     "chat-lang",

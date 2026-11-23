@@ -737,7 +737,6 @@ class TestUi(RunBlockTestCase):
         sdir.mkdir()
         bundle_txt = (
             "Bundle-Command: agents_bundle role=execute task=B10\n"
-            "Bundle-Expose: Chat-Lang, Role, Task, Title\n"
             f"Workdir: {proj}\n"
             "Chat-Lang: Russian\n"
             "Role: execute\n"
@@ -1147,7 +1146,6 @@ class TestUi(RunBlockTestCase):
         self.mod.write_session_meta(
             sdir,
             [
-                ("Bundle-Expose", "Role, Task, Title"),
                 ("Role", "execute"),
                 ("Task", "F58"),
                 ("Title", "Wrap long lines inside all TUI boxes while preserving hanging indents across narrow terminals"),
@@ -1848,7 +1846,6 @@ class TestUi(RunBlockTestCase):
         nonce = "bnd77"
         stdin_text = (
             f"Bundle-Boundary: {nonce}\n"
-            "Bundle-Expose: Role\n"
             "Role: work\n\n"
             f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r1","chain":["pkg","sub"]}} -->\n'
             "Rule 1 line\n"

@@ -181,12 +181,10 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   lines on `stdin` (before the first blank line) are stored in
   `<session>/meta.json`. Non-transport preamble headers emitted via `export`
   (such as `Role`, `Task`, `Title`) appear in TUI headers and `<session>/0`
-  by default (or filtered when legacy `Bundle-Expose` / `Bundle-Hide` headers
-  are present), while `Bundle-*` transport headers (`Bundle-Name`,
-  `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`,
-  `Bundle-Hide`) remain in `<session>/meta.json` only. When
-  `RUN_BLOCK_CWD=auto`, an existing piped `Workdir` directory is preferred over
-  the current directory or Git root.
+  by default, while `Bundle-*` transport headers (`Bundle-Name`,
+  `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`) remain in
+  `<session>/meta.json` only. When `RUN_BLOCK_CWD=auto`, an existing piped
+  `Workdir` directory is preferred over the current directory or Git root.
 - **Rule injection & deduplication**: `run_block` injects embedded `bash`
   execution rules into `===== Rules =====`, deduplicating against existing
   `blocks/bash` parts or `## Terminal blocks (` headings, and wraps unlabeled
@@ -291,7 +289,7 @@ standard environment variables:
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
 | `RUN_BLOCK_DIR` | `~/.local/state/run_block` | Session storage directory (`$XDG_STATE_HOME/run_block` on POSIX; `%LOCALAPPDATA%\run_block\state` on Windows) |
-| `RUN_BLOCK_CWD` | `auto` | `auto` (existing `Workdir` preamble header or session `Workdir` from `<session>/0`, nearest `.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
+| `RUN_BLOCK_CWD` | `auto` | `auto` (existing `Workdir` preamble header or session `Workdir` from `<session>/0`, nearest `.ctx.bundle`/`.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `[Y/n]` prompt), `auto` (copy automatically), `never` |
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; active non-`off` modes are persisted in `<session>/0` `Sandbox:` header) |

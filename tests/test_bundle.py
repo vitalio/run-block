@@ -499,9 +499,9 @@ class TestBundle(RunBlockTestCase):
             self.mod.refresh_bundle_meta(bundle_file)
         self.assertEqual(hook_calls, [(sdir, bundle_file)])
 
-    def test_f46_bundle_input_protocol_headers_and_fragment_parser(self):
-        # 1. Header filtering: Bundle-* never forwarded to <session>/0; Bundle-Expose / Bundle-Hide
-        #    control forwarding without overriding Session, Next-Block, Workdir, Sandbox, or Date.
+    def test_bundle_input_protocol_headers_and_fragment_parser(self):
+        # 1. Header filtering: Bundle-* never forwarded to <session>/0; non-transport headers
+        #    are forwarded by default without overriding Session, Next-Block, Workdir, Sandbox, or Date.
         proj = self.tmp / "f46_proj"
         proj.mkdir()
         sessions = self.tmp / "f46_sessions"
@@ -512,8 +512,7 @@ class TestBundle(RunBlockTestCase):
         bundle_payload = (
             "Bundle-Command: agents_bundle role=execute task=F46\n"
             f"Bundle-Boundary: {nonce}\n"
-            "Bundle-Expose: Chat-Lang, Role, Task, Bundle-Command, Workdir, Sandbox, Session, Next-Block, Date, Secret-Tag\n"
-            "Bundle-Hide: Secret-Tag\n"
+            "Bundle-Protocol: 1\n"
             "Session: fake_session\n"
             "Next-Block: fake_session/99\n"
             "Workdir: /nonexistent/hijack\n"
@@ -521,9 +520,7 @@ class TestBundle(RunBlockTestCase):
             "Date: 1999-01-01 00:00 UTC\n"
             "Chat-Lang: Russian\n"
             "Role: execute\n"
-            "Task: F46\n"
-            "Secret-Tag: hidden-value\n"
-            "Unlisted-Header: meta-only\n\n"
+            "Task: F46\n\n"
             f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"vitalio/run_block:blocks/bash\", \"group\": \"vitalio/run_block\", \"via\": \"vitalio/run_block\"}} -->\n"
             "## Terminal blocks\n"
             "Rule body line 2\n"
@@ -532,7 +529,7 @@ class TestBundle(RunBlockTestCase):
             f"===== {cmd_prefix} git status -sb =====\n"
             "## main...origin/main\n"
             f"<!-- bundle:{nonce}:end -->\n\n"
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"include\", \"name\": \"AGENTS.md\", \"group\": \"local\", \"via\": \".agents_bundle\"}} -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"file\", \"name\": \"AGENTS.md\", \"group\": \"local\", \"via\": \".agents_bundle\"}} -->\n"
             f"===== {cmd_prefix} cat AGENTS.md =====\n"
             "# Rules\n"
             "<!-- bundle:other_nonce:part {\"kind\": \"literal\"} -->\n"
@@ -566,14 +563,11 @@ class TestBundle(RunBlockTestCase):
         # Bundle-* transport headers never appear in <session>/0
         self.assertNotIn("Bundle-Command:", b0)
         self.assertNotIn("Bundle-Boundary:", b0)
-        self.assertNotIn("Bundle-Expose:", b0)
-        self.assertNotIn("Bundle-Hide:", b0)
-        # Exposed non-hidden headers appear in <session>/0; hidden/unlisted do not
+        self.assertNotIn("Bundle-Protocol:", b0)
+        # Non-transport, non-reserved headers appear in <session>/0
         self.assertIn("Chat-Lang: Russian\n", b0)
         self.assertIn("Role: execute\n", b0)
         self.assertIn("Task: F46\n", b0)
-        self.assertNotIn("Secret-Tag:", b0)
-        self.assertNotIn("Unlisted-Header:", b0)
         # Matching boundary markers are stripped, non-matching inner comment preserved
         self.assertNotIn(f"bundle:{nonce}:", b0)
         self.assertIn("<!-- bundle:other_nonce:part", b0)
@@ -584,8 +578,7 @@ class TestBundle(RunBlockTestCase):
         meta = self.mod.read_session_meta(sessions / "s1")
         hdr_dict = dict(meta["headers"])
         self.assertEqual(hdr_dict.get("Bundle-Boundary"), nonce)
-        self.assertEqual(hdr_dict.get("Secret-Tag"), "hidden-value")
-        self.assertEqual(hdr_dict.get("Unlisted-Header"), "meta-only")
+        self.assertEqual(hdr_dict.get("Bundle-Protocol"), "1")
 
         plan = meta.get("bundle_plan")
         self.assertIsInstance(plan, dict)
@@ -616,7 +609,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(plan["lines"], sum(p["lines"] for p in parts))
         self.assertEqual(plan["chars"], len(b0))
 
-        # 2. Export-driven default (no Bundle-Expose) and Bundle-Expose: * forward non-Bundle non-reserved headers
+        # 2. Export-driven default forwards non-Bundle non-reserved headers
         exp_default = self.mod.filter_exposed_headers([
             ("Bundle-Name", "todo_md"),
             ("Bundle-Command", "todo_md F95 | agents_bundle"),
@@ -625,6 +618,7 @@ class TestBundle(RunBlockTestCase):
             ("Role", "work"),
             ("Task", "F95"),
             ("Title", "Drop Windows and accept export headers"),
+            ("Empty-Header", "   "),
         ])
         self.assertEqual(
             exp_default,
@@ -639,20 +633,6 @@ class TestBundle(RunBlockTestCase):
             "todo_md",
         )
         self.assertTrue(self.mod.is_bundle_transport_header("Bundle-Name"))
-        self.assertEqual(
-            self.mod.filter_exposed_headers([("Bundle-Expose", "none"), ("Role", "work")]),
-            [],
-        )
-        exp_all = self.mod.filter_exposed_headers([
-            ("Bundle-Expose", "*"),
-            ("Bundle-Hide", "Internal-Id"),
-            ("Bundle-Command", "cmd"),
-            ("Workdir", "/tmp"),
-            ("Role", "plan"),
-            ("Internal-Id", "42"),
-            ("Task", "F46"),
-        ])
-        self.assertEqual(exp_all, [("Role", "plan"), ("Task", "F46")])
 
         # 3. Fallback to ===== ... ===== section splitting when no Bundle-Boundary is present
         sec_body = (
@@ -713,7 +693,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(meta_after["bundle_plan"]["part_count"], 2)
         self.assertEqual(dict(meta_after["headers"]).get("Bundle-Boundary"), nonce)
 
-    def test_bundle_protocol_header_and_task_context_fragments(self) -> None:
+    def test_bundle_protocol_header_and_canonical_prompt_fragments(self) -> None:
         nonce = "tcnonce77"
         hdrs = [("Bundle-Name", "agents_bundle"), ("Bundle-Protocol", "1"), ("Bundle-Boundary", nonce), ("Role", "work")]
         self.assertEqual(self.mod.get_bundle_name(hdrs), "agents_bundle")
@@ -721,6 +701,11 @@ class TestBundle(RunBlockTestCase):
         self.assertIsNone(self.mod.get_bundle_protocol([("Role", "work")]))
         self.assertEqual(self.mod.get_bundle_boundary(hdrs), nonce)
         self.assertEqual(self.mod.filter_exposed_headers(hdrs), [("Role", "work")])
+        self.assertEqual(self.mod.CANONICAL_FRAGMENT_KINDS, ("rule", "file", "cmd", "prompt"))
+        self.assertFalse(hasattr(self.mod, "LEGACY_FRAGMENT_KIND_ALIASES"))
+        self.assertFalse(hasattr(self.mod, "PROMPT_FRAGMENT_KINDS"))
+        self.assertFalse(hasattr(self.mod, "BUNDLE_EXPOSE_HEADER"))
+        self.assertFalse(hasattr(self.mod, "BUNDLE_HIDE_HEADER"))
 
         # 1. Supported protocol is silent; unsupported protocol warns on stderr
         err_ok = io.StringIO()
@@ -732,16 +717,16 @@ class TestBundle(RunBlockTestCase):
             self.mod.format_start_bundle("s1", stdin_body="Bundle-Protocol: 9\n\nbody\n", work_dir=self.tmp)
         self.assertIn("unsupported Bundle-Protocol: 9", err_bad.getvalue())
 
-        # 2. Legacy include/task/context kinds normalize to canonical file/prompt;
-        #    upstream prompt fragments (with non-empty chain) stay distinct from the trailing root user Prompt part
+        # 2. Canonical file/prompt kinds: upstream prompt fragments (with non-empty chain)
+        #    stay distinct from the trailing root user Prompt part
         body = (
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"include\", \"name\": \"extra.md\", \"chain\": [\".agents_bundle\"]}} -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"file\", \"name\": \"extra.md\", \"chain\": [\".agents_bundle\"]}} -->\n"
             "included file line\n"
             f"<!-- bundle:{nonce}:end -->\n"
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"context\", \"name\": \"repo state\", \"chain\": [\".agents_bundle\"]}} -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"repo state\", \"chain\": [\".agents_bundle\"]}} -->\n"
             "context line\n"
             f"<!-- bundle:{nonce}:end -->\n"
-            f"<!-- bundle:{nonce}:part {{\"kind\": \"task\", \"name\": \"F1\", \"chain\": [\"todo_md\"]}} -->\n"
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"F1\", \"chain\": [\"todo_md\"]}} -->\n"
             "task line\n"
             f"<!-- bundle:{nonce}:end -->\n"
             f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"F2\", \"chain\": [\"todo_md\"]}} -->\n"
@@ -821,16 +806,19 @@ class TestBundle(RunBlockTestCase):
             ],
         )
 
-        # 3. Empty prompt (and legacy task/context) fragments are flagged with fragment_empty
-        for empty_kind in ("prompt", "task", "context"):
-            with self.subTest(empty_kind=empty_kind):
-                empty_body = (
-                    f"<!-- bundle:{nonce}:part {{\"kind\": \"{empty_kind}\", \"name\": \"F2\"}} -->\n"
-                    f"<!-- bundle:{nonce}:end -->\n"
-                )
-                _, empty_plan = self.mod.parse_bundle_fragments(empty_body, boundary=nonce)
-                self.assertEqual([w["code"] for w in empty_plan["warnings"]], ["fragment_empty"])
-                self.assertIn("prompt fragment 'F2' is empty", empty_plan["warnings"][0]["message"])
+        # 3. Empty canonical prompt fragments are flagged with fragment_empty;
+        #    removed legacy aliases (ruleset, include, task, context) are not aliased or in _BUNDLE_TAG_COLORS
+        empty_body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"prompt\", \"name\": \"F2\"}} -->\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        _, empty_plan = self.mod.parse_bundle_fragments(empty_body, boundary=nonce)
+        self.assertEqual([w["code"] for w in empty_plan["warnings"]], ["fragment_empty"])
+        self.assertIn("prompt fragment 'F2' is empty", empty_plan["warnings"][0]["message"])
+        for removed_kind in ("ruleset", "include", "task", "context"):
+            with self.subTest(removed_kind=removed_kind):
+                self.assertEqual(self.mod.normalize_fragment_kind(removed_kind), removed_kind)
+                self.assertNotIn(removed_kind, self.mod._BUNDLE_TAG_COLORS)
 
     def test_f68_top_style_table_kinds_groups_heavy_and_header(self) -> None:
         def _part(idx, kind, name, chain, chars, share):
@@ -908,7 +896,6 @@ class TestBundle(RunBlockTestCase):
         bundle_warn = (
             "Bundle-Command: agents_bundle role=execute task=F47\n"
             f"Bundle-Boundary: {nonce}\n"
-            "Bundle-Expose: Role, Task\n"
             "Role: execute\n"
             "Task: F47\n\n"
             f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"r:bash\", \"group\": \"vitalio/run_block\"}} -->\n"
@@ -1134,8 +1121,7 @@ class TestBundle(RunBlockTestCase):
         bundle_payload = (
             "Bundle-Command: agents_bundle role=execute task=F55\n"
             "Bundle-Boundary: deadbeef55\n"
-            "Bundle-Expose: Role, Task, Title\n"
-            "Bundle-Hide: Internal-Flag\n"
+            "Bundle-Protocol: 1\n"
             "Bundle-Custom: extra-transport\n"
             "Role: execute\n"
             "Task: F55\n"
@@ -1158,8 +1144,7 @@ class TestBundle(RunBlockTestCase):
         for hidden_hdr in (
             "Bundle-Command:",
             "Bundle-Boundary:",
-            "Bundle-Expose:",
-            "Bundle-Hide:",
+            "Bundle-Protocol:",
             "Bundle-Custom:",
         ):
             with self.subTest(start_hidden=hidden_hdr):
@@ -1177,8 +1162,7 @@ class TestBundle(RunBlockTestCase):
         meta_hdrs = dict(meta["headers"])
         self.assertEqual(meta_hdrs.get("Bundle-Command"), "agents_bundle role=execute task=F55")
         self.assertEqual(meta_hdrs.get("Bundle-Boundary"), "deadbeef55")
-        self.assertEqual(meta_hdrs.get("Bundle-Expose"), "Role, Task, Title")
-        self.assertEqual(meta_hdrs.get("Bundle-Hide"), "Internal-Flag")
+        self.assertEqual(meta_hdrs.get("Bundle-Protocol"), "1")
         self.assertEqual(meta_hdrs.get("Bundle-Custom"), "extra-transport")
         self.assertEqual(self.mod.parse_bundle_headers(s1_dir).get("bundle-command"), "agents_bundle role=execute task=F55")
         self.assertNotIn("bundle-command", {k.lower() for k, _ in self.mod.parse_bundle_header_items(s1_dir, include_transport=False)})
@@ -1196,7 +1180,7 @@ class TestBundle(RunBlockTestCase):
 
             for box_name, rendered in (("PLAN", plan_box), ("END", end_box), ("CONFIRM", "\n".join(hdr_confirm))):
                 with self.subTest(box=box_name):
-                    for hidden_hdr in ("Bundle-Command:", "Bundle-Boundary:", "Bundle-Expose:", "Bundle-Hide:", "Bundle-Custom:"):
+                    for hidden_hdr in ("Bundle-Command:", "Bundle-Boundary:", "Bundle-Protocol:", "Bundle-Custom:"):
                         self.assertNotIn(hidden_hdr, rendered)
                     t_lines = [ln for ln in rendered.splitlines() if "Title:" in ln]
                     self.assertEqual(len(t_lines), 1)
@@ -1315,7 +1299,6 @@ class TestBundle(RunBlockTestCase):
         env = {**os.environ, "RUN_BLOCK_DIR": str(sessions), "RUN_BLOCK_CWD": str(proj)}
         bundle_in = (
             f"Bundle-Boundary: {nonce}\n"
-            "Bundle-Expose: Role\n"
             "Role: execute\n\n"
             + nested_body
         )
@@ -2052,7 +2035,6 @@ class TestBundle(RunBlockTestCase):
         nonce = "f77bnd"
         stdin_text = (
             f"Bundle-Boundary: {nonce}\n"
-            "Bundle-Expose: Role, Task\n"
             "Role: work\n"
             "Task: F77\n\n"
             f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkgA:r1","chain":["pkgA","subB"]}} -->\n'
@@ -2167,7 +2149,6 @@ class TestBundle(RunBlockTestCase):
         nonce = "bnd_edit_raw"
         stdin_text = (
             f"Bundle-Boundary: {nonce}\n"
-            "Bundle-Expose: Role, Task\n"
             "Role: work\n"
             "Task: F69\n\n"
             f'<!-- bundle:{nonce}:part {{"kind":"rule","id":"pkg:r1","chain":["pkg","sub"]}} -->\n'

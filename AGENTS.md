@@ -121,12 +121,11 @@ rules are loaded via `.agents_bundle`.
 ## Bundle Input Protocol
 
 - Header contract: Treat `Bundle-*` preamble headers (`Bundle-Name`,
-  `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`, `Bundle-Expose`,
-  `Bundle-Hide`) as transport metadata for `<session>/meta.json` only, never
-  forwarding them into `<session>/0`. Forward all non-transport, non-hidden
-  `stdin` preamble headers into `<session>/0` by default (while honoring legacy
-  `Bundle-Expose` / `Bundle-Hide` filters when present, and never overriding
-  `Session`, `Next-Block`, `Workdir`, `Sandbox`, or `Date`).
+  `Bundle-Command`, `Bundle-Protocol`, `Bundle-Boundary`) as transport metadata
+  for `<session>/meta.json` only, never forwarding them into `<session>/0`.
+  Forward all non-transport, non-hidden `stdin` preamble headers into
+  `<session>/0` by default (never overriding `Session`, `Next-Block`, `Workdir`,
+  `Sandbox`, or `Date`).
 - Fragment parsing & stripping: When `Bundle-Boundary: <nonce>` is present,
   parse `<!-- bundle:<nonce>:part {...} -->` / `<!-- bundle:<nonce>:end -->`
   markers (agnostic of generator internals via `kind`, `group`, `name`, `via`,
@@ -137,9 +136,8 @@ rules are loaded via `.agents_bundle`.
 - Protocol version and fragment kinds: `get_bundle_protocol()` reads
   `Bundle-Protocol`; `format_start_bundle()` warns on `stderr` for versions
   outside `SUPPORTED_BUNDLE_PROTOCOLS` without rejecting the bundle.
-  `normalize_fragment_kind()` maps `context-bundle-protocol` fragments to the 4
-  canonical kinds (`rule`, `file`, `cmd`, `prompt`), normalizing legacy
-  `include` -> `file` and `task` / `context` -> `prompt`. Upstream prompt
+  `normalize_fragment_kind()` normalizes `context-bundle-protocol` fragment
+  kinds for the 4 canonical kinds (`rule`, `file`, `cmd`, `prompt`). Upstream prompt
   fragments carry a non-empty `chain` (and can be deduplicated by
   `_dedupe_fragments()`), whereas the user's root session prompt fragment has
   `chain: []` (`name: "Prompt"`): `inject_embedded_prompt()`,

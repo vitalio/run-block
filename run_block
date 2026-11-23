@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.34.2"
+VERSION = "0.34.3"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
 EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is interactively renumbered (recorded in step output as `[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), trust the executed `<session>/<new>` step number and continue sequentially from `<new+1>`. Pipe a bundle to `stdin` (`<bundle_cmd> | {cmd:run_block}`) to initialize a new session (`<session>/0`, with `i(nfo)` and `--bundle-plan [<session>] [--json] [--part N]` for part/warning inspection (`--show <session> --part N` or `--bundle-plan <session> --part N` prints a single part)); when `RUN_BLOCK_CWD` is `auto`, an existing `Workdir: <dir>` preamble header is preferred over the current directory.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Completing & chaining sessions: After verifying that the final commit and push succeeded (or when the user asks to end the session), emit the final task summary in chat and end that summary message with a `{cmd:run_block} --done [<session>] [-m "<note>"]` block (optionally followed by `<bundle_cmd> | {cmd:run_block}` to initialize the next session; `END SESSION` and `START SESSION` cards are deferred until after the outer `END STEP`, and the spawned `<child>/0` bundle takes over clipboard handoff, while nested `<session>/<step>`, `--fix`, and `--retry` execution is rejected). Running a later block (`<session>/<step>`, `--fix`, `--retry`) on a completed session asks for confirmation to reopen it (`SESSION COMPLETED`, default No); `-y`/`--yes` reopens automatically, otherwise the step exits with `NOT RUN`.'
@@ -313,6 +313,9 @@ def _git_toplevel() -> Path | None:
     return None
 
 
+PROJECT_ROOT_MARKERS = (".ctx.bundle", ".agents_bundle", "AGENTS.md")
+
+
 def _git_toplevel_or_cwd() -> Path:
     cwd = Path.cwd().resolve()
     top = _git_toplevel()
@@ -320,7 +323,7 @@ def _git_toplevel_or_cwd() -> Path:
         if cwd == top or top in cwd.parents:
             cur = cwd
             while True:
-                if (cur / ".agents_bundle").is_file() or (cur / "AGENTS.md").is_file():
+                if any((cur / marker).is_file() for marker in PROJECT_ROOT_MARKERS):
                     return cur
                 if cur == top or cur.parent == cur:
                     break
@@ -344,8 +347,6 @@ HIDDEN_SESSION_HEADER_KEYS = frozenset({
 
 FULLSCREEN_HIDDEN_HEADER_KEYS = frozenset({
     "bundle-boundary",
-    "bundle-expose",
-    "bundle-hide",
     "bundle-name",
     "bundle-protocol",
     "chat-lang",
@@ -4026,16 +4027,12 @@ _BUNDLE_TAG_COLORS = {
     "total": "\x1b[1;97m",
     "header": "\x1b[2m",
     "bundle": "\x1b[1;34m",
-    "ruleset": "\x1b[1;36m",
     "group": "\x1b[1;34m",
     "rule": "\x1b[1;36m",
     "rules": "\x1b[1;36m",
     "cmd": "\x1b[1;35m",
     "file": "\x1b[1;94m",
-    "include": "\x1b[1;94m",
     "prompt": "\x1b[1;33m",
-    "task": "\x1b[1;33m",
-    "context": "\x1b[1;94m",
     "section": "\x1b[1;32m",
     "text": "\x1b[1;32m",
     "body": "\x1b[1;32m",
@@ -6973,18 +6970,10 @@ def offer_clipboard_copy(
 
 
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
-BUNDLE_EXPOSE_HEADER = "bundle-expose"
-BUNDLE_HIDE_HEADER = "bundle-hide"
 BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
 CANONICAL_FRAGMENT_KINDS = ("rule", "file", "cmd", "prompt")
-LEGACY_FRAGMENT_KIND_ALIASES = {
-    "include": "file",
-    "task": "prompt",
-    "context": "prompt",
-}
-PROMPT_FRAGMENT_KINDS = ("prompt", "task", "context")
 DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 DEDUP_MIN_LINES = 3
@@ -7146,9 +7135,7 @@ def inject_embedded_block_rule(
 
 def normalize_fragment_kind(raw_kind: object, default: str = "") -> str:
     kind = str(raw_kind or "").strip().lower()
-    if not kind:
-        return default
-    return LEGACY_FRAGMENT_KIND_ALIASES.get(kind, kind)
+    return kind if kind else default
 
 
 def _fragment_meta_chain(meta: dict[str, object]) -> list[str]:
@@ -7306,15 +7293,6 @@ def append_note_to_raw_bundle(
     return inject_embedded_prompt(raw_body, prompt=note, boundary=boundary)
 
 
-def _parse_header_filter_tokens(raw: str) -> set[str]:
-    tokens: set[str] = set()
-    for tok in re.split(r"[\s,]+", raw or ""):
-        cleaned = re.sub(r"\s+", "-", tok.strip().lower())
-        if cleaned:
-            tokens.add(cleaned)
-    return tokens
-
-
 def extract_bundle_transport_headers(headers: list[tuple[str, str]]) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, v in headers:
@@ -7343,29 +7321,12 @@ def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
 
 
 def filter_exposed_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    transport = extract_bundle_transport_headers(headers)
-    hide_set = _parse_header_filter_tokens(transport.get(BUNDLE_HIDE_HEADER, ""))
-    if "*" in hide_set or "all" in hide_set:
-        return []
-    if BUNDLE_EXPOSE_HEADER in transport:
-        expose_set = _parse_header_filter_tokens(transport.get(BUNDLE_EXPOSE_HEADER, ""))
-        expose_all = "*" in expose_set or "all" in expose_set
-        if not expose_all and (not expose_set or expose_set == {"none"}):
-            return []
-    else:
-        expose_set = set()
-        expose_all = True
-
     exposed: list[tuple[str, str]] = []
     for k, v in headers:
         norm_k = re.sub(r"\s+", "-", k.strip().lower())
         if is_bundle_transport_header(norm_k):
             continue
         if norm_k in HIDDEN_SESSION_HEADER_KEYS:
-            continue
-        if norm_k in hide_set:
-            continue
-        if not expose_all and norm_k not in expose_set:
             continue
         if not v.strip():
             continue
@@ -7597,7 +7558,7 @@ def analyze_bundle_warnings(
                         "message": f"command {label!r} produced empty output",
                     }
                 )
-        if (kind == "prompt" or raw_kind in PROMPT_FRAGMENT_KINDS) and part_lines_list is not None and idx_0 < len(part_lines_list):
+        if kind == "prompt" and part_lines_list is not None and idx_0 < len(part_lines_list):
             if _is_cmd_output_empty(part_lines_list[idx_0]):
                 warnings.append(
                     {

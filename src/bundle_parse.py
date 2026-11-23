@@ -1,16 +1,8 @@
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
-BUNDLE_EXPOSE_HEADER = "bundle-expose"
-BUNDLE_HIDE_HEADER = "bundle-hide"
 BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
 CANONICAL_FRAGMENT_KINDS = ("rule", "file", "cmd", "prompt")
-LEGACY_FRAGMENT_KIND_ALIASES = {
-    "include": "file",
-    "task": "prompt",
-    "context": "prompt",
-}
-PROMPT_FRAGMENT_KINDS = ("prompt", "task", "context")
 DEFAULT_BUNDLE_TOKEN_BUDGET = 100000
 DEFAULT_FRAGMENT_MAX_TOKENS = 20000
 DEDUP_MIN_LINES = 3
@@ -172,9 +164,7 @@ def inject_embedded_block_rule(
 
 def normalize_fragment_kind(raw_kind: object, default: str = "") -> str:
     kind = str(raw_kind or "").strip().lower()
-    if not kind:
-        return default
-    return LEGACY_FRAGMENT_KIND_ALIASES.get(kind, kind)
+    return kind if kind else default
 
 
 def _fragment_meta_chain(meta: dict[str, object]) -> list[str]:
@@ -332,15 +322,6 @@ def append_note_to_raw_bundle(
     return inject_embedded_prompt(raw_body, prompt=note, boundary=boundary)
 
 
-def _parse_header_filter_tokens(raw: str) -> set[str]:
-    tokens: set[str] = set()
-    for tok in re.split(r"[\s,]+", raw or ""):
-        cleaned = re.sub(r"\s+", "-", tok.strip().lower())
-        if cleaned:
-            tokens.add(cleaned)
-    return tokens
-
-
 def extract_bundle_transport_headers(headers: list[tuple[str, str]]) -> dict[str, str]:
     out: dict[str, str] = {}
     for k, v in headers:
@@ -369,29 +350,12 @@ def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
 
 
 def filter_exposed_headers(headers: list[tuple[str, str]]) -> list[tuple[str, str]]:
-    transport = extract_bundle_transport_headers(headers)
-    hide_set = _parse_header_filter_tokens(transport.get(BUNDLE_HIDE_HEADER, ""))
-    if "*" in hide_set or "all" in hide_set:
-        return []
-    if BUNDLE_EXPOSE_HEADER in transport:
-        expose_set = _parse_header_filter_tokens(transport.get(BUNDLE_EXPOSE_HEADER, ""))
-        expose_all = "*" in expose_set or "all" in expose_set
-        if not expose_all and (not expose_set or expose_set == {"none"}):
-            return []
-    else:
-        expose_set = set()
-        expose_all = True
-
     exposed: list[tuple[str, str]] = []
     for k, v in headers:
         norm_k = re.sub(r"\s+", "-", k.strip().lower())
         if is_bundle_transport_header(norm_k):
             continue
         if norm_k in HIDDEN_SESSION_HEADER_KEYS:
-            continue
-        if norm_k in hide_set:
-            continue
-        if not expose_all and norm_k not in expose_set:
             continue
         if not v.strip():
             continue
@@ -623,7 +587,7 @@ def analyze_bundle_warnings(
                         "message": f"command {label!r} produced empty output",
                     }
                 )
-        if (kind == "prompt" or raw_kind in PROMPT_FRAGMENT_KINDS) and part_lines_list is not None and idx_0 < len(part_lines_list):
+        if kind == "prompt" and part_lines_list is not None and idx_0 < len(part_lines_list):
             if _is_cmd_output_empty(part_lines_list[idx_0]):
                 warnings.append(
                     {

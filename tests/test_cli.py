@@ -318,7 +318,7 @@ class TestCli(RunBlockTestCase):
         self.assertIn("Cleaned 1 session(s) (s3 (2.1 KB)", c3_buf.getvalue())
         self.assertEqual(sorted(p.name for p in self.tmp.iterdir() if p.is_dir()), ["s4"])
 
-    def test_b3_subproject_workdir_resolution_and_overrides(self):
+    def test_subproject_workdir_resolution_and_overrides(self):
         repo = self.tmp / "monorepo"
         repo.mkdir()
         subprocess.run(["git", "init", "-q"], cwd=str(repo), check=True)
@@ -327,7 +327,7 @@ class TestCli(RunBlockTestCase):
         subproj = repo / "apps" / "canary"
         subproj_nested = subproj / "src"
         subproj_nested.mkdir(parents=True)
-        (subproj / ".agents_bundle").write_text("ruleset vitalio/agents-rules:default\n", encoding="utf-8")
+        (subproj / ".agents_bundle").write_text("bundle vitalio/agents-rules:default\n", encoding="utf-8")
 
         regular_subdir = repo / "packages" / "plain"
         regular_subdir.mkdir(parents=True)
@@ -363,7 +363,7 @@ class TestCli(RunBlockTestCase):
         self.assertEqual(r_sub_step.returncode, 0, r_sub_step.stderr)
         self.assertIn(str(subproj.resolve()), r_sub_step.stdout)
 
-        # 2. Subproject with AGENTS.md (without .agents_bundle) also resolves to subproject root
+        # 2. Subproject with AGENTS.md or .ctx.bundle (without .agents_bundle) also resolves to subproject root
         subproj_agents = repo / "apps" / "docs_sub"
         subproj_agents.mkdir(parents=True)
         (subproj_agents / "AGENTS.md").write_text("# Subproject rules\n", encoding="utf-8")
@@ -379,6 +379,23 @@ class TestCli(RunBlockTestCase):
         self.assertEqual(r_agents.returncode, 0, r_agents.stderr)
         s2_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s2")
         self.assertEqual(Path(s2_hdrs["workdir"]).resolve(), subproj_agents.resolve())
+
+        subproj_ctx = repo / "apps" / "ctx_sub"
+        subproj_ctx_nested = subproj_ctx / "pkg"
+        subproj_ctx_nested.mkdir(parents=True)
+        (subproj_ctx / ".ctx.bundle").write_text("bundle vitalio/agents-rules:default\n", encoding="utf-8")
+        r_ctx = self._run(
+            [str(SCRIPT), "--start", "--session", "s2_ctx"],
+            input="Role: execute\n",
+            capture_output=True,
+            text=True,
+            cwd=str(subproj_ctx_nested),
+            env=base_env,
+            check=False,
+        )
+        self.assertEqual(r_ctx.returncode, 0, r_ctx.stderr)
+        s2_ctx_hdrs = self.mod.parse_bundle_headers(sessions_dir / "s2_ctx")
+        self.assertEqual(Path(s2_ctx_hdrs["workdir"]).resolve(), subproj_ctx.resolve())
 
         # 3. Regular Git subdir without .agents_bundle or AGENTS.md climbs to Git toplevel
         r_reg = self._run(
