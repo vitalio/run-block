@@ -2085,6 +2085,141 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(meta_fix.get("reasoning"), "Patching step 2 output message.")
         self.assertIn("hello_step2_patched", (self.tmp / "s1" / "2_1" / "out").read_text(encoding="utf-8"))
 
+    def test_run_reply_multi_session_resolution_override_unfenced_blocks_and_double_pass_heredocs(self):
+        fence = chr(96) * 3
+        # Create s1, s458 (with steps 1..6), and a newer s459 in the same Workdir
+        self.mod.start_session("s1")
+        self.mod.start_session("s458")
+        for st in range(1, 7):
+            s_dir = self.tmp / "s458" / str(st)
+            s_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            (s_dir / "block.sh").write_text(f"echo step_{st}\n", encoding="utf-8")
+            (s_dir / "out").write_text(f"[s458/{st}] START\nstep_{st}\n[s458/{st}] END (0s)\n", encoding="utf-8")
+        self.mod.start_session("s459")
+        # Ensure s459 has a strictly newer mtime than s458
+        s459_bundle = self.tmp / "s459" / "0"
+        s459_bundle.write_text(s459_bundle.read_text(encoding="utf-8"), encoding="utf-8")
+
+        # 1. Unfenced reply targeting s458/7 with glued closing fence RUN_BLOCK``` and --- rules
+        # executes in s458/7 (NOT overridden by newer s459) when session_arg is None
+        unfenced_s458 = (
+            "---\n"
+            "Inspecting workspace state in s458 before committing.\n\n"
+            "---\n"
+            "run s458/7 <<'RUN_BLOCK'\n"
+            "# run: s458/7\n"
+            "echo unfenced_s458_step7\n"
+            "RUN_BLOCK" + fence + "   \n"
+            "---\n"
+        )
+        ex_unfenced = self.mod.extract_reply_block(unfenced_s458, default_session="s459")
+        self.assertTrue(ex_unfenced["ok"])
+        self.assertEqual(ex_unfenced["session"], "s458")
+        self.assertEqual(ex_unfenced["step"], "7")
+        self.assertTrue(ex_unfenced["repaired"])
+        self.assertEqual(
+            ex_unfenced["reasoning"],
+            "Inspecting workspace state in s458 before committing.",
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_s458 = self.mod.cmd_run_reply(None, unfenced_s458, auto_yes=True)
+        self.assertEqual(rc_s458, 0)
+        self.assertTrue((self.tmp / "s458" / "7" / "block.sh").is_file())
+        self.assertFalse((self.tmp / "s459" / "1" / "block.sh").exists())
+        meta_s458_7 = self.mod.read_step_meta(self.tmp / "s458" / "7")
+        self.assertIsNone(meta_s458_7.get("renumbered_from"))
+        self.assertEqual(
+            meta_s458_7.get("reasoning"),
+            "Inspecting workspace state in s458 before committing.",
+        )
+        self.assertIn(
+            "unfenced_s458_step7",
+            (self.tmp / "s458" / "7" / "out").read_text(encoding="utf-8"),
+        )
+
+        # 2. Multi-candidate reply with generic s1/1 prose example followed by s458/8 and trailing hallucination
+        # when session_arg is None and s459 is also open (and s1 exists in base)
+        multi_cand_reply = (
+            "As documented in the rule:\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "git status -sb\n"
+            "RUN_BLOCK\n"
+            + fence + "\n\n"
+            "Now running step 8 in s458 with nested heredoc documentation:\n\n"
+            + fence + "bash\n"
+            "run s458/8 <<'RUN_BLOCK'\n"
+            "cat <<'EOF' > " + str(self.tmp / "nested_example.md") + "\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "git status -sb\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+            "EOF\n"
+            "if false; then\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "echo nested_outside_eof\n"
+            "RUN_BLOCK\n"
+            "fi\n"
+            "echo after_double_pass_heredoc\n"
+            "RUN_BLOCK\n"
+            + fence + "\n\n"
+            "[s458/8] START\nhallucinated\n[s458/8] END\n\n"
+            + fence + "bash\n"
+            "run s458/9 <<'RUN_BLOCK'\n"
+            "echo hallucinated_step9\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_multi = self.mod.cmd_run_reply(None, multi_cand_reply, auto_yes=True)
+        self.assertEqual(rc_multi, 0)
+        self.assertTrue((self.tmp / "s458" / "8" / "block.sh").is_file())
+        self.assertFalse((self.tmp / "s458" / "9").exists())
+        self.assertFalse((self.tmp / "s1" / "1").exists())
+        out_s458_8 = (self.tmp / "s458" / "8" / "out").read_text(encoding="utf-8")
+        self.assertIn("after_double_pass_heredoc", out_s458_8)
+        nested_md = (self.tmp / "nested_example.md").read_text(encoding="utf-8")
+        self.assertIn("run s1/1 <<'RUN_BLOCK'", nested_md)
+        self.assertIn(fence + "bash", nested_md)
+
+        # 3. Explicit CLI override `run -r s459` overrides block session s458/9 -> runs in s459/1
+        # and rewrites `# run: s458/9` -> `# run: s459/1` with renumbered_from="s458/9"
+        override_reply = (
+            "Redirecting block into s459 explicitly.\n\n"
+            "run s458/9 <<'RUN_BLOCK'\n"
+            "# run: s458/9\n"
+            "echo explicit_override_to_s459\n"
+            "RUN_BLOCK" + fence + "\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_override = self.mod.cmd_run_reply("s459", override_reply, auto_yes=True)
+        self.assertEqual(rc_override, 0)
+        self.assertTrue((self.tmp / "s459" / "1" / "block.sh").is_file())
+        meta_s459_1 = self.mod.read_step_meta(self.tmp / "s459" / "1")
+        self.assertEqual(meta_s459_1.get("renumbered_from"), "s458/9")
+        self.assertIn(
+            "# run: s459/1",
+            (self.tmp / "s459" / "1" / "block.sh").read_text(encoding="utf-8"),
+        )
+
+        # 4. Non-existent valid non-template session (e.g. s500/1) with session_arg=None is respected
+        new_sess_reply = (
+            "Initializing new session s500 directly from block header.\n\n"
+            "run s500/1 <<'RUN_BLOCK'\n"
+            "echo fresh_s500_step1\n"
+            "RUN_BLOCK\n"
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc_s500 = self.mod.cmd_run_reply(None, new_sess_reply, auto_yes=True)
+        self.assertEqual(rc_s500, 0)
+        self.assertTrue((self.tmp / "s500" / "1" / "block.sh").is_file())
+        self.assertIn(
+            "fresh_s500_step1",
+            (self.tmp / "s500" / "1" / "out").read_text(encoding="utf-8"),
+        )
+
 
     def test_auto_yes_keeps_interactive_tui_cards_while_headless_suppresses_them(self):
         class _Tty(io.StringIO):

@@ -1465,25 +1465,56 @@ def run_script(
 
 TRAILING_FENCE_RE = re.compile(r"(?:\r?\n)+(?:RUN_(?:BLOCK|FIX)\s*)?`{3,}\s*$")
 SPLIT_HEADER_RE = re.compile(
-    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*\n)?\s*(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b[^\n]*<<\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
+    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*)?(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b[^\n]*<<-?\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
 )
 FENCE_LINE_RE = re.compile(r"^`{3,}[A-Za-z0-9_-]*\s*$")
 
 
-ANY_HEREDOC_OPEN_RE = re.compile(r"<<-?\s*['\"]?([A-Za-z0-9_]+)['\"]?\s*$")
+ANY_HEREDOC_OPEN_RE = re.compile(
+    r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?(?:$|\s|[>|&;)])"
+)
 REPLY_CMD_HEADER_RE = re.compile(
     r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*)?(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b([^\n]*?)<<-?\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
 )
 FENCE_OPEN_RE = re.compile(r"^\s*`{3,}([A-Za-z0-9_-]*)\s*$")
 FENCE_CLOSE_RE = re.compile(r"^\s*`{3,}\s*$")
+HRULE_LINE_RE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
 PROSE_BULLET_HDR_RE = re.compile(
-    r"^\s*(?:[-*+]|\d+\.)\s+`?(?:run(?:_block)?\b|```)"
+    r"^\s*(?:[-*+]|\d+\.)\s+`?(?:run(?:_block)?\b|`{3})"
 )
 
 
 def _is_heredoc_terminator(line: str, delim: str) -> bool:
     stripped = line.strip()
-    return stripped == delim or bool(re.fullmatch(rf"{re.escape(delim)}\s*`{{3,}}", stripped))
+    return stripped == delim or bool(
+        re.fullmatch(rf"(?:`{{3,}}\s*)?{re.escape(delim)}(?:\s*`{{3,}})?", stripped)
+    )
+
+
+def _strip_orphan_fences_preserving_heredocs(lines: list[str]) -> tuple[list[str], bool]:
+    rebuilt: list[str] = []
+    inner_hd_eof: str | None = None
+    repaired = False
+    for idx, ln in enumerate(lines):
+        st = ln.strip()
+        if inner_hd_eof is not None:
+            if st == inner_hd_eof:
+                inner_hd_eof = None
+            rebuilt.append(ln)
+            continue
+        m_hd = ANY_HEREDOC_OPEN_RE.search(ln)
+        if m_hd and not st.startswith("#"):
+            tok = m_hd.group(1)
+            if tok not in ("RUN_BLOCK", "RUN_FIX"):
+                if any(lines[k].strip() == tok for k in range(idx + 1, len(lines))):
+                    inner_hd_eof = tok
+                    rebuilt.append(ln)
+                    continue
+        if FENCE_LINE_RE.match(st):
+            repaired = True
+            continue
+        rebuilt.append(ln)
+    return rebuilt, repaired
 
 
 def _find_outer_heredoc_end(lines: list[str], body_start: int, delim: str) -> tuple[int, bool]:
@@ -1528,35 +1559,59 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     norm = payload.replace("\r\n", "\n")
     lines = norm.split("\n")
 
-    first_nonempty = -1
-    for idx, line in enumerate(lines):
-        if line.strip():
-            first_nonempty = idx
-            break
+    first_nonempty = next((i for i, ln in enumerate(lines) if ln.strip()), -1)
     if first_nonempty == -1:
         return payload, None
+
+    if FENCE_OPEN_RE.match(lines[first_nonempty]):
+        next_ne = next((i for i in range(first_nonempty + 1, len(lines)) if lines[i].strip()), -1)
+        if next_ne != -1 and SPLIT_HEADER_RE.match(lines[next_ne]):
+            first_nonempty = next_ne
 
     header_line = lines[first_nonempty]
     m = SPLIT_HEADER_RE.match(header_line)
     if not m:
         cleaned = TRAILING_FENCE_RE.sub("", norm)
         c_lines = cleaned.split("\n")
+        inner_hd_eof: str | None = None
+        nested_depth: dict[str, int] = {"RUN_BLOCK": 0, "RUN_FIX": 0}
+        unmatched_end: int | None = None
         inferred_delim: str | None = None
-        for ln in c_lines:
+        for idx, ln in enumerate(c_lines):
+            st = ln.strip()
+            if inner_hd_eof is not None:
+                if st == inner_hd_eof:
+                    inner_hd_eof = None
+                continue
+            matched_term: str | None = None
+            for d_tok in ("RUN_BLOCK", "RUN_FIX"):
+                if _is_heredoc_terminator(ln, d_tok):
+                    matched_term = d_tok
+                    break
+            if matched_term is not None:
+                if nested_depth[matched_term] > 0:
+                    nested_depth[matched_term] -= 1
+                    continue
+                unmatched_end = idx
+                inferred_delim = matched_term
+                break
             m_hdr = SPLIT_HEADER_RE.match(ln)
-            if m_hdr:
-                inferred_delim = m_hdr.group(1)
-                break
-            if _is_heredoc_terminator(ln, "RUN_BLOCK"):
-                inferred_delim = "RUN_BLOCK"
-                break
-            if _is_heredoc_terminator(ln, "RUN_FIX"):
-                inferred_delim = "RUN_FIX"
-                break
-        if inferred_delim is not None:
-            end_rel, _ = _find_outer_heredoc_end(c_lines, 0, inferred_delim)
-            if end_rel != -1:
-                c_lines = c_lines[:end_rel]
+            if m_hdr and not PROSE_BULLET_HDR_RE.match(ln):
+                d_tok = m_hdr.group(1)
+                later_terms = sum(
+                    1 for k in range(idx + 1, len(c_lines)) if _is_heredoc_terminator(c_lines[k], d_tok)
+                )
+                if later_terms >= nested_depth[d_tok] + 1:
+                    nested_depth[d_tok] += 1
+                    continue
+            m_hd = ANY_HEREDOC_OPEN_RE.search(ln)
+            if m_hd and not st.startswith("#"):
+                tok = m_hd.group(1)
+                if tok not in ("RUN_BLOCK", "RUN_FIX"):
+                    if any(c_lines[k].strip() == tok for k in range(idx + 1, len(c_lines))):
+                        inner_hd_eof = tok
+        if unmatched_end is not None and inferred_delim is not None:
+            c_lines = c_lines[:unmatched_end]
             while True:
                 first = next((i for i, ln in enumerate(c_lines) if ln.strip()), None)
                 if first is None or not SPLIT_HEADER_RE.match(c_lines[first]):
@@ -1566,7 +1621,7 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
                 c_lines = c_lines[first + 1 :]
         # Also strip orphan Markdown fence lines when the local shell consumed the outer
         # `run_block ... <<'RUN_BLOCK'` header before passing stdin.
-        stripped_orphan = [ln for ln in c_lines if not FENCE_LINE_RE.match(ln)]
+        stripped_orphan, _ = _strip_orphan_fences_preserving_heredocs(c_lines)
         joined_orphan = "\n".join(stripped_orphan)
         out = (joined_orphan + "\n") if joined_orphan and not joined_orphan.endswith("\n") else joined_orphan
         return out, None
@@ -1596,7 +1651,7 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
         inner = inner[first + 1 :]
 
     # Strip standalone Markdown fence lines introduced by chat renderer splitting.
-    rebuilt = [ln for ln in inner if not FENCE_LINE_RE.match(ln)]
+    rebuilt, _ = _strip_orphan_fences_preserving_heredocs(inner)
     joined = "\n".join(rebuilt)
     out = (joined + "\n") if joined and not joined.endswith("\n") else joined
     return out, None
@@ -1659,15 +1714,38 @@ def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | Non
 
 def _clean_reply_reasoning(lines: list[str]) -> str:
     cleaned = list(lines)
-    while cleaned and not cleaned[-1].strip():
+    while cleaned and (
+        not cleaned[-1].strip()
+        or FENCE_OPEN_RE.match(cleaned[-1])
+        or FENCE_CLOSE_RE.match(cleaned[-1])
+        or HRULE_LINE_RE.match(cleaned[-1])
+    ):
         cleaned.pop()
-    if cleaned and FENCE_OPEN_RE.match(cleaned[-1]):
-        cleaned.pop()
-    while cleaned and not cleaned[0].strip():
-        cleaned.pop()
-    while cleaned and not cleaned[-1].strip():
-        cleaned.pop()
+    while cleaned and (
+        not cleaned[0].strip()
+        or HRULE_LINE_RE.match(cleaned[0])
+    ):
+        cleaned.pop(0)
     return "\n".join(cleaned).strip()
+
+
+def _candidate_session_tiers() -> list[set[str]]:
+    base = ensure_base()
+    try:
+        sdirs = [p for p in base.iterdir() if p.is_dir()]
+    except OSError:
+        return []
+    if not sdirs:
+        return []
+    cwd = get_work_dir().resolve()
+    open_matching = {
+        d.name for d in sdirs
+        if not is_session_completed(d) and _session_bundle_workdir(d) == cwd
+    }
+    any_matching = {d.name for d in sdirs if _session_bundle_workdir(d) == cwd}
+    open_any = {d.name for d in sdirs if not is_session_completed(d)}
+    all_existing = {d.name for d in sdirs}
+    return [t for t in (open_matching, any_matching, open_any, all_existing) if t]
 
 
 def extract_reply_block(
@@ -1731,26 +1809,9 @@ def extract_reply_block(
                                 break
                             inner = inner[first_nb + 1 :]
                             repaired = True
-                        rebuilt: list[str] = []
-                        inner_hd_eof: str | None = None
-                        for ln in inner:
-                            st = ln.strip()
-                            if inner_hd_eof is not None:
-                                if st == inner_hd_eof:
-                                    inner_hd_eof = None
-                                rebuilt.append(ln)
-                                continue
-                            m_hd = ANY_HEREDOC_OPEN_RE.search(ln)
-                            if m_hd and not st.startswith("#"):
-                                tok = m_hd.group(1)
-                                if tok not in ("RUN_BLOCK", "RUN_FIX"):
-                                    inner_hd_eof = tok
-                                    rebuilt.append(ln)
-                                    continue
-                            if FENCE_LINE_RE.match(st):
-                                repaired = True
-                                continue
-                            rebuilt.append(ln)
+                        rebuilt, stripped_fences = _strip_orphan_fences_preserving_heredocs(inner)
+                        if stripped_fences:
+                            repaired = True
                         payload_body = "\n".join(rebuilt).strip("\n")
                         payload = (payload_body + "\n") if payload_body else ""
                         block_end = end_idx + 1
@@ -1830,16 +1891,39 @@ def extract_reply_block(
         unique_candidates.append(cand)
 
     # Select the first actionable block:
-    # - If default_session is known and at least one candidate matches default_session,
-    #   pick the FIRST candidate matching default_session (skipping earlier generic s1/1 prose examples).
-    # - Otherwise pick the FIRST candidate, treating any trailing text or subsequent blocks
-    #   after the first actionable block as model hallucinations.
+    # - Prefer default_session when explicitly matched.
+    # - Otherwise prefer the first candidate matching an existing open/known session for Workdir
+    #   (or in base), skipping generic s1/1 rule template examples when non-template candidates exist.
+    # - Treat any subsequent blocks after the chosen actionable block as model hallucinations.
     chosen_idx = 0
-    if default_session:
-        for idx_c, cand in enumerate(unique_candidates):
-            if cand.get("session") == default_session:
-                chosen_idx = idx_c
-                break
+    if len(unique_candidates) > 1:
+        has_non_template = (default_session != "s1") and any(
+            c.get("session") not in (None, "s1") for c in unique_candidates
+        )
+        matched_idx: int | None = None
+        if default_session:
+            for idx_c, cand in enumerate(unique_candidates):
+                if cand.get("session") == default_session:
+                    matched_idx = idx_c
+                    break
+        if matched_idx is None:
+            for tier in _candidate_session_tiers():
+                for idx_c, cand in enumerate(unique_candidates):
+                    c_sess = cand.get("session")
+                    if isinstance(c_sess, str) and c_sess in tier:
+                        if has_non_template and c_sess == "s1":
+                            continue
+                        matched_idx = idx_c
+                        break
+                if matched_idx is not None:
+                    break
+        if matched_idx is None and has_non_template:
+            for idx_c, cand in enumerate(unique_candidates):
+                if cand.get("session") not in (None, "s1"):
+                    matched_idx = idx_c
+                    break
+        if matched_idx is not None:
+            chosen_idx = matched_idx
     chosen = unique_candidates[chosen_idx]
     ignored_trailing_blocks = len(unique_candidates) - (chosen_idx + 1)
 
@@ -1853,7 +1937,7 @@ def extract_reply_block(
     else:
         reasoning = _clean_reply_reasoning(lines[: int(chosen["start_line"])])
 
-    session = default_session or (str(chosen["session"]) if chosen.get("session") else None)
+    session = str(chosen["session"]) if chosen.get("session") else default_session
     step = str(chosen["step"]) if chosen.get("step") else None
     kind = str(chosen["kind"])
     payload = str(chosen["payload"])
@@ -1885,8 +1969,11 @@ def _resolve_reply_session(explicit_session: str | None, extracted_session: str 
         if not re.fullmatch(r"[A-Za-z0-9._-]+", explicit_session):
             raise SystemExit(f"{prog_name()}: invalid session name: {explicit_session!r}")
         return explicit_session
-    if extracted_session and (base / extracted_session).is_dir():
-        return extracted_session
+    if extracted_session:
+        if (base / extracted_session).is_dir():
+            return extracted_session
+        if extracted_session != "s1" and re.fullmatch(r"[A-Za-z0-9._-]+", extracted_session):
+            return extracted_session
     sdirs = sorted(
         [p for p in base.iterdir() if p.is_dir()],
         key=lambda p: (_session_mtime(p), p.name),
@@ -1952,15 +2039,9 @@ def cmd_run_reply(
         sys.stderr.write(f"{prog}: empty reply (nothing to run)\n")
         return 2
 
-    inferred_default_sess = session_arg
-    if inferred_default_sess is None:
-        try:
-            inferred_default_sess = _resolve_reply_session(None, None)
-        except SystemExit:
-            inferred_default_sess = None
     extracted = extract_reply_block(
         reply_text,
-        default_session=inferred_default_sess,
+        default_session=session_arg,
         allow_fenced_fallback=True,
     )
     if not extracted.get("ok"):

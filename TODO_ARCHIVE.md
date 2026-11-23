@@ -1,3 +1,19 @@
+# ✅ [DONE] B16: Fix run -r session resolution override and audit full-reply block extraction edge cases — *2026-11-23, Fixed run -r session resolution override, multi-candidate template filtering, unfenced glued-fence extraction, and double-pass nested heredoc preservation*
+
+- Depends on: F84, B15
+- Bump: `PATCH`
+- Fix `extract_reply_block()` in `src/runner.py` so an explicit session parsed from the block header (`chosen["session"]`, e.g. `s458` from `run s458/7 <<'RUN_BLOCK'`) is preserved rather than overwritten by `default_session` (`session = str(chosen["session"]) if chosen.get("session") else default_session`), keeping `default_session` strictly as a fallback for session-less blocks (`fenced_fallback` or bare `run <<'RUN_BLOCK'`) and as a candidate-selection hint.
+- Fix `cmd_run_reply()` and `_resolve_reply_session()` in `src/runner.py` to distinguish an explicit CLI session override (`run -r <session>`, where `session_arg` is provided by the user) from an auto-inferred fallback session when `session_arg is None`:
+  - When `session_arg is None` and the pasted block explicitly specifies `run s458/7 <<'RUN_BLOCK'`, execute in `s458` even if a newer session (such as `s459`) exists in the same `Workdir`.
+  - When a reply contains multiple candidate blocks (e.g. a generic `run s1/1 <<'RUN_BLOCK'` rule example followed by the real `run s458/7 <<'RUN_BLOCK'` block, or trailing hallucinated blocks) and `session_arg is None`, prefer the first candidate whose session matches an existing open/known session for the current `Workdir` (or existing session in `base`, skipping non-existent template `s1` examples) without overriding the chosen candidate's own session name.
+  - When `session_arg is None` and the block specifies a valid non-template session name that does not exist in `base` yet (e.g. `run s500/1 <<'RUN_BLOCK'`), respect `extracted_session` instead of silently redirecting it into an older open session in the same `Workdir`.
+- Audit the full `run -r` / `--run` reply extraction and reassembly pipeline (`extract_reply_block()`, `_parse_reply_cmd_tokens()`, `_find_outer_heredoc_end()`, `_is_heredoc_terminator()`, `_reassemble_split_payload()`, `_resolve_reply_session()`, and `cmd_run_reply()`) for chat copy-paste edge cases:
+  - Unfenced or half-fenced blocks with a glued closing fence on the terminator line (`RUN_BLOCK``` ` or `RUN_FIX``` ` with optional trailing spaces) and surrounding `---` horizontal rules or prose lines.
+  - Multi-session workspace state where `s458` and a newer `s459` both exist in `base` for the same `Workdir` and `run -r` (without arguments) is given a block targeting `s458/7`.
+  - Double-pass safety when `cmd_run_reply()` passes `extracted["payload"]` into `cmd_normal()` / `cmd_fix()` (which call `_reassemble_split_payload()`), ensuring inner heredocs or nested `run ... <<'RUN_BLOCK'` documentation examples inside `payload` are never truncated or stripped on the second pass.
+  - Step renumbering (`renumbered_from` and `# run: <session>/<step>` header rewrite) when `session_arg` explicitly overrides the block's session versus when `session_arg is None` and only the step number inside the target session is adjusted.
+- Add regression unit tests in `tests/test_runner.py` covering unfenced `run s458/7 <<'RUN_BLOCK' ... RUN_BLOCK``` ` replies when a newer session `s459` exists, multi-candidate replies with `s1/1` prose examples across multiple open sessions, explicit `run -r <session>` override vs `run -r` auto-detection, and double-pass nested heredoc preservation.
+
 # ✅ [DONE] B15: Fix --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, and AssertionError root-cause hints — *2026-11-23, Fixed --fix anchor repair quoting/prompt flow, shell-in-fix AST bypass, headless-header split payload truncation, AssertionError root-cause hints, and decoupled -y/--yes from --headless*
 
 - Depends on: F74
