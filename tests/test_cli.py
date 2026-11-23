@@ -127,7 +127,7 @@ class TestCli(RunBlockTestCase):
 
     def test_embedded_rules_files_exist(self):
         self.assertFalse((ROOT / "src/bundles").exists())
-        ab_txt = (ROOT / ".agents_bundle").read_text(encoding="utf-8")
+        ab_txt = (ROOT / ".ctx.bundle").read_text(encoding="utf-8")
         self.assertNotIn("bundle vitalio/run_block", ab_txt)
         self.assertFalse((ROOT / "agents/blocks/pwsh.md").exists())
         self.assertFalse((ROOT / "install.ps1").exists())

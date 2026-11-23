@@ -1,7 +1,7 @@
 # `run_block` — Project-Specific Agent Rules
 
 Universal workflow, language, Git, SemVer, Python CLI, and single-file build
-rules are loaded via `.agents_bundle`.
+rules are loaded via `.ctx.bundle`.
 
 ## Architecture & Module Boundaries
 
