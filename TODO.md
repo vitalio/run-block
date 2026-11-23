@@ -68,6 +68,12 @@
 - Update `MODULE_ORDER` in `build.py`, rebuild `./run_block`, and update module boundary documentation in `AGENTS.md`.
 - Rename all remaining ticket-prefixed unit test methods (`test_f<N>_*` and `test_b<N>_*`) across `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py` to descriptive domain-behavior names.
 
+# 🎯 [NEXT] F72: Rename project to run-block and CLI utility to run
+
+- Depends on: F89, F95, F97
+- Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `run` (updating `agents/blocks/bash.md`, protocol markers, and env vars/compatibility aliases per `todo_flow:D8` and ADR 0003).
+- Acceptance criteria: `build.py` outputs `run`, `install.sh` installs `run` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `run`, and `python3 -m unittest discover -s tests` passes.
+
 # 🎯 [NEXT] F84: Add run_block -r / --run [session] full-reply editor mode with automatic block extraction, repair, and step inference
 
 - Depends on: F83
@@ -77,12 +83,6 @@
   - Block extraction & repair engine (`extract_reply_block()` in `src/runner.py`): locate the executable `run_block [<session>/<step>] <<'RUN_BLOCK' ... RUN_BLOCK` or `run_block --fix [<session>/<target>] <<'RUN_FIX' ... RUN_FIX` block (or fenced code block when `[session]` is supplied) inside the full reply, reassemble fences split by inner triple backticks, repair missing/indented closing terminators, deduplicate repeated blocks, and prefer the final actionable block over inline prose examples.
   - Automatic session & step resolution: resolve target `<session>` from the explicit CLI `[session]` argument, the extracted block header, or `_find_latest_session()` for the current `Workdir`, and automatically derive the next sequential step number via `next_free_step(sdir)` (auto-renumbering stale or mismatched step numbers without manual editing).
   - Model reasoning display & persistence: extract the model's prose commentary preceding the block, persist it in `<session>/<step>/meta.json` (or `plan.md`), and render a compact commentary/reasoning section at the top of the `START STEP` (`BLOCK PLAN`) card in `src/ui.py` so the same reply-ingestion pipeline serves both web-chat (`-r`) and built-in API transport (`D10`).
-
-# ⚪ [NEW] F72: Rename project to run-block and CLI utility to run
-
-- Depends on: F89, F95, F97
-- Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `run` (updating `agents/blocks/bash.md`, protocol markers, and env vars/compatibility aliases per `todo_flow:D8` and ADR 0003).
-- Acceptance criteria: `build.py` outputs `run`, `install.sh` installs `run` (plus any agreed compatibility alias), `--help`/embedded rules/docs/tests reflect `run-block` and `run`, and `python3 -m unittest discover -s tests` passes.
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
 
