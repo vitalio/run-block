@@ -24,6 +24,8 @@
 - Recompute per-operation `share_pct` against current `total["chars"]` (and refresh operation/slice metrics when `block.sh` or `<step>/out` is modified) in `_format_output_breakdown()` and `_open_operation_viewer()` (`src/ui.py`) so the `END STEP` breakdown table and operation viewer stay aligned after in-place edits.
 - Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
 
+- Fix `instrument_script_for_progress()` and `summarize_script_actions()` in `src/safety.py` when a heredoc (`<<EOF` / `<<'EOF'`) starts on a `\`-continued line or inside `"$(cat <<'EOF' ... EOF)"`: track heredoc `eof_token` before/alongside `in_continuation` and `quote_state` so `printf '%s\n' '__RB_STEP__:N'` is never injected inside a heredoc body or an unclosed `"$(...)"` command substitution.
+
 # 🎯 [NEXT] D10: Design built-in API agent mode in run_block (single run_block tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
 
 - Depends on: F86, F89, F82, F74, F95
