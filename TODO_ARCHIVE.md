@@ -1,3 +1,7 @@
+# ✅ [DONE] F99: Update stale run_block and agents/blocks/bash.md references across open tasks in TODO.md — *2026-11-23, Updated legacy run_block, agents/blocks/bash.md, todo_md, and agents_bundle references across open tasks in TODO.md*
+
+Several open backlog items in TODO.md (such as B15, F96, D10, F93, F84, D4, F88, D7) still reference the legacy binary name 'run_block', build target './run_block', or 'agents/blocks/bash.md' after the F72 cutover to 'run-block' ('run') and 'agents/run.md'.
+
 # ✅ [DONE] F72: Rename project to run-block and cut over CLI entrypoint from run_block to run — *2026-11-23, Renamed project to run-block, switched build output and CLI entrypoint to run, removed legacy run_block binary on install/update, and cut over GitHub repository to vitalio/run-block.*
 
 - Depends on: F98
