@@ -1,18 +1,45 @@
-# 🔵 [WIP] D10: Design built-in API agent mode in run-block (single run tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
+# 🎯 [NEXT] F101: Add model/role profile resolution and unconditional child env API key scrubbing
 
-- Depends on: F86, F89, F82, F74, F95
-- Design candidate for `role=design` adding a built-in LLM API agent transport mode directly inside `run` (preserving `c(opy)` clipboard workflow and `run -r` full-reply paste mode as fallbacks, and remaining directly runnable via `todo <ID> | context | run`):
-  1. Model profiles and secret isolation: configure provider profiles (Anthropic Messages, OpenAI-compatible, local models) and load API keys (env / macOS Keychain / config) in memory while stripping secret env vars from child `run` executions (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
-  2. Single polymorphic `run` tool & resilient reply recovery:
-     - Register a single `run` tool with `disable_parallel_tool_use: true` / `parallel_tool_calls: false` accepting structured `edits: [{path, old, new}]` (atomic in-memory anchor + syntax validation before disk write, strict `Workdir` path boundary enforcement, pre-execution diff preview in `START STEP` / `i(nfo)`, and `difflib` anchor repair from `F74`), `script` (batch `bash` commands without heredoc/fence wrappers or manual step numbers), optional `fix_target`, and optional `done` / `done_note`.
-     - Reuse the reply extraction and repair pipeline from `F84` (`extract_reply_block()` in `src/runner.py`) to automatically strip accidental Markdown/heredoc wrappers inside `script`, deduplicate or queue unexpected multi-block responses, auto-resolve `<session>/<next_step>`, convert misplaced bash scripts in `fix_target` into sequential steps, and fall back to extracting blocks from plain text replies when a model responds without a tool call; support interactive terminal replies when the model asks a question without emitting a block.
-  3. Safety & sandbox integration: integrate with existing `src/safety.py` static checks and OS sandbox policies (`nonet` / `strict`), keeping advanced workspace drift/revert policies decoupled in `D4` -> `D6`.
-  4. TUI integration in `START SESSION`, `START STEP`, `END STEP`, and `END SESSION` (`src/ui.py`): replace default `Enter`/`Y` action with `Send to model (<profile>)` while keeping `c(opy)` for clipboard mode, render model reasoning/commentary and structured `edits` diffs directly inside `START STEP`, and persist conversation transcript and exact provider token/cache usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) in `<session>/chat.json` and `<session>/meta.json` (keeping fast offline stdlib heuristic estimation for pre-flight TUI cards).
-  5. Prompt caching & prefix stability (cross-session and intra-session) on top of `Bundle-Protocol: 1` (`F82`):
-     - Split `<session>/0` using `bundle_plan` fragment boundaries (`src/bundle_plan.py`, `format_start_bundle()` in `src/bundle.py`) so static `===== Rules =====` (`kind: "rule"`, with invariant rules first and role/transport-gated rules last) and static project instructions (`AGENTS.md`) form an immutable cacheable prefix (`system` prompt / leading `cache_control` breakpoint), while per-session headers (`Session`, `Next-Block`, `Date`, `Role`, `Task`, `Title`), dynamic command outputs (`kind: "cmd"`), file includes (`kind: "file"`), and prompt fragments (`kind: "prompt"`, including upstream task/context parts and `===== Prompt =====`) go into the initial `user` message.
-     - Keep intra-session step history strictly append-only across turns (advancing the trailing `cache_control` breakpoint to the latest `<session>/<step>/out` turn) and use threshold/chunked context compaction rather than per-turn sliding-window truncation so prior step prefixes remain cache-valid across consecutive steps.
-     - Surface provider token and cache hit statistics in `Stats:` across `END STEP` and `END SESSION`.
-  6. Stdlib-first HTTP/SSE streaming client (`urllib.request`) with no required third-party dependencies, coordinating with `F85` (`GIT_PAGER=cat`).
+- Depends on: D10, F85
+- Bump: `MINOR`
+- Implement model profile resolution and unconditional secret isolation per `docs/adr/0001-built-in-api-agent-mode.md`:
+  - In `src/config.py`, resolve model profiles from `$XDG_CONFIG_HOME/run-block/models.json` (`default_profile`, `profiles.<name>.{provider, model, base_url, api_key_env, api_key_cmd, max_tokens, thinking, cache}`, `roles.<role>.{profile, mode, max_steps}`) and environment variables (`RUN_BLOCK_MODEL`, `RUN_BLOCK_MODEL_<ROLE>`, `RUN_BLOCK_CACHE=auto|system|off`, `RUN_BLOCK_COMPACT_TOKENS`, `RUN_BLOCK_MAX_STEPS`), routing session `Role:` headers (`plan`, `design`, `work`, `review`, `law`) to their configured profile and execution mode.
+  - Resolve provider API keys in parent memory (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `RUN_BLOCK_API_KEY`, profile `api_key_env`, or `api_key_cmd` / macOS Keychain / Linux `secret-tool`).
+  - In `src/config.py` / `src/runner.py` (`scrub_child_env()`), unconditionally strip all provider API key environment variables (and any profile-configured `api_key_env`) from `child_env` across all sandbox modes (`off`, `nonet`, `strict`).
+  - Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering profile/role resolution and unconditional secret scrubbing in `scrub_child_env()`.
+
+# 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
+
+- Depends on: F101
+- Bump: `MINOR`
+- Create `src/agent.py` (registered in `build.py` `MODULE_ORDER`) implementing the API transport and prompt caching layer per `docs/adr/0001-built-in-api-agent-mode.md`:
+  - Split `<session>/0` losslessly using `bundle_plan["parts"]` (`src/bundle_plan.py`) into an immutable cross-session `system` prefix (leading `kind == "rule"` parts + root `AGENTS.md` `kind == "file"`, excluding per-session headers) and the initial `user[0]` message (`kind == "header"` + dynamic `cmd`, `file`, and `prompt` parts).
+  - Register the minimal single `run` tool schema (`script` required, `fix_target` optional; `disable_parallel_tool_use: true` / `parallel_tool_calls: false`) without separate `edits` or `done` JSON fields (edits run via batched `bash` + `python3` and completion runs via `run --done` inside `script`).
+  - Implement stdlib `urllib.request` streaming SSE clients for Anthropic Messages (`/v1/messages` with `cache_control: {"type": "ephemeral"}` breakpoints on `>= 1024`-token blocks under `RUN_BLOCK_CACHE=auto|system|off`) and OpenAI-compatible Chat Completions (`/v1/chat/completions` with `stream_options: {"include_usage": true}` for OpenAI, Gemini, OpenRouter, DeepSeek, and local servers).
+  - Persist append-only conversation turns, threshold context compaction (`RUN_BLOCK_COMPACT_TOKENS`), and exact provider usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`, `response_at`) in `<session>/chat.json`, `<session>/<step>/meta.json`, and `<session>/meta.json`.
+  - Add offline unit tests in `tests/test_agent.py` using mocked HTTP/SSE streams to verify prefix splitting, `cache_control` breakpoint placement, usage accounting, and threshold compaction.
+
+# 🎯 [NEXT] F103: Add proposed step state machine, safe autopilot, and supervisor-session CLI (run --step)
+
+- Depends on: F93
+- Depends on: F102
+- Bump: `MINOR`
+- Implement the step proposal state machine (`outcome: "proposed"`), reply recovery, safe autopilot, and supervisor-session CLI in `src/agent.py`, `src/runner.py`, and `src/cli.py` per `docs/adr/0001-built-in-api-agent-mode.md`:
+  - Normalize tool-call `run(script, fix_target?)` and plain-text fallback replies via `extract_reply_block()` (stripping accidental fence/heredoc wrappers, converting misplaced shell scripts in `fix_target` to sequential steps, and pausing when the model asks a prose question without a block).
+  - Persist candidate steps under `<session>/<step>/` (`block.sh` or `fix.py`, `plan.md` reasoning, and `meta.json` with `"outcome": "proposed"`) before execution.
+  - Add `run --step <target_session> --propose | --approve [--propose] | --reject "<reason>" [--propose] | --reply "<message>" [--propose] | --autopilot` (and `-m`/`--model <profile>`, `--autopilot` CLI flags) allowing a parent/supervisor session (`IN_RUN_BLOCK=1`, when `<target_session>` is not the current session or an ancestor) to inspect, approve, reject, reply to, or autopilot a worker session.
+  - Implement safe autopilot pausing automatically whenever `src/safety.py` reports risk findings, `RUN_BLOCK_APPROVE_CMD` prompts/rejects, the model asks a clarifying question, or `max_steps` / consecutive failure limits are reached.
+  - Add unit tests in `tests/test_agent.py` and `tests/test_runner.py` covering `proposed` step lifecycle, supervisor `--step` commands, ancestor-recursion guards, and safe autopilot pause triggers.
+
+# 🎯 [NEXT] F88: Integrate interactive TUI agent loop, model reply prompts, and provider cache stats in cards
+
+- Depends on: F103
+- Bump: `MINOR`
+- Integrate the built-in API agent loop and token/cache telemetry into the interactive TUI (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`, `src/header.py`, `README.md`) per `docs/adr/0001-built-in-api-agent-mode.md`:
+  - When a model profile is active, set the default `Enter`/`y` action in `START SESSION` and `END STEP` to `Send to model (<profile>)? [Y/n/a(uto)/c(opy)/e(dit)/i(nfo)]` while preserving `c(opy)` for clipboard mode and `run -r` full-reply mode.
+  - Stream model reasoning and tool-call progress cleanly in the terminal, transition into `START STEP` (`BLOCK PLAN` showing `Reasoning:`, operation table, and safety warnings), and support interactive `r(eply)` when the model asks a question without emitting a block or `a(uto)` to switch the session into safe autopilot.
+  - Display provider token usage, cache hit percentage, and remaining Anthropic cache TTL in `Stats:` across `END STEP` and `END SESSION` while keeping fast offline `count_tokens()` estimation for pre-flight cards.
+  - Document `-m`/`--model`, `--autopilot`, `--step`, `models.json`, and `RUN_BLOCK_MODEL*` / `RUN_BLOCK_CACHE` in `src/header.py` (`--help`), `agents/run.md`, and `README.md`, and add unit tests in `tests/test_ui.py` and `tests/test_cli.py`.
 
 # ⚪ [NEW] F93: Split src/runner.py by responsibility
 
@@ -50,18 +77,6 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
 - Depends on: D5
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
-
-# ⚪ [NEW] F88: Implement built-in LLM API agent mode in run-block (single run tool, TUI loop, prompt caching, and key isolation)
-
-- Depends on: D10, F85
-- Depends on: B14 -> F92 -> F84
-- Depends on: F94, B15, B16 -> F93
-- Implement the built-in LLM API agent mode in `run` per `D10` so `todo <ID> | context | run` (or standalone `run`) can drive multi-step agent sessions directly over provider APIs while preserving `c(opy)` clipboard and `run -r` workflows:
-  - Provider profiles, API key loading, and child environment secret scrubbing (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
-  - Stdlib `urllib.request` HTTP/SSE streaming client, single polymorphic `run` tool schema (`edits`, `script`, `fix_target`, `done`, `done_note`), and fallback reply extraction via `extract_reply_block()`.
-  - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
-  - Exact post-turn provider token and cache usage accounting (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) recorded in `<session>/chat.json` and `<session>/meta.json` and surfaced in `Stats:` across `END STEP` and `END SESSION` while preserving offline stdlib pre-flight estimation (`count_tokens()`, `format_stats()`).
-  - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`).
 
 # ⚪ [NEW] F100: Refine README.md progressive disclosure, add Options table, and update producer chain example
 
