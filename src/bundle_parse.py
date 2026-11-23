@@ -11,7 +11,7 @@ OVERLAP_MIN_CHARS = 200
 
 SECTION_HEADER_RE = re.compile(r"^={5,}\s*(.+?)\s*={5,}$")
 TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
-EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/bash$")
+EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)(?:run|blocks/bash)$")
 
 
 def _strip_rule_description(raw_text: str) -> str:
@@ -22,17 +22,18 @@ def _strip_rule_description(raw_text: str) -> str:
 
 
 def get_embedded_block_rule() -> tuple[str, str]:
-    rule_id = "run_block:blocks/bash"
+    rule_id = "vitalio/run-block:run"
     raw = EMBEDDED_RULE_BASH
     if raw == "__EMBEDDED_RULE_BASH__":
-        src_path = Path(__file__).resolve().parent.parent / "agents/blocks/bash.md"
+        src_path = Path(__file__).resolve().parent.parent / "agents/run.md"
         if src_path.is_file():
             raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
         else:
             raw = ""
     else:
         raw = _strip_rule_description(raw)
-    rendered = raw.replace("{cmd:run_block}", prog_name())
+    prog = prog_name()
+    rendered = raw.replace("{cmd:run}", prog).replace("{cmd:run_block}", prog)
     return rule_id, rendered
 
 
@@ -87,7 +88,7 @@ def inject_embedded_block_rule(
 
     if boundary_val:
         part_meta = json.dumps(
-            {"kind": "rule", "id": rule_id, "chain": ["run_block"]},
+            {"kind": "rule", "id": rule_id, "chain": ["vitalio/run-block"]},
             ensure_ascii=False,
         )
         part_block = [

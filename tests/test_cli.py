@@ -131,11 +131,13 @@ class TestCli(RunBlockTestCase):
         self.assertNotIn("bundle vitalio/run_block", ab_txt)
         self.assertFalse((ROOT / "agents/blocks/pwsh.md").exists())
         self.assertFalse((ROOT / "install.ps1").exists())
-        bash_md = (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8")
-        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", bash_md)
-        self.assertIn("ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT)", bash_md)
-        self.assertIn("small, targeted patch", bash_md)
-        self.assertIn("comparable in size to the original block", bash_md)
+        self.assertFalse((ROOT / "agents/blocks/bash.md").exists())
+        self.assertFalse((ROOT / "agents/blocks").exists())
+        run_md = (ROOT / "agents/run.md").read_text(encoding="utf-8")
+        self.assertIn("## Terminal blocks (`{cmd:run}`)", run_md)
+        self.assertIn("ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT)", run_md)
+        self.assertIn("small, targeted patch", run_md)
+        self.assertIn("comparable in size to the original block", run_md)
         readme_md = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("small, targeted patches", readme_md)
 
@@ -220,18 +222,24 @@ class TestCli(RunBlockTestCase):
     def test_persistent_state_dir_and_prune_controls(self):
         # 1. Default base_dir resolution across POSIX XDG, POSIX fallback, and RUN_BLOCK_DIR
         saved_xdg = os.environ.get("XDG_STATE_HOME")
+        fake_home = self.tmp / "fake_home"
         try:
             os.environ.pop("RUN_BLOCK_DIR", None)
             os.environ["XDG_STATE_HOME"] = str(self.tmp / "xdg_state")
             self.assertEqual(
                 self.mod.default_base_dir("run_block"),
-                self.tmp / "xdg_state" / "run_block",
+                self.tmp / "xdg_state" / "run-block",
+            )
+            self.assertEqual(
+                self.mod.default_base_dir("custom_prog"),
+                self.tmp / "xdg_state" / "run-block",
             )
             os.environ.pop("XDG_STATE_HOME", None)
-            self.assertEqual(
-                self.mod.default_base_dir("run_block"),
-                Path.home() / ".local" / "state" / "run_block",
-            )
+            with unittest.mock.patch.object(self.mod.Path, "home", return_value=fake_home):
+                self.assertEqual(
+                    self.mod.default_base_dir("run_block"),
+                    fake_home / ".local" / "state" / "run-block",
+                )
             os.environ["RUN_BLOCK_DIR"] = str(self.tmp / "explicit_override")
             self.assertEqual(self.mod.default_base_dir("run_block"), self.tmp / "explicit_override")
         finally:
@@ -493,6 +501,127 @@ class TestCli(RunBlockTestCase):
         r_sb_mut = self._run(["--sandbox", "strict", "s1"], env=nested_env)
         self.assertEqual(r_sb_mut.returncode, 2)
         self.assertIn("cannot modify session sandbox settings from inside a running block", r_sb_mut.stderr)
+
+    def test_state_migration_live_step_symlink_and_workdir_fallback(self):
+        xdg = self.tmp / "state_mig"
+        legacy = xdg / "run_block"
+        target = xdg / "run-block"
+        (legacy / "s1" / "1").mkdir(parents=True)
+        (legacy / "s1" / "0").write_text("Session: s1\n", encoding="utf-8")
+
+        os.environ.pop("RUN_BLOCK_DIR", None)
+        os.environ["XDG_STATE_HOME"] = str(xdg)
+        os.environ["IN_RUN_BLOCK"] = "1"
+        try:
+            # 1. Inside live step (IN_RUN_BLOCK=1): os.replace migrates to run-block and leaves symlink run_block -> run-block
+            resolved = self.mod.default_base_dir()
+            self.assertEqual(resolved, target)
+            self.assertTrue(target.is_dir())
+            self.assertFalse(target.is_symlink())
+            self.assertTrue(legacy.is_symlink())
+            self.assertEqual(os.readlink(legacy), "run-block")
+            # Parent process writing via legacy path reaches migrated target
+            (legacy / "s1" / "1" / "out").write_text("ok_from_parent\n", encoding="utf-8")
+            self.assertEqual((target / "s1" / "1" / "out").read_text(encoding="utf-8"), "ok_from_parent\n")
+
+            # 2. Subsequent outer invocation (IN_RUN_BLOCK!=1) cleans up transitional symlink
+            os.environ.pop("IN_RUN_BLOCK", None)
+            resolved_outer = self.mod.default_base_dir()
+            self.assertEqual(resolved_outer, target)
+            self.assertFalse(legacy.exists())
+            self.assertFalse(legacy.is_symlink())
+            self.assertTrue((target / "s1" / "1" / "out").is_file())
+        finally:
+            os.environ.pop("IN_RUN_BLOCK", None)
+            os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
+
+        # 3. Hyphen/underscore fallback in _resolve_existing_dir()
+        renamed_hyphen = self.tmp / "my-checkout"
+        renamed_hyphen.mkdir()
+        self.assertEqual(
+            self.mod._resolve_existing_dir(str(self.tmp / "my_checkout")),
+            renamed_hyphen.resolve(),
+        )
+        renamed_under = self.tmp / "other_repo"
+        renamed_under.mkdir()
+        self.assertEqual(
+            self.mod._resolve_existing_dir(str(self.tmp / "other-repo")),
+            renamed_under.resolve(),
+        )
+
+    def test_uninstall_and_purge_cli_and_install_sh(self):
+        bin_dir = self.tmp / "uninst_bin"
+        bin_dir.mkdir()
+        state_parent = self.tmp / "uninst_state"
+        state_dir = state_parent / "run-block"
+        (state_dir / "s1").mkdir(parents=True)
+        (state_dir / "s1" / "0").write_text("Session: s1\n", encoding="utf-8")
+
+        # Install both run_block and run plus a foreign binary
+        shutil.copy2(SCRIPT, bin_dir / "run_block")
+        shutil.copy2(SCRIPT, bin_dir / "run")
+        foreign = bin_dir / "other_tool"
+        foreign.write_text("#!/bin/sh\necho foreign\n", encoding="utf-8")
+        foreign.chmod(0o755)
+
+        env = {
+            **os.environ,
+            "RUN_BLOCK_INSTALL_DIR": str(bin_dir),
+            "XDG_STATE_HOME": str(state_parent),
+        }
+        env.pop("RUN_BLOCK_DIR", None)
+
+        # 1. CLI --uninstall removes run and run_block but preserves state and foreign tool
+        r_un = self._run([str(bin_dir / "run_block"), "--uninstall"], env=env)
+        self._assert_ok(r_un)
+        self.assertIn("Removed:", r_un.stdout)
+        self.assertFalse((bin_dir / "run_block").exists())
+        self.assertFalse((bin_dir / "run").exists())
+        self.assertTrue(foreign.is_file())
+        self.assertTrue(state_dir.is_dir())
+
+        # 2. Re-copy and run CLI --uninstall --purge -> removes binary and state directory
+        shutil.copy2(SCRIPT, bin_dir / "run")
+        r_purge = self._run([str(bin_dir / "run"), "--uninstall", "--purge"], env=env)
+        self._assert_ok(r_purge)
+        self.assertFalse((bin_dir / "run").exists())
+        self.assertFalse(state_dir.exists())
+
+        # 3. install.sh --uninstall and --uninstall --purge
+        (state_dir / "s2").mkdir(parents=True)
+        r_inst = subprocess.run(
+            ["sh", str(INSTALL_SH), "--dir", str(bin_dir), "--yes"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self._assert_ok(r_inst)
+        self.assertTrue((bin_dir / "run_block").is_file())
+
+        r_sh_un = subprocess.run(
+            ["sh", str(INSTALL_SH), "--dir", str(bin_dir), "--uninstall"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self._assert_ok(r_sh_un)
+        self.assertIn("Removed:", r_sh_un.stdout)
+        self.assertFalse((bin_dir / "run_block").exists())
+        self.assertTrue(state_dir.is_dir())
+
+        shutil.copy2(SCRIPT, bin_dir / "run_block")
+        r_sh_purge = subprocess.run(
+            ["sh", str(INSTALL_SH), "--dir", str(bin_dir), "--uninstall", "--purge"],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+        self._assert_ok(r_sh_purge)
+        self.assertFalse((bin_dir / "run_block").exists())
+        self.assertFalse(state_dir.exists())
 
 
 if __name__ == "__main__":

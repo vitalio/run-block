@@ -164,6 +164,18 @@ class TestRunner(RunBlockTestCase):
             out, err = fn(hdr + body)
             self.assertIsNotNone(err)
             self.assertIn("unclosed RUN_BLOCK heredoc", err)
+        with self.subTest(case="dual_run_and_run_block_headers"):
+            out_run, err_run = fn("run s1/1 <<'RUN_BLOCK'\n" + body + "RUN_BLOCK\n")
+            self.assertIsNone(err_run)
+            self.assertEqual(out_run, body)
+            out_fix, err_fix = fn("run --fix s1/1 <<'RUN_FIX'\n" + body + "RUN_FIX\n")
+            self.assertIsNone(err_fix)
+            self.assertEqual(out_fix, body)
+            self.assertEqual(
+                self.mod._rewrite_script_step_header("# run: s1/4\necho hi\n", "s1/4", "s1/2"),
+                "# run: s1/2\necho hi\n",
+            )
+            self.assertTrue(self.mod._looks_like_shell_script("run s1/1 <<'RUN_BLOCK'\necho hi\n"))
 
     def test_fix_anchor_diagnostic_hints(self):
         cases = [
@@ -715,7 +727,7 @@ class TestRunner(RunBlockTestCase):
         self.assertEqual(self.mod.read_step_meta(s154 / "12").get("renumbered_from"), "s154/14")
 
         # 7. Embedded rules instruct agents to continue from renumbered step
-        rule_txt = (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8")
+        rule_txt = (ROOT / "agents/run.md").read_text(encoding="utf-8")
         self.assertIn("Note: renumbered from <session>/<old> to <session>/<new>", rule_txt)
 
     def test_step_stdout_identity_exported_to_child(self):

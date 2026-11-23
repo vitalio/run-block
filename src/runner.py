@@ -76,7 +76,7 @@ def _rewrite_script_step_header(script_text: str, old_label: str, new_label: str
     if not lines:
         return script_text
     pat = re.compile(
-        rf"^(\s*#\s*(?:run_block|Block|Next-Block)\s*:\s*){re.escape(old_label)}(\s*)$"
+        rf"^(\s*#\s*(?:run(?:_block)?|Block|Next-Block)\s*:\s*){re.escape(old_label)}(\s*)$"
     )
     for idx in range(min(3, len(lines))):
         line_body = lines[idx].rstrip("\r\n")
@@ -275,7 +275,7 @@ def _fix_anchor_hints(
 
 
 _SHELL_START_RE = re.compile(
-    r"^(?:#!|set\s+-|cd\s|git\s|python3?\s|echo\s|cat\s|grep\s|awk\s|sed\s|ls\b|todo_md\b|run_block\b"
+    r"^(?:#!|set\s+-|cd\s|git\s|python3?\s|echo\s|cat\s|grep\s|awk\s|sed\s|ls\b|todo(?:_md)?\b|run(?:_block)?\b"
     r"|export\s|mkdir\s|sh\s|bash\s)"
 )
 
@@ -1346,7 +1346,7 @@ def run_script(
 
 TRAILING_FENCE_RE = re.compile(r"(?:\r?\n)+(?:RUN_(?:BLOCK|FIX)\s*)?`{3,}\s*$")
 SPLIT_HEADER_RE = re.compile(
-    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*\n)?\s*(?:[A-Za-z0-9_./-]+\s+)?run_block\b[^\n]*<<\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
+    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*\n)?\s*(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b[^\n]*<<\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
 )
 FENCE_LINE_RE = re.compile(r"^`{3,}[A-Za-z0-9_-]*\s*$")
 

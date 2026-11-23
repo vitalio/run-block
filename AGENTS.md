@@ -14,9 +14,9 @@ rules are loaded via `.context.bundle`.
   working directory resolution, and `usage_text()`, which renders `--help` from
   the `HELP_*` tables (aligned description column per section, lines <= 100
   columns).
-- `agents/blocks/bash.md` — internal embedded terminal block execution rule
+- `agents/run.md` — internal embedded terminal block execution rule
   source injected by `build.py` into `src/header.py`. Update
-  `agents/blocks/bash.md` in the same commit whenever CLI flags, step
+  `agents/run.md` in the same commit whenever CLI flags, step
   numbering, `--fix` constraints, or session rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
   `run_block --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.

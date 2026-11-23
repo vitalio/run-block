@@ -187,8 +187,8 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
   `Workdir` directory is preferred over the current directory or Git root.
 - **Rule injection & deduplication**: `run_block` injects embedded `bash`
   execution rules into `===== Rules =====`, deduplicating against existing
-  `blocks/bash` parts or `## Terminal blocks (` headings, and wraps unlabeled
-  plain text under `===== Prompt =====`.
+  `run` / `blocks/bash` parts or `## Terminal blocks (` headings, and wraps
+  unlabeled plain text under `===== Prompt =====`.
   `Sandbox: off` is omitted from `<session>/0` and clipboard output while
   remaining visible inside `i(nfo)`.
 - **Boundary markers & hierarchical `Parts` table**: When
@@ -278,6 +278,7 @@ run_block --bundle-plan s1 --part 2
 | `run_block --start [-p TEXT] [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
 | `run_block --update [--force]` | Self-update `run_block` from GitHub (`vitalio/run_block`) |
 | `run_block --check-update` | Check GitHub for a newer version |
+| `run_block --uninstall [--purge]` | Remove installed `run` / `run_block` binary (`--purge` also removes the state directory) |
 | `run_block -V`, `--version` | Print version and exit `0` |
 | `run_block -h`, `--help` | Print usage help and exit `0` |
 
@@ -288,7 +289,7 @@ standard environment variables:
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
-| `RUN_BLOCK_DIR` | `~/.local/state/run_block` | Session storage directory (`$XDG_STATE_HOME/run_block` on POSIX; `%LOCALAPPDATA%\run_block\state` on Windows) |
+| `RUN_BLOCK_DIR` | `~/.local/state/run-block` | Session storage directory (`$XDG_STATE_HOME/run-block` on POSIX; automatically migrates legacy `~/.local/state/run_block`) |
 | `RUN_BLOCK_CWD` | `auto` | `auto` (existing `Workdir` preamble header or session `Workdir` from `<session>/0`, nearest `.context.bundle`/`.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `[Y/n]` prompt), `auto` (copy automatically), `never` |
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |

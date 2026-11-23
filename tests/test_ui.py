@@ -1940,7 +1940,7 @@ class TestUi(RunBlockTestCase):
         # Header has no '#' and is reverse-video; row 2 is heavy (>25%) but its row number '2 ' is colored with dim _KEY_COLOR
         self.assertNotIn("#", raw_tbl[0])
         self.assertIn("\x1b[7m", col_tbl[0])
-        row2_col = next(ln for ln in col_tbl if "run_block:blocks/" in ln)
+        row2_col = next(ln for ln in col_tbl if "vitalio/run-block:run" in ln)
         self.assertIn(f"{self.mod._KEY_COLOR}2 {self.mod._ANSI_RESET}{self.mod._WARN_COLOR}", row2_col)
 
         # Verify top-to-bottom selectable rows 1..7 and folder viewer on row 3 (pkg (2)) and row 4 (sub (2))

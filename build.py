@@ -41,7 +41,7 @@ def _load_embedded_rule(rel_path: str) -> str:
 
 def assemble_source() -> str:
     ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    bash_rule = _load_embedded_rule("agents/blocks/bash.md")
+    bash_rule = _load_embedded_rule("agents/run.md")
     chunks: list[str] = []
     for item in MODULE_ORDER:
         mod_path = SRC_DIR / item

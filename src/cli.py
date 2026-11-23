@@ -75,6 +75,89 @@ def cmd_update(force: bool = False, url: str | None = None, target_path: Path | 
     return 0
 
 
+def _is_our_installed_binary(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return False
+    return any(marker in head for marker in REPO_MARKERS)
+
+
+def cmd_uninstall(purge: bool = False, target_dir: Path | None = None) -> int:
+    prog = prog_name()
+    candidates: list[Path] = []
+    seen_dirs: set[Path] = set()
+
+    def _add_dir(d: Path) -> None:
+        try:
+            rd = d.resolve()
+        except OSError:
+            rd = d
+        if rd in seen_dirs:
+            return
+        seen_dirs.add(rd)
+        if (rd / "build.py").is_file() and (rd / "src" / "header.py").is_file():
+            return
+        names = ["run", "run_block"]
+        if prog not in names:
+            names.insert(0, prog)
+        for name in names:
+            p = d / name
+            if p not in candidates:
+                candidates.append(p)
+
+    if target_dir is not None:
+        _add_dir(target_dir)
+    else:
+        env_dir = os.environ.get("RUN_BLOCK_INSTALL_DIR", "").strip()
+        if env_dir:
+            _add_dir(Path(env_dir).expanduser())
+        for raw_self in (sys.argv[0] if sys.argv else "", __file__):
+            if raw_self:
+                sp = Path(raw_self).expanduser()
+                if sp.parent and sp.parent != Path("."):
+                    _add_dir(sp.parent)
+        if not seen_dirs:
+            _add_dir(Path.home() / ".local" / "bin")
+
+    removed_bins: list[Path] = []
+    for cand in candidates:
+        if _is_our_installed_binary(cand):
+            try:
+                cand.unlink()
+                removed_bins.append(cand)
+                sys.stdout.write(f"Removed: {cand}\n")
+            except OSError as exc:
+                sys.stderr.write(f"{prog}: failed to remove {cand}: {exc}\n")
+                return 1
+
+    if not removed_bins:
+        sys.stdout.write(f"{prog}: no installed binary found.\n")
+
+    if purge:
+        state_dirs: list[Path] = [default_base_dir()]
+        if not os.environ.get("RUN_BLOCK_DIR"):
+            parent = _state_parent_dir()
+            for name in ("run-block", "run_block"):
+                sd = parent / name
+                if sd not in state_dirs:
+                    state_dirs.append(sd)
+        for sd in state_dirs:
+            try:
+                if sd.is_symlink():
+                    sd.unlink()
+                    sys.stdout.write(f"Purged state: {sd}\n")
+                elif sd.is_dir():
+                    shutil.rmtree(sd)
+                    sys.stdout.write(f"Purged state: {sd}\n")
+            except OSError as exc:
+                sys.stderr.write(f"{prog}: failed to purge state directory {sd}: {exc}\n")
+                return 1
+    return 0
+
+
 _SANDBOX_MODE_TOKENS = ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
 
 
@@ -296,6 +379,15 @@ def main(argv: list[str] | None = None) -> int:
         if rest:
             raise SystemExit(f"{prog}: usage: {prog} --update [--force]")
         return cmd_update(force=force)
+
+    if args[0] == "--uninstall":
+        if prompt_args:
+            _reject_prompt_for("--uninstall", f"{prog} --uninstall [--purge]")
+        purge = "--purge" in args[1:]
+        rest = [a for a in args[1:] if a != "--purge"]
+        if rest:
+            raise SystemExit(f"{prog}: usage: {prog} --uninstall [--purge]")
+        return cmd_uninstall(purge=purge)
 
     if args[0] in ("--start", "--bundle"):
         return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)

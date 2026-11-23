@@ -36,10 +36,11 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.34.6"
+VERSION = "0.35.0"
 REPO_MARKER = "run_block-repo: vitalio/run_block"
+REPO_MARKERS = (REPO_MARKER, "run-block-repo: vitalio/run-block")
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run_block/main/run_block"
-EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run_block}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run_block}` Markdown code block:\n\n```bash\n{cmd:run_block} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run_block} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks. If any command inside a block prints a traceback or error (even when a later command in the same block exits `0` without `set -e`), treat the step as failed and fix the error before proceeding.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is renumbered (`[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), continue sequentially from `<new+1>`. Pipe `<bundle_cmd> | {cmd:run_block}` to initialize a session (`--bundle-plan [<session>] [--part N]` inspects bundle parts). Never pass `-y` or `--yes` on a `{cmd:run_block}` command line.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run_block} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run_block} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Session completion & handoff (`--done`): `{cmd:run_block} --done [<session>] [-m "<note>"]` marks a session completed and can be followed inside the same block by `<bundle_cmd> | {cmd:run_block}` to initialize a new session (nested `<session>/<step>`, `--fix`, and `--retry` calls inside a running block are rejected). Emit `--done` only in a dedicated final block at the end of the session completion summary reply, after all commits, pushes, and verification checks have succeeded in earlier steps — never combine `--done` with verification commands, tests, or commits in the same block.'
+EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run}` Markdown code block:\n\n```bash\n{cmd:run} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks. If any command inside a block prints a traceback or error (even when a later command in the same block exits `0` without `set -e`), treat the step as failed and fix the error before proceeding.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is renumbered (`[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), continue sequentially from `<new+1>`. Pipe `<bundle_cmd> | {cmd:run}` to initialize a session (`--bundle-plan [<session>] [--part N]` inspects bundle parts). Never pass `-y` or `--yes` on a `{cmd:run}` command line.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Session completion & handoff (`--done`): `{cmd:run} --done [<session>] [-m "<note>"]` marks a session completed and can be followed inside the same block by `<bundle_cmd> | {cmd:run}` to initialize a new session (nested `<session>/<step>`, `--fix`, and `--retry` calls inside a running block are rejected). Emit `--done` only in a dedicated final block at the end of the session completion summary reply, after all commits, pushes, and verification checks have succeeded in earlier steps — never combine `--done` with verification commands, tests, or commits in the same block.'
 
 
 HELP_USAGE = (
@@ -67,6 +68,7 @@ HELP_COMMANDS = (
     ("{prog} --start [opts]", "Start a session from stdin or rule-only on TTY (--session NAME, --force)"),
     ("{prog} --update [--force]", "Self-update {prog} from GitHub (vitalio/run_block)"),
     ("{prog} --check-update", "Check if a newer version is available"),
+    ("{prog} --uninstall [--purge]", "Remove installed {prog} binary (--purge also removes {base_dir})"),
 )
 
 HELP_OPTIONS = (
@@ -94,12 +96,38 @@ def prog_name() -> str:
     return raw or "run_block"
 
 
-def _os_default_base_dir(prog: str | None = None) -> Path:
-    name = prog or prog_name()
+def _state_parent_dir() -> Path:
     xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
     if xdg_state:
-        return Path(xdg_state).expanduser() / name
-    return Path.home() / ".local" / "state" / name
+        return Path(xdg_state).expanduser()
+    return Path.home() / ".local" / "state"
+
+
+def _migrate_state_dir(parent: Path) -> Path:
+    target = parent / "run-block"
+    legacy = parent / "run_block"
+    if os.environ.get("RUN_BLOCK_DIR"):
+        return target
+    try:
+        if legacy.is_symlink():
+            if not in_run_block():
+                legacy.unlink(missing_ok=True)
+            return target
+        if legacy.is_dir() and not target.exists():
+            os.replace(legacy, target)
+            if in_run_block():
+                try:
+                    os.symlink("run-block", legacy)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return target
+
+
+def _os_default_base_dir(prog: str | None = None) -> Path:
+    _ = prog
+    return _migrate_state_dir(_state_parent_dir())
 
 
 def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
@@ -678,6 +706,17 @@ def _resolve_existing_dir(raw: str) -> Path | None:
         p = Path(val).expanduser()
         if p.is_dir():
             return p.resolve()
+        for old_ch, new_ch in (("_", "-"), ("-", "_")):
+            if old_ch in p.name:
+                alt = p.with_name(p.name.replace(old_ch, new_ch))
+                if alt.is_dir():
+                    return alt.resolve()
+        p_str = str(p)
+        for old_ch, new_ch in (("_", "-"), ("-", "_")):
+            if old_ch in p_str:
+                alt_full = Path(p_str.replace(old_ch, new_ch))
+                if alt_full.is_dir():
+                    return alt_full.resolve()
     except OSError:
         pass
     return None
@@ -6982,7 +7021,7 @@ OVERLAP_MIN_CHARS = 200
 
 SECTION_HEADER_RE = re.compile(r"^={5,}\s*(.+?)\s*={5,}$")
 TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
-EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)blocks/bash$")
+EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)(?:run|blocks/bash)$")
 
 
 def _strip_rule_description(raw_text: str) -> str:
@@ -6993,17 +7032,18 @@ def _strip_rule_description(raw_text: str) -> str:
 
 
 def get_embedded_block_rule() -> tuple[str, str]:
-    rule_id = "run_block:blocks/bash"
+    rule_id = "vitalio/run-block:run"
     raw = EMBEDDED_RULE_BASH
     if raw == "__EMBEDDED_RULE_BASH__":
-        src_path = Path(__file__).resolve().parent.parent / "agents/blocks/bash.md"
+        src_path = Path(__file__).resolve().parent.parent / "agents/run.md"
         if src_path.is_file():
             raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
         else:
             raw = ""
     else:
         raw = _strip_rule_description(raw)
-    rendered = raw.replace("{cmd:run_block}", prog_name())
+    prog = prog_name()
+    rendered = raw.replace("{cmd:run}", prog).replace("{cmd:run_block}", prog)
     return rule_id, rendered
 
 
@@ -7058,7 +7098,7 @@ def inject_embedded_block_rule(
 
     if boundary_val:
         part_meta = json.dumps(
-            {"kind": "rule", "id": rule_id, "chain": ["run_block"]},
+            {"kind": "rule", "id": rule_id, "chain": ["vitalio/run-block"]},
             ensure_ascii=False,
         )
         part_block = [
@@ -8915,7 +8955,7 @@ def _rewrite_script_step_header(script_text: str, old_label: str, new_label: str
     if not lines:
         return script_text
     pat = re.compile(
-        rf"^(\s*#\s*(?:run_block|Block|Next-Block)\s*:\s*){re.escape(old_label)}(\s*)$"
+        rf"^(\s*#\s*(?:run(?:_block)?|Block|Next-Block)\s*:\s*){re.escape(old_label)}(\s*)$"
     )
     for idx in range(min(3, len(lines))):
         line_body = lines[idx].rstrip("\r\n")
@@ -9114,7 +9154,7 @@ def _fix_anchor_hints(
 
 
 _SHELL_START_RE = re.compile(
-    r"^(?:#!|set\s+-|cd\s|git\s|python3?\s|echo\s|cat\s|grep\s|awk\s|sed\s|ls\b|todo_md\b|run_block\b"
+    r"^(?:#!|set\s+-|cd\s|git\s|python3?\s|echo\s|cat\s|grep\s|awk\s|sed\s|ls\b|todo(?:_md)?\b|run(?:_block)?\b"
     r"|export\s|mkdir\s|sh\s|bash\s)"
 )
 
@@ -10185,7 +10225,7 @@ def run_script(
 
 TRAILING_FENCE_RE = re.compile(r"(?:\r?\n)+(?:RUN_(?:BLOCK|FIX)\s*)?`{3,}\s*$")
 SPLIT_HEADER_RE = re.compile(
-    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*\n)?\s*(?:[A-Za-z0-9_./-]+\s+)?run_block\b[^\n]*<<\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
+    r"^\s*(?:`{3,}[A-Za-z0-9_-]*\s*\n)?\s*(?:[A-Za-z0-9_./-]+\s+)?run(?:_block)?\b[^\n]*<<\s*['\"]?(RUN_(?:BLOCK|FIX))['\"]?\s*$"
 )
 FENCE_LINE_RE = re.compile(r"^`{3,}[A-Za-z0-9_-]*\s*$")
 
@@ -11735,6 +11775,89 @@ def cmd_update(force: bool = False, url: str | None = None, target_path: Path | 
     return 0
 
 
+def _is_our_installed_binary(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4096]
+    except OSError:
+        return False
+    return any(marker in head for marker in REPO_MARKERS)
+
+
+def cmd_uninstall(purge: bool = False, target_dir: Path | None = None) -> int:
+    prog = prog_name()
+    candidates: list[Path] = []
+    seen_dirs: set[Path] = set()
+
+    def _add_dir(d: Path) -> None:
+        try:
+            rd = d.resolve()
+        except OSError:
+            rd = d
+        if rd in seen_dirs:
+            return
+        seen_dirs.add(rd)
+        if (rd / "build.py").is_file() and (rd / "src" / "header.py").is_file():
+            return
+        names = ["run", "run_block"]
+        if prog not in names:
+            names.insert(0, prog)
+        for name in names:
+            p = d / name
+            if p not in candidates:
+                candidates.append(p)
+
+    if target_dir is not None:
+        _add_dir(target_dir)
+    else:
+        env_dir = os.environ.get("RUN_BLOCK_INSTALL_DIR", "").strip()
+        if env_dir:
+            _add_dir(Path(env_dir).expanduser())
+        for raw_self in (sys.argv[0] if sys.argv else "", __file__):
+            if raw_self:
+                sp = Path(raw_self).expanduser()
+                if sp.parent and sp.parent != Path("."):
+                    _add_dir(sp.parent)
+        if not seen_dirs:
+            _add_dir(Path.home() / ".local" / "bin")
+
+    removed_bins: list[Path] = []
+    for cand in candidates:
+        if _is_our_installed_binary(cand):
+            try:
+                cand.unlink()
+                removed_bins.append(cand)
+                sys.stdout.write(f"Removed: {cand}\n")
+            except OSError as exc:
+                sys.stderr.write(f"{prog}: failed to remove {cand}: {exc}\n")
+                return 1
+
+    if not removed_bins:
+        sys.stdout.write(f"{prog}: no installed binary found.\n")
+
+    if purge:
+        state_dirs: list[Path] = [default_base_dir()]
+        if not os.environ.get("RUN_BLOCK_DIR"):
+            parent = _state_parent_dir()
+            for name in ("run-block", "run_block"):
+                sd = parent / name
+                if sd not in state_dirs:
+                    state_dirs.append(sd)
+        for sd in state_dirs:
+            try:
+                if sd.is_symlink():
+                    sd.unlink()
+                    sys.stdout.write(f"Purged state: {sd}\n")
+                elif sd.is_dir():
+                    shutil.rmtree(sd)
+                    sys.stdout.write(f"Purged state: {sd}\n")
+            except OSError as exc:
+                sys.stderr.write(f"{prog}: failed to purge state directory {sd}: {exc}\n")
+                return 1
+    return 0
+
+
 _SANDBOX_MODE_TOKENS = ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
 
 
@@ -11956,6 +12079,15 @@ def main(argv: list[str] | None = None) -> int:
         if rest:
             raise SystemExit(f"{prog}: usage: {prog} --update [--force]")
         return cmd_update(force=force)
+
+    if args[0] == "--uninstall":
+        if prompt_args:
+            _reject_prompt_for("--uninstall", f"{prog} --uninstall [--purge]")
+        purge = "--purge" in args[1:]
+        rest = [a for a in args[1:] if a != "--purge"]
+        if rest:
+            raise SystemExit(f"{prog}: usage: {prog} --uninstall [--purge]")
+        return cmd_uninstall(purge=purge)
 
     if args[0] in ("--start", "--bundle"):
         return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)

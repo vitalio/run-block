@@ -1,3 +1,14 @@
+# ✅ [DONE] F98: Prepare run-block state migration, dual run/run_block parsing, agents/run.md, and --uninstall — *2026-11-23, Prepared run-block state migration with live-step symlink fallback, dual run/run_block parsing, agents/run.md, workdir hyphen/underscore fallback, and --uninstall [--purge]*
+
+- Depends on: F89, F95, F97
+- Prepare runtime compatibility and state migration ahead of the final `run_block` -> `run` binary cutover (`F72`) so an active `run_block` session cannot break mid-step:
+  - Flatten `agents/blocks/bash.md` to `agents/run.md` (removing `agents/blocks/`) using `{cmd:run}` (`run s1/1 <<'RUN_BLOCK'`, `run --fix s1/1 <<'RUN_FIX'`), update `build.py` to load `agents/run.md`, and update `src/bundle_parse.py` to emit embedded rule `id: "vitalio/run-block:run"` and `chain: ["vitalio/run-block"]` while recognizing both `run` and legacy `blocks/bash` in `EMBEDDED_RULE_ID_RE` and replacing both `{cmd:run}` and `{cmd:run_block}` with `prog_name()`.
+  - Recognize both `run` and `run_block` in `SPLIT_HEADER_RE`, step-renumber comments (`# run:` / `# run_block:`), and shell-command heuristics in `src/runner.py`; keep `RUN_BLOCK_*` environment variables.
+  - Use fixed state directory `${XDG_STATE_HOME:-~/.local/state}/run-block` in `_os_default_base_dir()` (`src/config.py`, independent of `argv[0]`). When `RUN_BLOCK_DIR` is not set, atomically migrate `~/.local/state/run_block` -> `~/.local/state/run-block` via `os.replace`: if `IN_RUN_BLOCK=1` (running inside a live parent `run_block` step that still holds `~/.local/state/run_block/<session>/<step>` for post-step `meta.json` and `out` writes), leave a transitional symlink `~/.local/state/run_block -> run-block` immediately after `os.replace`, and clean up the symlink on subsequent outer invocations (`IN_RUN_BLOCK!=1`). Track `XDG_STATE_HOME` in `_TRACKED_ENV_KEYS` (`tests/helpers.py`) so unit tests never touch host `~/.local/state`.
+  - Add hyphen/underscore fallback in `_resolve_existing_dir()` (`src/config.py`) so existing sessions with `Workdir: .../run_block` resolve cleanly after the checkout directory is renamed to `run-block` (and vice versa).
+  - Add `--uninstall [--purge]` to `src/cli.py`, `src/header.py`, and `install.sh` (removing installed `run` / `run_block` binaries verified by repo marker while preserving `~/.local/state/run-block` unless `--purge` is passed).
+- Acceptance criteria: `agents/run.md` replaces `agents/blocks/bash.md`, `_os_default_base_dir()` uses `run-block` with live-step-safe `os.replace` migration and workdir `_`/`-` fallback, `SPLIT_HEADER_RE` accepts `run` and `run_block`, `--uninstall [--purge]` works in CLI and `install.sh`, and `python3 build.py --check` and `python3 -m unittest discover -s tests` pass.
+
 # ✅ [DONE] F97: Remove transitional Bundle-Expose/Bundle-Hide headers and legacy fragment kind aliases — *2026-11-23*
 
 - Depends on: F95, F96

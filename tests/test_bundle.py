@@ -1107,7 +1107,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_help.returncode, 0, r_help.stderr)
         self.assertIn("--bundle-plan", r_help.stdout)
         self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("--bundle-plan", (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8"))
+        self.assertIn("--bundle-plan", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
 
     def test_f55_hide_bundle_transport_headers_and_clamp_long_title(self):
         proj = self.tmp / "f55_proj"
@@ -1390,21 +1390,22 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn(" B ·", r_bp.stdout)
 
     def test_f66_embedded_block_rules_injection_dedup_and_tty_bare_start(self):
-        # 1. Built ./run_block embeds bash.md without '# Description:' lines
+        # 1. Built ./run_block embeds run.md without '# Description:' lines
         built_text = SCRIPT.read_text(encoding="utf-8")
         self.assertNotIn('EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"', built_text)
         self.assertFalse(hasattr(self.mod, "EMBEDDED_RULE_PWSH"))
-        self.assertIn("## Terminal blocks (`{cmd:run_block}`)", self.mod.EMBEDDED_RULE_BASH)
+        self.assertIn("## Terminal blocks (`{cmd:run}`)", self.mod.EMBEDDED_RULE_BASH)
         self.assertFalse(self.mod.EMBEDDED_RULE_BASH.startswith("# Description:"))
 
-        # 2. prog_name() substitution in embedded bash rule
+        # 2. prog_name() substitution in embedded run rule (both {cmd:run} and {cmd:run_block})
         saved_argv0 = self.mod.sys.argv[0]
         try:
             self.mod.sys.argv[0] = "/usr/local/bin/rxb"
             rid_bash, rtxt_bash = self.mod.get_embedded_block_rule()
-            self.assertEqual(rid_bash, "run_block:blocks/bash")
+            self.assertEqual(rid_bash, "vitalio/run-block:run")
             self.assertIn("## Terminal blocks (`rxb`)", rtxt_bash)
             self.assertIn("rxb s1/1 <<'RUN_BLOCK'", rtxt_bash)
+            self.assertNotIn("{cmd:run}", rtxt_bash)
             self.assertNotIn("{cmd:run_block}", rtxt_bash)
         finally:
             self.mod.sys.argv[0] = saved_argv0
@@ -1435,8 +1436,8 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(plan_prepend["parts"][0]["kind"], "header")
         p0 = plan_prepend["parts"][1]
         self.assertEqual(p0["kind"], "rule")
-        self.assertEqual(p0["id"], "run_block:blocks/bash")
-        self.assertEqual(p0["chain"], ["run_block"])
+        self.assertEqual(p0["id"], "vitalio/run-block:run")
+        self.assertEqual(p0["chain"], ["vitalio/run-block"])
 
         # 4. Bundle-Boundary: inserts into top-level '===== Rules =====' outside parts
         top_rules_body = (
@@ -1489,6 +1490,21 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(
             [part.get("id") or part.get("kind") for part in res_dedup_part["bundle_plan"]["parts"]],
             ["header", "vitalio/run_block:blocks/bash"],
+        )
+        new_part_body = (
+            f"<!-- bundle:{nonce}:part {{\"kind\": \"rule\", \"id\": \"vitalio/run-block:run\", \"chain\": [\"vitalio/run-block\"]}} -->\n"
+            "New run rule without standard heading\n"
+            f"<!-- bundle:{nonce}:end -->\n"
+        )
+        res_dedup_new = self.mod.format_start_bundle(
+            "s5_new",
+            stdin_body=f"Bundle-Boundary: {nonce}\n\n{new_part_body}",
+            work_dir=proj,
+        )
+        self.assertEqual(res_dedup_new["bundle_plan"]["part_count"], 2)
+        self.assertEqual(
+            [part.get("id") or part.get("kind") for part in res_dedup_new["bundle_plan"]["parts"]],
+            ["header", "vitalio/run-block:run"],
         )
 
         res_dedup_heading = self.mod.format_start_bundle(
@@ -1668,7 +1684,7 @@ class TestBundle(RunBlockTestCase):
             self.assertEqual(r_help.returncode, 0)
             self.assertIn("--part N", r_help.stdout)
         self.assertIn("--part N", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("--part N", (ROOT / "agents/blocks/bash.md").read_text(encoding="utf-8"))
+        self.assertIn("--part N", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
 
     def test_info_part_viewer_and_part_prompt(self):
         nonce = "abc"
@@ -2086,7 +2102,7 @@ class TestBundle(RunBlockTestCase):
 
         # Physical appearance order: #1 [header] -> #2 run_block -> pkgA -> subB -> #3 r1 -> #4 r2 -> #5 cmd -> #6 prompt
         idx_hdr = next(i for i, ln in enumerate(table_lines) if "[header]" in ln)
-        idx_rb = next(i for i, ln in enumerate(table_lines) if "run_block:blocks/" in ln)
+        idx_rb = next(i for i, ln in enumerate(table_lines) if "vitalio/run-block:run" in ln)
         idx_pkga = next(i for i, ln in enumerate(table_lines) if "pkgA (2)" in ln)
         idx_subb = next(i for i, ln in enumerate(table_lines) if "subB (2)" in ln)
         idx_r1 = next(i for i, ln in enumerate(table_lines) if ln.endswith("r1"))

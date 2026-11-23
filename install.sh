@@ -1,18 +1,21 @@
 #!/usr/bin/env sh
-# Usage: install.sh [-h|--help] [--name CMD] [--dir DIR] [--yes]
+# Usage: install.sh [-h|--help] [--name CMD] [--dir DIR] [--yes] [--uninstall [--purge]]
 #
-# Installs or updates run_block (https://github.com/vitalio/run_block).
+# Installs, updates, or uninstalls run_block (https://github.com/vitalio/run_block).
 # Checks for command name conflicts in PATH, offers an alternative name if
 # 'run_block' is already taken by another program, installs into ~/.local/bin
-# (or --dir).
+# (or --dir). --uninstall removes installed binaries (--purge also removes state).
 # -h / --help prints this usage and exits 0 doing nothing.
 set -eu
 
 REPO_MARKER="run_block-repo: vitalio/run_block"
+ALT_REPO_MARKER="run-block-repo: vitalio/run-block"
 RAW_URL="${RUN_BLOCK_UPDATE_URL:-https://raw.githubusercontent.com/vitalio/run_block/main/run_block}"
 CMD_NAME="${RUN_BLOCK_NAME:-}"
 INSTALL_DIR="${RUN_BLOCK_INSTALL_DIR:-}"
 ASSUME_YES=0
+UNINSTALL=0
+PURGE=0
 
 usage() {
     sed -n '2,8s/^# \?//p' "$0"
@@ -44,6 +47,14 @@ while [ "$#" -gt 0 ]; do
             ASSUME_YES=1
             shift
             ;;
+        --uninstall)
+            UNINSTALL=1
+            shift
+            ;;
+        --purge)
+            PURGE=1
+            shift
+            ;;
         *)
             echo "install.sh: unknown option: $1" >&2
             usage >&2
@@ -51,6 +62,52 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+
+if [ "$PURGE" -eq 1 ] && [ "$UNINSTALL" -eq 0 ]; then
+    echo "install.sh: --purge requires --uninstall" >&2
+    usage >&2
+    exit 2
+fi
+
+is_our_binary() {
+    [ -f "$1" ] && (grep -q "$REPO_MARKER" "$1" 2>/dev/null || grep -q "$ALT_REPO_MARKER" "$1" 2>/dev/null)
+}
+
+if [ "$UNINSTALL" -eq 1 ]; then
+    if [ -z "$INSTALL_DIR" ]; then
+        INSTALL_DIR="$HOME/.local/bin"
+    fi
+    REMOVED=0
+    for NAME in ${CMD_NAME:+"$CMD_NAME"} run run_block; do
+        CAND="$INSTALL_DIR/$NAME"
+        if is_our_binary "$CAND"; then
+            rm -f "$CAND"
+            echo "Removed: $CAND"
+            REMOVED=1
+        fi
+    done
+    if [ "$REMOVED" -eq 0 ]; then
+        echo "No installed run/run_block binary found in $INSTALL_DIR."
+    fi
+    if [ "$PURGE" -eq 1 ]; then
+        if [ -n "${RUN_BLOCK_DIR:-}" ]; then
+            if [ -e "$RUN_BLOCK_DIR" ] || [ -L "$RUN_BLOCK_DIR" ]; then
+                rm -rf "$RUN_BLOCK_DIR"
+                echo "Purged state: $RUN_BLOCK_DIR"
+            fi
+        else
+            STATE_BASE="${XDG_STATE_HOME:-$HOME/.local/state}"
+            for SNAME in run-block run_block; do
+                SDIR="$STATE_BASE/$SNAME"
+                if [ -e "$SDIR" ] || [ -L "$SDIR" ]; then
+                    rm -rf "$SDIR"
+                    echo "Purged state: $SDIR"
+                fi
+            done
+        fi
+    fi
+    exit 0
+fi
 
 if ! command -v python3 >/dev/null 2>&1; then
     echo "Error: python3 is required but was not found in PATH." >&2
@@ -60,10 +117,6 @@ if ! command -v bash >/dev/null 2>&1; then
     echo "Error: bash is required but was not found in PATH." >&2
     exit 1
 fi
-
-is_our_binary() {
-    [ -f "$1" ] && grep -q "$REPO_MARKER" "$1" 2>/dev/null
-}
 
 if [ -z "$CMD_NAME" ]; then
     CMD_NAME="run_block"

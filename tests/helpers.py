@@ -48,6 +48,7 @@ _TRACKED_ENV_KEYS = (
     "RUN_BLOCK_FRAGMENT_MAX_TOKENS",
     "RUN_BLOCK_TOKEN_STATS",
     "RUN_BLOCK_PROGRESS",
+    "XDG_STATE_HOME",
     "NO_COLOR",
 )
 
@@ -87,6 +88,7 @@ class RunBlockTestCase(unittest.TestCase):
         os.environ.pop("RUN_BLOCK_PARENT_SESSION", None)
         os.environ.pop("RUN_BLOCK_PARENT_STEP", None)
         self.tmp = Path(tempfile.mkdtemp(prefix="rb_test_"))
+        os.environ["XDG_STATE_HOME"] = str(self.tmp / ".xdg_state")
         os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
         self.mod = load_module()
         self.mod.BASE_DIR = self.tmp
@@ -115,7 +117,7 @@ class RunBlockTestCase(unittest.TestCase):
 
     def _normalize_cmd(self, cmd: list[str] | tuple[str, ...]) -> tuple[str, list[str]]:
         items = [str(x) for x in cmd]
-        if items and (items[0] == str(SCRIPT) or Path(items[0]).name in ("run_block", "my_block")):
+        if items and (items[0] == str(SCRIPT) or Path(items[0]).name in ("run", "run_block", "my_block")):
             return items[0], items[1:]
         return str(SCRIPT), items
 

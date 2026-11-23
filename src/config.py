@@ -5,12 +5,38 @@ def prog_name() -> str:
     return raw or "run_block"
 
 
-def _os_default_base_dir(prog: str | None = None) -> Path:
-    name = prog or prog_name()
+def _state_parent_dir() -> Path:
     xdg_state = os.environ.get("XDG_STATE_HOME", "").strip()
     if xdg_state:
-        return Path(xdg_state).expanduser() / name
-    return Path.home() / ".local" / "state" / name
+        return Path(xdg_state).expanduser()
+    return Path.home() / ".local" / "state"
+
+
+def _migrate_state_dir(parent: Path) -> Path:
+    target = parent / "run-block"
+    legacy = parent / "run_block"
+    if os.environ.get("RUN_BLOCK_DIR"):
+        return target
+    try:
+        if legacy.is_symlink():
+            if not in_run_block():
+                legacy.unlink(missing_ok=True)
+            return target
+        if legacy.is_dir() and not target.exists():
+            os.replace(legacy, target)
+            if in_run_block():
+                try:
+                    os.symlink("run-block", legacy)
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    return target
+
+
+def _os_default_base_dir(prog: str | None = None) -> Path:
+    _ = prog
+    return _migrate_state_dir(_state_parent_dir())
 
 
 def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
@@ -589,6 +615,17 @@ def _resolve_existing_dir(raw: str) -> Path | None:
         p = Path(val).expanduser()
         if p.is_dir():
             return p.resolve()
+        for old_ch, new_ch in (("_", "-"), ("-", "_")):
+            if old_ch in p.name:
+                alt = p.with_name(p.name.replace(old_ch, new_ch))
+                if alt.is_dir():
+                    return alt.resolve()
+        p_str = str(p)
+        for old_ch, new_ch in (("_", "-"), ("-", "_")):
+            if old_ch in p_str:
+                alt_full = Path(p_str.replace(old_ch, new_ch))
+                if alt_full.is_dir():
+                    return alt_full.resolve()
     except OSError:
         pass
     return None
