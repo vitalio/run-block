@@ -6,7 +6,6 @@
 - In `src/runner.py` (`run_script()`), populate `CHILD_PAGER_ENV_VARS` with `get_setting("pager")[0]` in `child_env` (when non-empty, overriding parent `os.environ` pager variables before `scrub_child_env()`) so TTY-aware commands (`git diff`, `git log`, `gh api`, `man`, `systemctl`, `bat`, etc.) never stall inside `run_block`'s PTY while keeping `/dev/tty` `stdin` attached for intentional human-in-the-loop prompts.
 - Document `RUN_BLOCK_PAGER=cat|inherit` in `src/header.py` (`--help` `Environment:` section aligned to column width invariants) and the `Environment Variables` table in `README.md`.
 - Add unit tests in `tests/test_runner.py` and `tests/test_cli.py` covering default `CHILD_PAGER_ENV_VARS` injection (`cat`), custom `RUN_BLOCK_PAGER` override, `RUN_BLOCK_PAGER=inherit` / `off` passthrough, and `--help` alignment.
-- Target files: `src/config.py:23-116`, `src/runner.py:945-960`, `src/header.py:24-35`, `README.md:245-270`, `tests/test_runner.py`, `tests/test_cli.py`.
 
 # 🎯 [NEXT] B14: Fix fullscreen i(nfo) meta hotkey in START SESSION part viewer, END STEP table refresh on out edit, and progress line range edge cases
 
@@ -15,7 +14,6 @@
 - Add `m(eta)` hotkey handling and footer hint (`m(eta)`) to `_open_part_viewer()` and `_build_part_screen()` in `src/ui.py` (resolving `<session>/meta.json` via `_info_meta_path("START SESSION", resolved_sdir, None, out_path)`) so `START SESSION` `PART N/M` and `BUNDLE R/M` subviews open `<session>/meta.json` consistently with step `PART k/N` views.
 - Recompute per-operation `share_pct` against current `total["chars"]` (and refresh operation/slice metrics when `block.sh` or `<step>/out` is modified) in `_format_output_breakdown()` and `_open_operation_viewer()` (`src/ui.py`) so the `END STEP` breakdown table and operation viewer stay aligned after in-place edits.
 - Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
-- Target files: `src/runner.py:_clean_out_text.._ProgressLineFilter`, `src/ui.py:_step_op_timings.._format_output_breakdown`, `src/ui.py:_show_info_fullscreen`, `tests/test_runner.py:test_f30_numbered_block_plan_and_live_progress_execution..test_f49_block_and_operation_durations_and_sub_items`, `tests/test_ui.py:test_f54_end_drops_steps_and_info_viewer..test_f77_borderless_info_home_shortened_title_prompt_and_tab_cursor`.
 
 # 🎯 [NEXT] D10: Design built-in API agent mode in run_block (single run_block tool, reasoning in BLOCK PLAN, prompt caching, and key isolation)
 
@@ -32,8 +30,6 @@
      - Keep intra-session step history strictly append-only across turns (advancing the trailing `cache_control` breakpoint to the latest `<session>/<step>/out` turn) and use threshold/chunked context compaction rather than per-turn sliding-window truncation so prior step prefixes remain cache-valid across consecutive steps.
      - Surface provider token and cache hit statistics in `Stats:` across `END STEP` and `END SESSION`.
   6. Stdlib-first HTTP/SSE streaming client (`urllib.request`) with no required third-party dependencies, coordinating with `F85` (`GIT_PAGER=cat`).
-
-- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/cli.py`, `AGENTS.md`, `docs/adr/`.
 
 # 🎯 [NEXT] F94: Show standard session headers and clean step/duration summary in END SESSION and SESSION COMPLETED cards
 
@@ -68,7 +64,6 @@
   (`Workdir`, `Role`, `Task`, `Title`), blank-line separation, the new
   `Steps:` / `Duration:` / `Started:` / `Completed:` layout, and
   `SESSION COMPLETED` headers.
-- Target files: `src/runner.py:_session_stats_lines.._guard_completed_session`, `src/runner.py:cmd_info`, `tests/test_runner.py:test_f42_done_stats_card_and_list_badge..test_f42_completed_session_interactive_confirmation`, `tests/test_runner.py:test_f79_deferred_end_session_and_start_session_ordering_and_clipboard_handoff..test_f79_deferred_end_session_without_child_keeps_outer_end_step_clipboard`.
 
 # 🎯 [NEXT] F92: Split src/ui.py into focused TUI card, fullscreen inspector, and clipboard/prompt modules and remove ticket prefixes from unit tests
 
@@ -80,7 +75,6 @@
   - `src/ui_prompt.py`: `/dev/tty` lifecycle, `SIGWINCH` debounce watcher, editor launch and `.orig` backups, clipboard command resolution/copying, and interactive confirmation/clipboard prompts (`open_tty()`..`confirm_execution()`, `resolve_clipboard_target()`..`copy_file_to_clipboard()`, `offer_clipboard_copy()`).
 - Update `MODULE_ORDER` in `build.py`, rebuild `./run_block`, and update module boundary documentation in `AGENTS.md`.
 - Rename all remaining ticket-prefixed unit test methods (`test_f<N>_*` and `test_b<N>_*`) across `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py` to descriptive domain-behavior names.
-- Target files: `build.py`, `src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `AGENTS.md`, `tests/test_bundle.py`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`.
 
 # 🎯 [NEXT] F84: Add run_block -r / --run [session] full-reply editor mode with automatic block extraction, repair, and step inference
 
@@ -91,7 +85,6 @@
   - Block extraction & repair engine (`extract_reply_block()` in `src/runner.py`): locate the executable `run_block [<session>/<step>] <<'RUN_BLOCK' ... RUN_BLOCK` or `run_block --fix [<session>/<target>] <<'RUN_FIX' ... RUN_FIX` block (or fenced code block when `[session]` is supplied) inside the full reply, reassemble fences split by inner triple backticks, repair missing/indented closing terminators, deduplicate repeated blocks, and prefer the final actionable block over inline prose examples.
   - Automatic session & step resolution: resolve target `<session>` from the explicit CLI `[session]` argument, the extracted block header, or `_find_latest_session()` for the current `Workdir`, and automatically derive the next sequential step number via `next_free_step(sdir)` (auto-renumbering stale or mismatched step numbers without manual editing).
   - Model reasoning display & persistence: extract the model's prose commentary preceding the block, persist it in `<session>/<step>/meta.json` (or `plan.md`), and render a compact commentary/reasoning section at the top of the `START STEP` (`BLOCK PLAN`) card in `src/ui.py` so the same reply-ingestion pipeline serves both web-chat (`-r`) and built-in API transport (`D10`).
-- Target files: `src/cli.py`, `src/header.py`, `src/runner.py`, `src/ui.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_ui.py`.
 
 # ⚪ [NEW] F72: Rename project to run-block and CLI utility to run
 
@@ -99,7 +92,6 @@
 - Rename project/repository references from `run_block` to `run-block` and CLI entrypoint from `run_block` to `run` (updating `agents/blocks/bash.md`, protocol markers, and env vars/compatibility aliases per `todo_flow:D8` and ADR 0003).
 - Remove transitional `Bundle-Expose` and `Bundle-Hide` header parsing/filtering compatibility (`BUNDLE_EXPOSE_HEADER`, `BUNDLE_HIDE_HEADER`) from `src/bundle_parse.py`, documentation, and tests now that `agents_bundle` (`F15` / `todo_flow:F4`) emits `export`-driven preamble headers directly.
 - Acceptance criteria: `build.py` outputs `run`, `install.sh` installs `run` (plus any agreed compatibility alias), `Bundle-Expose` / `Bundle-Hide` legacy handling is removed, `--help`/embedded rules/docs/tests reflect `run-block` and `run`, and `python3 -m unittest discover -s tests` passes.
-- Target files: `build.py`, `install.sh`, `src/cli.py`, `src/header.py`, `src/config.py`, `src/runner.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/safety.py`, `src/ui.py`, `agents/blocks/bash.md`, `.agents_bundle`, `AGENTS.md`, `README.md`, `VERSION`, `tests/helpers.py`, `tests/test_*.py`, and `.github/`.
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
 
@@ -159,7 +151,6 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
   - Immutable system/prefix splitting over `Bundle-Protocol: 1` part boundaries (`src/bundle_plan.py`, `src/bundle.py`) and append-only turn caching with `<session>/chat.json` transcript persistence.
   - Exact post-turn provider token and cache usage accounting (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) recorded in `<session>/chat.json` and `<session>/meta.json` and surfaced in `Stats:` across `END STEP` and `END SESSION` while preserving offline stdlib pre-flight estimation (`count_tokens()`, `format_stats()`).
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`).
-- Target files: `src/config.py`, `src/bundle.py`, `src/bundle_parse.py`, `src/bundle_plan.py`, `src/bundle_view.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`, `src/header.py`, `README.md`, `AGENTS.md`, `tests/test_cli.py`, `tests/test_runner.py`, `tests/test_safety.py`, `tests/test_ui.py`, `tests/test_bundle.py`.
 
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
