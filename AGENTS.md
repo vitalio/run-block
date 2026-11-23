@@ -35,7 +35,7 @@ rules are loaded via `.context.bundle`.
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
   `-r`/`--run [session]` full-reply ingestion (`extract_reply_block()`,
   `cmd_run_reply()`), `--fix` patching, `--retry`, `--list`, `--show`,
-  `--clean`, and `-y`/`--yes` headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
+  `--clean`, `-y`/`--yes` auto-confirm mode, and `--headless` (`RUN_BLOCK_HEADLESS=1`) headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
   slave or the capture pipe write end), so `out` keeps exact write order and
   the `END STEP` box takes its `Error:` line from the last meaningful line of
   `out`; there is no separate `err` artifact. Exports non-interactive

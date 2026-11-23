@@ -288,13 +288,18 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_sandbox(rest_sb)
 
     auto_yes = False
+    headless_flag = False
     sandbox_override: str | None = None
     filtered: list[str] = []
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("-y", "--yes", "--headless"):
+        if a in ("-y", "--yes"):
             auto_yes = True
+            i += 1
+        elif a == "--headless":
+            auto_yes = True
+            headless_flag = True
             i += 1
         elif a == "--no-sandbox":
             sandbox_override = "off"
@@ -313,6 +318,34 @@ def main(argv: list[str] | None = None) -> int:
             filtered.append(a)
             i += 1
     args = filtered
+    if headless_flag:
+        return _run_with_headless_env(
+            lambda: _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag)
+        )
+    return _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag)
+
+
+def _run_with_headless_env(fn) -> int:
+    prev = os.environ.get("RUN_BLOCK_HEADLESS")
+    os.environ["RUN_BLOCK_HEADLESS"] = "1"
+    try:
+        return fn()
+    finally:
+        if prev is None:
+            os.environ.pop("RUN_BLOCK_HEADLESS", None)
+        else:
+            os.environ["RUN_BLOCK_HEADLESS"] = prev
+
+
+def _dispatch_cli(
+    args: list[str],
+    prompt_args: list[str],
+    prog: str,
+    auto_yes: bool,
+    sandbox_override: str | None,
+    has_start_opt: bool,
+    has_bare_sandbox_flag: bool,
+) -> int:
 
     if not args:
         if sandbox_override is not None and not has_start_opt:

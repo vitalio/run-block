@@ -49,6 +49,32 @@ class TestUi(RunBlockTestCase):
         )
         err2 = self.mod._extract_last_error_line(out, label="s1/1", max_width=120)
         self.assertIn("closest: Hello world line", err2)
+        # In-memory captured haystack embedded inside the AssertionError message itself
+        out.write_text(
+            "[s1/1] START\n"
+            "Traceback (most recent call last):\n"
+            '  File "t.py", line 9, in test_mem\n'
+            "AssertionError: ' expected_token_alpha ' not found in 'header line\\nexpected_token_alpa\\nfooter line'\n"
+            "Ran 1 test in 0.01s\n"
+            "FAILED (failures=1)\n"
+            "[s1/1] END (exit 1, 10ms)\n",
+            encoding="utf-8",
+        )
+        err_mem = self.mod._extract_last_error_line(out, label="s1/1", max_width=160)
+        self.assertIn("closest: expected_token_alpa", err_mem)
+        # Wide CJK characters in traceback root cause must truncate by display width (char_width)
+        wide_msg = "漢字" * 30
+        out.write_text(
+            "[s1/1] START\n"
+            "Traceback (most recent call last):\n"
+            '  File "t.py", line 5, in f\n'
+            f"AssertionError: {wide_msg}\n"
+            "FAILED (failures=1)\n",
+            encoding="utf-8",
+        )
+        err_wide = self.mod._extract_last_error_line(out, label="s1/1", max_width=40)
+        self.assertLessEqual(self.mod.display_width(err_wide), 34)
+        self.assertTrue(err_wide.endswith("..."))
         out.write_text("boom\n[s1/1] END (exit 1, 1s)\n", encoding="utf-8")
         self.assertEqual(self.mod._extract_last_error_line(out, label="s1/1"), "boom")
 

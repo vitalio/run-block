@@ -276,7 +276,7 @@ run --bundle-plan s1 --part 2
 | :--- | :--- |
 | `run [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
 | `<command> \| run [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
-| `run [-y] <session>/<step>` | Run a block from `stdin` (`-y` for non-interactive headless mode; also reopens a completed session) |
+| `run [-y] [--headless] <session>/<step>` | Run a block from `stdin` (`-y`/`--yes` auto-confirms `START STEP` and reopens a completed session while keeping TUI cards; `--headless` disables TUI boxes and prompts) |
 | `run -r`, `--run [-y] [session]` | Ingest a full model reply from `$VISUAL`/`$EDITOR` (on TTY `stdin`) or piped `stdin`, extract and repair the `RUN_BLOCK` / `RUN_FIX` block (or fenced code block when `[session]` is given), infer `<session>/<next_step>`, and display model reasoning in `START STEP` |
 | `run --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
 | `run --bundle-plan [<session>] [--json] [--part N]` | Print the `Parts (<N>):` table and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
@@ -306,7 +306,7 @@ standard environment variables:
 | `RUN_BLOCK_DIR` | `~/.local/state/run-block` | Session storage directory (`$XDG_STATE_HOME/run-block` on POSIX; automatically migrates legacy `~/.local/state/run_block`) |
 | `RUN_BLOCK_CWD` | `auto` | `auto` (existing `Workdir` preamble header or session `Workdir` from `<session>/0`, nearest `.context.bundle`/`.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `[Y/n]` prompt), `auto` (copy automatically), `never` |
-| `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `-y`/`--yes`) for raw stdout protocol without TUI sections |
+| `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `--headless`) for raw stdout protocol without TUI boxes or prompts |
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; active non-`off` modes are persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
 | `RUN_BLOCK_TOKEN_STATS` | `true` | Show char size and Claude/GPT/Gemini token counts (`true` / `false`) |

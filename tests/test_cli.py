@@ -106,13 +106,16 @@ class TestCli(RunBlockTestCase):
         )
         r_pipe = self._run([str(SCRIPT), "-r", "-y", "s1"], input=reply)
         self._assert_ok(r_pipe)
-        self.assertIn("[s1/1] START", r_pipe.stdout)
-        self.assertIn("Note: renumbered from s99/7 to s1/1", r_pipe.stdout)
+        self.assertIn("╭─ END STEP ", r_pipe.stdout)
         self.assertIn("reply_routed_ok", r_pipe.stdout)
+        s1_1_out = (self.tmp / "s1" / "1" / "out").read_text(encoding="utf-8")
+        self.assertIn("[s1/1] START", s1_1_out)
+        self.assertIn("Note: renumbered from s99/7 to s1/1", s1_1_out)
 
-        r_eq = self._run([str(SCRIPT), "--run=s1", "-y"], input=reply)
+        r_eq = self._run([str(SCRIPT), "--run=s1", "--headless"], input=reply)
         self._assert_ok(r_eq)
         self.assertIn("[s1/2] START", r_eq.stdout)
+        self.assertNotIn("╭─ END STEP ", r_eq.stdout)
 
         bad_cases = (
             (["-r", "s1", "s2"], 1, "usage:"),

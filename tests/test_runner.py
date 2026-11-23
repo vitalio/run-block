@@ -50,7 +50,7 @@ class TestRunner(RunBlockTestCase):
         self.assertFalse(bad_data["syntax_ok"])
 
         r_headless = self._run(
-            [str(SCRIPT), "-y", "s1/1"],
+            [str(SCRIPT), "--headless", "s1/1"],
             input="echo headless_ok\n",
             capture_output=True,
             text=True,
@@ -61,10 +61,22 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("headless_ok", r_headless.stdout)
         self.assertRegex(r_headless.stdout, r"\[s1/1\] END \([^)\n]+\)\n")
         self.assertNotIn("[END]", r_headless.stdout)
+        self.assertNotIn("╭─", r_headless.stdout)
+
+        r_yes_card = self._run(
+            [str(SCRIPT), "-y", "s1/2"],
+            input="echo auto_yes_ok\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(r_yes_card.returncode, 0)
+        self.assertIn("auto_yes_ok", r_yes_card.stdout)
+        self.assertIn("╭─ END STEP ", r_yes_card.stdout)
 
         env_reject = {**os.environ, "RUN_BLOCK_APPROVE_CMD": "echo 'Blocked by LLM policy' && exit 1"}
         r_rej = self._run(
-            [str(SCRIPT), "-y", "s1/2"],
+            [str(SCRIPT), "--headless", "s1/3"],
             input="echo should_not_run\n",
             capture_output=True,
             text=True,
@@ -160,6 +172,18 @@ class TestRunner(RunBlockTestCase):
                 out, err = fn(payload)
                 self.assertIsNone(err)
                 self.assertEqual(out, body)
+        with self.subTest(case="headless_consumed_outer_header"):
+            headless_cases = {
+                "indented_terminator_and_duplicate": body + "  RUN_BLOCK\n" + hdr + "echo two\nRUN_BLOCK\n",
+                "indented_terminator_and_prose": body + "  RUN_BLOCK\ntrailing prose\n",
+                "nested_wrapper_without_outer_hdr": "run s1/2 <<'RUN_BLOCK'\n" + body + "  RUN_BLOCK\n",
+                "fix_terminator_and_prose": "text = text.replace('a', 'b')\n  RUN_FIX\ntrailing prose\n",
+            }
+            for h_name, h_payload in headless_cases.items():
+                h_out, h_err = fn(h_payload)
+                self.assertIsNone(h_err, h_name)
+                expected_h = "text = text.replace('a', 'b')\n" if "fix" in h_name else body
+                self.assertEqual(h_out, expected_h, h_name)
         with self.subTest(case="unclosed_without_fence"):
             out, err = fn(hdr + body)
             self.assertIsNotNone(err)
@@ -189,6 +213,10 @@ class TestRunner(RunBlockTestCase):
              "result of text.replace(...) is discarded"),
             ("s5", "echo a\necho b\n", "old = 'zzzzzzzzzzzz'\nassert text.count(old) == 1\n",
              "emit a fresh s5/2 block instead of --fix"),
+            ("s6", "echo alpha\necho beta\n", "old = 'echo bata'\nassert old in text\n",
+             "Hint: closest match at line 2 (similarity"),
+            ("s7", "echo alpha\necho beta\n", "text = re.sub('echo bata', 'echo gamma', text)\n",
+             "Hint: closest match at line 2 (similarity"),
         ]
         for session, script, fix, expected in cases:
             with self.subTest(session=session):
@@ -211,6 +239,19 @@ class TestRunner(RunBlockTestCase):
         self.assertIn("Context (line 1):", out_syn)
         self.assertIn(">   1 | old = 'abc", out_syn)
         self.assertIn("Hint: the RUN_FIX heredoc passes text literally", out_syn)
+
+        # Shell commands that happen to be valid Python AST expressions (ls -la, cd /tmp, pwd, git)
+        # and next_seq_ref when later steps already exist in session
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo step2\n", auto_yes=True), 0)
+            for idx_cmd, sh_cmd in enumerate(("ls -la\n", "cd /tmp\n", "pwd\n", "git\n"), start=1):
+                sess_sh = f"sh{idx_cmd}"
+                self.assertEqual(self.mod.cmd_normal(f"{sess_sh}/1", "echo base\n", auto_yes=True), 0)
+                self.assertEqual(self.mod.cmd_normal(f"{sess_sh}/2", "echo second\n", auto_yes=True), 0)
+                self.assertEqual(self.mod.cmd_fix(f"{sess_sh}/1", sh_cmd, auto_yes=True), 2)
+                sh_out = (self.tmp / sess_sh / "1_1" / "out").read_text(encoding="utf-8")
+                self.assertIn("looks like a shell script", sh_out, sh_cmd)
+                self.assertIn(f"fresh {sess_sh}/3 block", sh_out, sh_cmd)
 
     def test_shell_syntax_error_context_and_hint(self):
         with contextlib.redirect_stdout(io.StringIO()):
@@ -252,6 +293,58 @@ class TestRunner(RunBlockTestCase):
             rc2 = self.mod.cmd_fix("s2/1", fix, auto_yes=True)
         self.assertEqual(rc2, 2)
         box2.assert_not_called()
+
+        # Double quotes, triple quotes, and direct literal forms in _propose_anchor_repair
+        for q_idx, q_fix in enumerate(
+            (
+                'old = "echo beta twp\\n"\nnew = "echo gamma\\n"\nassert old in text\ntext = text.replace(old, new, 1)\n',
+                'old = """echo beta twp\n"""\nnew = """echo gamma\n"""\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\n',
+                'assert "echo beta twp\\n" in text\ntext = text.replace("echo beta twp\\n", "echo gamma\\n", 1)\n',
+            ),
+            start=3,
+        ):
+            q_sess = f"s{q_idx}"
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(self.mod.cmd_normal(f"{q_sess}/1", script, auto_yes=True), 0)
+            q_seen: list[str] = []
+
+            def fake_q_run(_lbl, sp, *_a, _dest=q_seen, **_kw):
+                _dest.append(Path(sp).read_text(encoding="utf-8"))
+                return 0
+
+            with contextlib.redirect_stdout(_Tty()), \
+                    unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                    unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value=True) as q_box, \
+                    unittest.mock.patch.object(self.mod, "run_script", side_effect=fake_q_run):
+                self.assertEqual(self.mod.cmd_fix(f"{q_sess}/1", q_fix), 0)
+            self.assertEqual(q_box.call_count, 1)
+            self.assertEqual(q_seen, ["echo alpha one\necho gamma\n"])
+
+        # Declining anchor repair must NOT display a second NOT RUN box or offer_clipboard_copy,
+        # and <step>/out and <step>/fix.py must already exist when prompt_yes_no_box runs.
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s_dec/1", script, auto_yes=True), 0)
+        artifact_state: dict[str, bool] = {}
+
+        def check_artifacts_on_decline(*_a, **kw):
+            op = kw.get("out_path")
+            sp = kw.get("script_path")
+            artifact_state["out_exists"] = bool(op and Path(op).is_file())
+            artifact_state["fix_exists"] = bool(sp and Path(sp).is_file())
+            return False
+
+        tty_dec = _Tty()
+        with contextlib.redirect_stdout(tty_dec), \
+                unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                unittest.mock.patch.object(self.mod, "prompt_yes_no_box", side_effect=check_artifacts_on_decline) as dec_box, \
+                unittest.mock.patch.object(self.mod, "offer_clipboard_copy") as dec_clip:
+            rc_dec = self.mod.cmd_fix("s_dec/1", fix)
+        self.assertEqual(rc_dec, 2)
+        self.assertEqual(dec_box.call_count, 1)
+        dec_clip.assert_not_called()
+        self.assertEqual(tty_dec.getvalue(), "")
+        self.assertTrue(artifact_state.get("out_exists"))
+        self.assertTrue(artifact_state.get("fix_exists"))
 
     def test_fix_anchor_found_in_referenced_repo_file(self):
         with tempfile.TemporaryDirectory() as td:
@@ -851,7 +944,9 @@ class TestRunner(RunBlockTestCase):
             with contextlib.redirect_stdout(buf):
                 rc = self.mod.cmd_fix("s1/1", unsafe_fix, auto_yes=True)
             self.assertEqual(rc, 2)
-            self.assertIn("NOT RUN: unsafe construct in --fix", buf.getvalue())
+            self.assertIn("╭─ NOT RUN ", buf.getvalue())
+            self.assertIn("Reason: unsafe construct in --fix", buf.getvalue())
+            self.assertIn("NOT RUN: unsafe construct in --fix", (self.tmp / "s1/1_1/out").read_text(encoding="utf-8"))
             self.assertFalse(marker.exists())
             shutil.rmtree(self.tmp / "s1/1_1", ignore_errors=True)
 
@@ -1989,6 +2084,63 @@ class TestRunner(RunBlockTestCase):
         meta_fix = self.mod.read_step_meta(self.tmp / "s1" / "2_1")
         self.assertEqual(meta_fix.get("reasoning"), "Patching step 2 output message.")
         self.assertIn("hello_step2_patched", (self.tmp / "s1" / "2_1" / "out").read_text(encoding="utf-8"))
+
+
+    def test_auto_yes_keeps_interactive_tui_cards_while_headless_suppresses_them(self):
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        # 1. With auto_yes=True (-y/--yes) on a TTY:
+        # - Completed session is reopened automatically without SESSION COMPLETED prompt
+        # - START STEP is auto-confirmed without opening /dev/tty confirmation prompt
+        # - END STEP card and offer_clipboard_copy still run interactively
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(self.mod.cmd_normal("s1/1", "echo one\n", auto_yes=True), 0)
+            self.assertEqual(self.mod.cmd_done("s1"), 0)
+        self.assertTrue(self.mod.is_session_completed(self.tmp / "s1"))
+
+        clip_calls: list[tuple[str, str]] = []
+
+        def fake_offer(label, _out_p, **kw):
+            clip_calls.append((label, str(kw.get("title_kind") or "END STEP")))
+
+        tty_out = _Tty()
+        with contextlib.redirect_stdout(tty_out), \
+                unittest.mock.patch.object(self.mod, "no_clipboard", return_value=False), \
+                unittest.mock.patch.object(self.mod, "clipboard_mode", return_value="prompt"), \
+                unittest.mock.patch.object(self.mod, "clipboard_command", return_value=(["pbcopy"], "pbcopy")), \
+                unittest.mock.patch.object(self.mod, "offer_clipboard_copy", side_effect=fake_offer), \
+                unittest.mock.patch.object(self.mod, "prompt_yes_no_box", return_value="renumber") as mock_box:
+            # Reopens completed session and runs s1/2 without SESSION COMPLETED prompt
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo two\n", auto_yes=True), 0)
+            self.assertFalse(self.mod.is_session_completed(self.tmp / "s1"))
+            self.assertEqual(mock_box.call_count, 0)
+            self.assertEqual(clip_calls, [("s1/2", "END STEP")])
+
+            # STEP ALREADY EXISTS still prompts interactively under auto_yes=True
+            clip_calls.clear()
+            self.assertEqual(self.mod.cmd_normal("s1/2", "echo two_renum\n", auto_yes=True), 0)
+            self.assertEqual(mock_box.call_count, 1)
+            self.assertEqual(mock_box.call_args[0][0], "STEP ALREADY EXISTS")
+            self.assertEqual(clip_calls, [("s1/3", "END STEP")])
+
+            # MISSING PREVIOUS STEP still prompts interactively under auto_yes=True
+            mock_box.reset_mock()
+            clip_calls.clear()
+            self.assertEqual(self.mod.cmd_normal("s1/6", "echo gap_renum\n", auto_yes=True), 0)
+            self.assertEqual(mock_box.call_count, 1)
+            self.assertEqual(mock_box.call_args[0][0], "MISSING PREVIOUS STEP")
+            self.assertEqual(clip_calls, [("s1/4", "END STEP")])
+
+            # NOT RUN and SYNTAX ERROR still invoke offer_clipboard_copy under auto_yes=True
+            clip_calls.clear()
+            self.assertEqual(self.mod.cmd_normal("s1/5", "", auto_yes=True), 2)
+            self.assertEqual(clip_calls, [("s1/5", "NOT RUN")])
+            clip_calls.clear()
+            shutil.rmtree(self.tmp / "s1" / "5", ignore_errors=True)
+            self.assertNotEqual(self.mod.cmd_normal("s1/5", "if true; then\n", auto_yes=True), 0)
+            self.assertEqual(clip_calls, [("s1/5", "SYNTAX ERROR")])
 
 
 if __name__ == "__main__":

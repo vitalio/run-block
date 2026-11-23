@@ -319,10 +319,13 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
     return out
 
 
-def _char_display_width(ch: str) -> int:
+def char_width(ch: str) -> int:
     if unicodedata.category(ch) in ("Mn", "Me", "Cf", "Cc"):
         return 0
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+_char_display_width = char_width
 
 
 def display_width(text: str) -> int:
@@ -829,7 +832,29 @@ def _last_nonempty_line(path: Path, skip_prefixes: tuple[str, ...], max_len: int
 
 _GENERIC_TAIL_RE = re.compile(r"^(?:FAILED\b|OK\b|Ran \d+ test|-{5,}$|={5,}$|make: |Error: Process completed)")
 _TB_FRAME_RE = re.compile(r'^\s+File "([^"]+)", line (\d+)')
-_ASSERT_MISSING_RE = re.compile(r"AssertionError: (['\"])(.+?)\1 not found in")
+_ASSERT_MISSING_RE = re.compile(r"AssertionError: (['\"])(.+?)\1 not found in\s*(.*)$")
+
+
+def _extract_haystack_candidates(haystack_raw: str) -> list[str]:
+    text = haystack_raw.strip()
+    if not text:
+        return []
+    try:
+        val = ast.literal_eval(text)
+        if isinstance(val, str):
+            text = val
+        elif isinstance(val, (list, tuple, set)):
+            out: list[str] = []
+            for item in val:
+                s = str(item).strip()
+                if s:
+                    out.extend(ln.strip() for ln in s.splitlines() if ln.strip())
+            return out
+    except Exception:
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+            text = text[1:-1]
+        text = text.replace("\\n", "\n").replace("\\t", "\t")
+    return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 
 def _traceback_root_cause(raw: str) -> str:
@@ -843,7 +868,8 @@ def _traceback_root_cause(raw: str) -> str:
         return ""
     loc = ""
     exc_line = ""
-    for ln in lines[tb_idx + 1 :]:
+    exc_idx = -1
+    for offset, ln in enumerate(lines[tb_idx + 1 :], start=tb_idx + 1):
         m = _TB_FRAME_RE.match(ln)
         if m:
             loc = f"{Path(m.group(1)).name}:{m.group(2)}"
@@ -851,6 +877,7 @@ def _traceback_root_cause(raw: str) -> str:
         if ln.startswith((" ", "\t")) or not ln.strip():
             continue
         exc_line = ln.strip()
+        exc_idx = offset
         break
     if not exc_line:
         return ""
@@ -858,7 +885,17 @@ def _traceback_root_cause(raw: str) -> str:
     m_miss = _ASSERT_MISSING_RE.search(exc_line)
     if m_miss:
         needle = m_miss.group(2)
+        haystack_tail = [m_miss.group(3)] if m_miss.group(3) else []
+        if exc_idx != -1:
+            for extra_ln in lines[exc_idx + 1 :]:
+                s_extra = extra_ln.strip()
+                if not s_extra or _GENERIC_TAIL_RE.match(s_extra) or s_extra.startswith("["):
+                    break
+                haystack_tail.append(s_extra)
         pool = [ln.strip() for ln in lines[:tb_idx] if ln.strip()]
+        for cand in _extract_haystack_candidates("\n".join(haystack_tail)):
+            if cand and cand not in pool:
+                pool.append(cand)
         close = difflib.get_close_matches(needle, pool, n=1, cutoff=0.6)
         if close:
             summary += f"; closest: {close[0]}"
@@ -890,7 +927,16 @@ def _extract_last_error_line(out_path: Path, label: str | None = None, max_width
     if not cause:
         return last
     if display_width(cause) > max_len:
-        cause = cause[: max(1, max_len - 3)].rstrip() + "..."
+        budget = max(1, max_len - 3)
+        acc: list[str] = []
+        cur_w = 0
+        for ch in cause:
+            cw = char_width(ch)
+            if cur_w + cw > budget:
+                break
+            acc.append(ch)
+            cur_w += cw
+        cause = "".join(acc).rstrip() + "..."
     return cause
 
 

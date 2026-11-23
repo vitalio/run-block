@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.37.2"
+VERSION = "0.37.3"
 REPO_MARKER = "run-block-repo: vitalio/run-block"
 LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
 REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
@@ -52,7 +52,7 @@ HELP_USAGE = (
 HELP_COMMANDS = (
     ("{prog}", "Start a rule-only session on TTY stdin (or read a bundle from piped stdin)"),
     ("<command> | {prog}", "Start a new session from a stdin context bundle into {base_dir}/<session>/0"),
-    ("{prog} [-y] <session>/<step>", "Run the block from stdin (-y/--yes: non-interactive headless mode, also reopens a completed session)"),
+    ("{prog} [-y] <session>/<step>", "Run the block from stdin (-y/--yes: auto-confirm START STEP and reopen a completed session)"),
     ("{prog} -r | --run [-y] [session]", "Run full model reply from editor (TTY) or stdin with block extraction and step inference"),
     ("{prog} --plan", "Analyze the script from stdin and print the JSON execution and safety plan"),
     ("{prog} --bundle-plan [sess]", "Print the Parts table and warnings of a bundle from stdin or session (--json, --part N)"),
@@ -75,7 +75,8 @@ HELP_COMMANDS = (
 
 HELP_OPTIONS = (
     ("-r, --run [session]", "Full-reply mode: extract block & reasoning from editor (TTY) or piped stdin and infer step"),
-    ("-y, --yes, --headless", "Non-interactive headless mode without prompts; also reopens a completed session"),
+    ("-y, --yes", "Auto-confirm START STEP and reopen a completed session (keeps TUI cards and clipboard prompts)"),
+    ("--headless", "Non-interactive headless mode without TUI boxes or prompts (same as RUN_BLOCK_HEADLESS=1)"),
     ("-p, --prompt TEXT", "Embed repeatable prompt text into the started session bundle (===== Prompt =====)"),
     ("--sandbox [MODE]", "Set the sandbox mode for the run or started session (off, strict, nonet); bare flag means strict"),
     ("--no-sandbox", "Same as --sandbox off"),
@@ -3041,10 +3042,13 @@ def _colorize_bundle_lines(lines: list[str]) -> list[str]:
     return out
 
 
-def _char_display_width(ch: str) -> int:
+def char_width(ch: str) -> int:
     if unicodedata.category(ch) in ("Mn", "Me", "Cf", "Cc"):
         return 0
     return 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+
+
+_char_display_width = char_width
 
 
 def display_width(text: str) -> int:
@@ -3551,7 +3555,29 @@ def _last_nonempty_line(path: Path, skip_prefixes: tuple[str, ...], max_len: int
 
 _GENERIC_TAIL_RE = re.compile(r"^(?:FAILED\b|OK\b|Ran \d+ test|-{5,}$|={5,}$|make: |Error: Process completed)")
 _TB_FRAME_RE = re.compile(r'^\s+File "([^"]+)", line (\d+)')
-_ASSERT_MISSING_RE = re.compile(r"AssertionError: (['\"])(.+?)\1 not found in")
+_ASSERT_MISSING_RE = re.compile(r"AssertionError: (['\"])(.+?)\1 not found in\s*(.*)$")
+
+
+def _extract_haystack_candidates(haystack_raw: str) -> list[str]:
+    text = haystack_raw.strip()
+    if not text:
+        return []
+    try:
+        val = ast.literal_eval(text)
+        if isinstance(val, str):
+            text = val
+        elif isinstance(val, (list, tuple, set)):
+            out: list[str] = []
+            for item in val:
+                s = str(item).strip()
+                if s:
+                    out.extend(ln.strip() for ln in s.splitlines() if ln.strip())
+            return out
+    except Exception:
+        if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+            text = text[1:-1]
+        text = text.replace("\\n", "\n").replace("\\t", "\t")
+    return [ln.strip() for ln in text.splitlines() if ln.strip()]
 
 
 def _traceback_root_cause(raw: str) -> str:
@@ -3565,7 +3591,8 @@ def _traceback_root_cause(raw: str) -> str:
         return ""
     loc = ""
     exc_line = ""
-    for ln in lines[tb_idx + 1 :]:
+    exc_idx = -1
+    for offset, ln in enumerate(lines[tb_idx + 1 :], start=tb_idx + 1):
         m = _TB_FRAME_RE.match(ln)
         if m:
             loc = f"{Path(m.group(1)).name}:{m.group(2)}"
@@ -3573,6 +3600,7 @@ def _traceback_root_cause(raw: str) -> str:
         if ln.startswith((" ", "\t")) or not ln.strip():
             continue
         exc_line = ln.strip()
+        exc_idx = offset
         break
     if not exc_line:
         return ""
@@ -3580,7 +3608,17 @@ def _traceback_root_cause(raw: str) -> str:
     m_miss = _ASSERT_MISSING_RE.search(exc_line)
     if m_miss:
         needle = m_miss.group(2)
+        haystack_tail = [m_miss.group(3)] if m_miss.group(3) else []
+        if exc_idx != -1:
+            for extra_ln in lines[exc_idx + 1 :]:
+                s_extra = extra_ln.strip()
+                if not s_extra or _GENERIC_TAIL_RE.match(s_extra) or s_extra.startswith("["):
+                    break
+                haystack_tail.append(s_extra)
         pool = [ln.strip() for ln in lines[:tb_idx] if ln.strip()]
+        for cand in _extract_haystack_candidates("\n".join(haystack_tail)):
+            if cand and cand not in pool:
+                pool.append(cand)
         close = difflib.get_close_matches(needle, pool, n=1, cutoff=0.6)
         if close:
             summary += f"; closest: {close[0]}"
@@ -3612,7 +3650,16 @@ def _extract_last_error_line(out_path: Path, label: str | None = None, max_width
     if not cause:
         return last
     if display_width(cause) > max_len:
-        cause = cause[: max(1, max_len - 3)].rstrip() + "..."
+        budget = max(1, max_len - 3)
+        acc: list[str] = []
+        cur_w = 0
+        for ch in cause:
+            cw = char_width(ch)
+            if cur_w + cw > budget:
+                break
+            acc.append(ch)
+            cur_w += cw
+        cause = "".join(acc).rstrip() + "..."
     return cause
 
 
@@ -9111,31 +9158,48 @@ def _short_repr(val: object, limit: int = 80) -> str:
     return r
 
 
+def _is_text_expr(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "text"
+
+
 def _fix_anchor_values(fix_code: str, ns: dict[str, object]) -> list[str]:
-    """Evaluate the first argument of text.count/replace/find/index calls in a fix."""
+    """Evaluate anchor expressions in text.count/replace/find/index, `old in text`, and re.sub/subn/search/findall."""
     try:
         tree = ast.parse(fix_code)
     except SyntaxError:
         return []
     found: list[str] = []
-    for node in ast.walk(tree):
-        if not (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and isinstance(node.func.value, ast.Name)
-            and node.func.value.id == "text"
-            and node.func.attr in ("count", "replace", "find", "index")
-            and node.args
-        ):
-            continue
+
+    def _eval_and_add(arg_node: ast.expr) -> None:
         try:
-            expr = ast.Expression(body=node.args[0])
+            expr = ast.Expression(body=arg_node)
             ast.fix_missing_locations(expr)
             val = eval(compile(expr, "<fix_anchor>", "eval"), ns)
         except Exception:
-            continue
+            return
         if isinstance(val, str) and val and val not in found:
             found.append(val)
+
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        ):
+            obj_id = node.func.value.id
+            attr = node.func.attr
+            if obj_id == "text" and attr in ("count", "replace", "find", "index") and node.args:
+                _eval_and_add(node.args[0])
+            elif obj_id == "re" and attr in ("sub", "subn") and len(node.args) >= 3 and _is_text_expr(node.args[2]):
+                _eval_and_add(node.args[0])
+            elif obj_id == "re" and attr in ("search", "findall", "match") and len(node.args) >= 2 and _is_text_expr(node.args[1]):
+                _eval_and_add(node.args[0])
+        elif isinstance(node, ast.Compare):
+            left = node.left
+            for op, comp in zip(node.ops, node.comparators):
+                if isinstance(op, (ast.In, ast.NotIn)) and _is_text_expr(comp):
+                    _eval_and_add(left)
+                left = comp
     return found
 
 
@@ -9162,33 +9226,105 @@ REPAIR_MIN_SCORE = 0.85
 REPAIR_MIN_MARGIN = 0.05
 
 
+def _replace_anchor_literal_in_fix(fix_code: str, old: str, new_old: str) -> str | None:
+    """Replace string literal(s) evaluating to `old` in `fix_code` regardless of quote style."""
+    try:
+        tree = ast.parse(fix_code)
+    except SyntaxError:
+        return None
+    lines_keep = fix_code.splitlines(keepends=True)
+    line_starts: list[int] = [0]
+    for ln in lines_keep:
+        line_starts.append(line_starts[-1] + len(ln))
+
+    def _pos_to_index(lineno: int, col_offset: int) -> int | None:
+        if not (1 <= lineno <= len(lines_keep)):
+            return None
+        raw_line = lines_keep[lineno - 1]
+        raw_bytes = raw_line.encode("utf-8")
+        if not (0 <= col_offset <= len(raw_bytes)):
+            return None
+        try:
+            char_col = len(raw_bytes[:col_offset].decode("utf-8"))
+        except UnicodeDecodeError:
+            return None
+        return line_starts[lineno - 1] + char_col
+
+    spans: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value == old:
+            end_ln = getattr(node, "end_lineno", None)
+            end_col = getattr(node, "end_col_offset", None)
+            if node.lineno is None or node.col_offset is None or end_ln is None or end_col is None:
+                continue
+            s_idx = _pos_to_index(node.lineno, node.col_offset)
+            e_idx = _pos_to_index(end_ln, end_col)
+            if s_idx is not None and e_idx is not None and s_idx < e_idx:
+                spans.append((s_idx, e_idx))
+
+    if spans:
+        spans = sorted(set(spans))
+        for prev_sp, next_sp in zip(spans, spans[1:]):
+            if prev_sp[1] > next_sp[0]:
+                return None
+        patched = fix_code
+        replacement = repr(new_old)
+        for s_idx, e_idx in reversed(spans):
+            patched = patched[:s_idx] + replacement + patched[e_idx:]
+        return patched
+
+    if fix_code.count(repr(old)) == 1:
+        return fix_code.replace(repr(old), repr(new_old), 1)
+    return None
+
+
 def _propose_anchor_repair(
-    fix_code: str, text: str, ns: dict[str, object], label: str, sdir: Path
-) -> str | None:
-    """Offer to swap a single missing anchor for its unambiguous closest match; return new fix code."""
+    fix_code: str,
+    text: str,
+    ns: dict[str, object],
+    label: str,
+    sdir: Path,
+    *,
+    out_path: Path | None = None,
+    fix_path: Path | None = None,
+) -> tuple[str | None, bool]:
+    """Offer to swap a single missing anchor for its unambiguous closest match; return (new_fix_code, prompted)."""
     missing = [v for v in _fix_anchor_values(fix_code, ns) if text.count(v) == 0]
     if len(missing) != 1:
-        return None
+        return None, False
     old = missing[0]
     close = _closest_anchor(old, text)
     if close is None:
-        return None
+        return None, False
     score, line_no, runner_up, window = close
     if score < REPAIR_MIN_SCORE or score - runner_up < REPAIR_MIN_MARGIN:
-        return None
+        return None, False
     new_old = window + ("\n" if old.endswith("\n") else "")
-    if new_old == old or fix_code.count(repr(old)) != 1:
-        return None
+    if new_old == old:
+        return None, False
+    patched = _replace_anchor_literal_in_fix(fix_code, old, new_old)
+    if patched is None or patched == fix_code:
+        return None, False
     lines = [
         f"Anchor not found; closest match at line {line_no} (similarity {score:.2f}):",
         f"- {old.strip()}",
         f"+ {window.strip()}",
     ]
-    if prompt_yes_no_box(
-        "NOT RUN", lines, "Replace anchor with closest match?", default_yes=False, label=label, sdir=sdir
-    ) is not True:
-        return None
-    return fix_code.replace(repr(old), repr(new_old), 1)
+    if out_path is not None:
+        lines.append(f"Output: {out_path}")
+    choice = prompt_yes_no_box(
+        "NOT RUN",
+        lines,
+        "Replace anchor with closest match?",
+        default_yes=False,
+        script_path=fix_path,
+        out_path=out_path,
+        label=label,
+        sdir=sdir,
+    )
+    if choice is not True:
+        return None, True
+    return patched, True
 
 
 def _anchor_in_referenced_file(old: str, script_text: str, work_dir: Path | None) -> str | None:
@@ -9259,14 +9395,21 @@ def _fix_anchor_hints(
 
 
 _SHELL_START_RE = re.compile(
-    r"^(?:#!|set\s+-|cd\s|git\s|python3?\s|echo\s|cat\s|grep\s|awk\s|sed\s|ls\b|todo(?:_md)?\b|run(?:_block)?\b"
-    r"|export\s|mkdir\s|sh\s|bash\s)"
+    r"^(?:#!|set\s+-|cd(?:\s|$)|git(?:\s|$)|python3?(?:\s|$)|echo(?:\s|$)|cat(?:\s|$)|grep(?:\s|$)"
+    r"|awk(?:\s|$)|sed(?:\s|$)|ls\b|pwd\b|todo(?:_md)?\b|run(?:_block)?\b"
+    r"|export\s|mkdir\s|rm\s|cp\s|mv\s|chmod\s|find\s|sh(?:\s|$)|bash(?:\s|$)|pytest\b|make\b)"
 )
 
 
 def _looks_like_shell_script(fix_code: str) -> bool:
+    nonblank = [ln.strip() for ln in fix_code.splitlines() if ln.strip() and not ln.strip().startswith("#")]
     first = next((ln.strip() for ln in fix_code.splitlines() if ln.strip()), "")
-    return bool(_SHELL_START_RE.match(first)) or "<<'" in fix_code
+    if _SHELL_START_RE.match(first) or (nonblank and _SHELL_START_RE.match(nonblank[0])) or "<<'" in fix_code:
+        if "text" not in fix_code:
+            return True
+        if not any(tok in fix_code for tok in ("text.", "text =", "text=", "in text", ", text")):
+            return True
+    return False
 
 
 def _fix_syntax_context(fix_code: str) -> list[str]:
@@ -10018,7 +10161,7 @@ def run_script(
     renumbered_from: str | None = None,
     reasoning: str | None = None,
 ) -> int:
-    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    headless = os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     step_dir = script_path.parent
     sdir = step_dir.parent
     clean_reasoning = _persist_step_reasoning(step_dir, reasoning) or _resolve_step_reasoning(step_dir=step_dir) or None
@@ -10049,7 +10192,7 @@ def run_script(
     if clean_reasoning:
         summary_obj["reasoning"] = clean_reasoning
     approved, abort_reason = confirm_execution(
-        label, script_text, summary=summary_obj, script_path=script_path, auto_yes=headless
+        label, script_text, summary=summary_obj, script_path=script_path, auto_yes=(auto_yes or headless)
     )
     if not approved:
         write_private(aborted_marker, "aborted\n", overwrite=True)
@@ -10429,6 +10572,29 @@ def _reassemble_split_payload(payload: str) -> tuple[str, str | None]:
     if not m:
         cleaned = TRAILING_FENCE_RE.sub("", norm)
         c_lines = cleaned.split("\n")
+        inferred_delim: str | None = None
+        for ln in c_lines:
+            m_hdr = SPLIT_HEADER_RE.match(ln)
+            if m_hdr:
+                inferred_delim = m_hdr.group(1)
+                break
+            if _is_heredoc_terminator(ln, "RUN_BLOCK"):
+                inferred_delim = "RUN_BLOCK"
+                break
+            if _is_heredoc_terminator(ln, "RUN_FIX"):
+                inferred_delim = "RUN_FIX"
+                break
+        if inferred_delim is not None:
+            end_rel, _ = _find_outer_heredoc_end(c_lines, 0, inferred_delim)
+            if end_rel != -1:
+                c_lines = c_lines[:end_rel]
+            while True:
+                first = next((i for i, ln in enumerate(c_lines) if ln.strip()), None)
+                if first is None or not SPLIT_HEADER_RE.match(c_lines[first]):
+                    break
+                if any(_is_heredoc_terminator(ln, inferred_delim) for ln in c_lines[first + 1 :]):
+                    break
+                c_lines = c_lines[first + 1 :]
         # Also strip orphan Markdown fence lines when the local shell consumed the outer
         # `run_block ... <<'RUN_BLOCK'` header before passing stdin.
         stripped_orphan = [ln for ln in c_lines if not FENCE_LINE_RE.match(ln)]
@@ -10988,11 +11154,12 @@ def _guard_completed_session(
     out_path: Path,
     headless: bool,
     fix_target: str | None = None,
+    auto_yes: bool = False,
 ) -> int | None:
     if not is_session_completed(sdir):
         return None
     session = sdir.name
-    if headless:
+    if auto_yes or headless:
         clear_session_completed(sdir)
         return None
     rc = 2
@@ -11055,7 +11222,7 @@ def cmd_normal(
     if in_run_block():
         return _reject_nested_step_execution(f"block {ref}")
     payload, split_err = _reassemble_split_payload(payload)
-    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    headless = os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, step = parse_ref(ref, allow_fix_step=False)
     step_num = int(step)
     if step_num < 1:
@@ -11071,7 +11238,7 @@ def cmd_normal(
     out_path = step_dir / "out"
     if split_err:
         return not_run_exit(label, sdir, step, out_path, f"[{label}] NOT RUN: {split_err}", headless=headless)
-    rc_done = _guard_completed_session(label, sdir, step, out_path, headless)
+    rc_done = _guard_completed_session(label, sdir, step, out_path, headless, auto_yes=auto_yes)
     if rc_done is not None:
         return rc_done
 
@@ -11245,12 +11412,12 @@ def cmd_fix(
     if in_run_block():
         return _reject_nested_step_execution(f"--fix {ref}")
     fix_code, split_err = _reassemble_split_payload(fix_code)
-    headless = auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+    headless = os.environ.get("RUN_BLOCK_HEADLESS") == "1"
     session, target = parse_ref(ref, allow_fix_step=True)
     target_ref = f"{session}/{target}"
     base_step = target.split("_", 1)[0]
-    next_seq_ref = f"{session}/{int(base_step) + 1}"
     sdir = ensure_base() / session
+    next_seq_ref = f"{session}/{next_free_step(sdir, min_step=int(base_step) + 1)}"
     new_step = next_fix_step(target, sdir=sdir)
     label = f"{session}/{new_step}"
     new_step_dir = _step_dir(sdir, new_step)
@@ -11274,7 +11441,7 @@ def cmd_fix(
             fix_target=target_ref,
         )
 
-    rc_done = _guard_completed_session(label, sdir, new_step, out_path, headless, fix_target=target_ref)
+    rc_done = _guard_completed_session(label, sdir, new_step, out_path, headless, fix_target=target_ref, auto_yes=auto_yes)
     if rc_done is not None:
         return rc_done
 
@@ -11310,14 +11477,14 @@ def cmd_fix(
     if not fix_code.strip():
         return _fail_not_run("empty fix on stdin")
 
+    if _looks_like_shell_script(fix_code):
+        return _fail_not_run(
+            "--fix payload looks like a shell script, not a Python text patch\n"
+            f"Hint: run it as a fresh {next_seq_ref} block instead of --fix"
+        )
+
     ast_ok, ast_err = validate_fix_ast(fix_code)
     if not ast_ok:
-        if _looks_like_shell_script(fix_code):
-            shell_ref = f"{session}/{next_free_step(sdir, min_step=int(base_step) + 1)}"
-            return _fail_not_run(
-                "--fix payload looks like a shell script, not a Python text patch\n"
-                f"Hint: run it as a fresh {shell_ref} block instead of --fix"
-            )
         reason = f"unsafe construct in --fix ({ast_err})"
         ctx = _fix_syntax_context(fix_code)
         if ctx:
@@ -11374,14 +11541,39 @@ def cmd_fix(
         break
 
     if chosen_step is None or chosen_script is None:
-        if _repair and not headless and sys.stdout.isatty() and not no_clipboard():
-            repaired = _propose_anchor_repair(fix_code, primary_text, primary_ns, label, sdir)
-            if repaired is not None:
-                return cmd_fix(ref, repaired, auto_yes=auto_yes, sandbox_override=sandbox_override, _repair=False, reasoning=reasoning)
         reason = primary_err or f"fix made no changes to {primary[1]}"
         hints = _fix_anchor_hints(fix_code, primary_text, primary_ns, next_seq_ref, get_work_dir(sdir))
         if hints:
             reason += "\n" + "\n".join(hints)
+        if _repair and not auto_yes and not headless and sys.stdout.isatty() and not no_clipboard():
+            msg = f"[{label}] NOT RUN: {reason}"
+            if reach_limit:
+                msg += f"\n{stop_directive}"
+            line = msg if msg.endswith("\n") else msg + "\n"
+            detail_lines = reason.splitlines() or [reason]
+            new_step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            _persist_step_reasoning(new_step_dir, reasoning)
+            write_private(fix_path, fix_code, overwrite=True)
+            write_private(out_path, line, overwrite=True)
+            write_step_meta(
+                new_step_dir,
+                duration_ms=0,
+                exit_code=2,
+                outcome="not-run",
+                reason=detail_lines[0],
+                fix_target=target_ref,
+                reasoning=reasoning,
+            )
+            repaired, prompted = _propose_anchor_repair(
+                fix_code, primary_text, primary_ns, label, sdir, out_path=out_path, fix_path=fix_path
+            )
+            if repaired is not None:
+                shutil.rmtree(new_step_dir, ignore_errors=True)
+                return cmd_fix(
+                    ref, repaired, auto_yes=auto_yes, sandbox_override=sandbox_override, _repair=False, reasoning=reasoning
+                )
+            if prompted:
+                return 2
         return _fail_not_run(reason)
 
     ext = chosen_script.suffix or _script_ext()
@@ -11772,7 +11964,12 @@ def cmd_retry(
     if not script_path.is_file():
         raise SystemExit(f"{prog_name()}: block {session}/{step} not found ({script_path})")
     rc_done = _guard_completed_session(
-        f"{session}/{step}", sdir, step, out_path, auto_yes or os.environ.get("RUN_BLOCK_HEADLESS") == "1"
+        f"{session}/{step}",
+        sdir,
+        step,
+        out_path,
+        os.environ.get("RUN_BLOCK_HEADLESS") == "1",
+        auto_yes=auto_yes,
     )
     if rc_done is not None:
         return rc_done
@@ -12628,13 +12825,18 @@ def main(argv: list[str] | None = None) -> int:
                 return cmd_sandbox(rest_sb)
 
     auto_yes = False
+    headless_flag = False
     sandbox_override: str | None = None
     filtered: list[str] = []
     i = 0
     while i < len(args):
         a = args[i]
-        if a in ("-y", "--yes", "--headless"):
+        if a in ("-y", "--yes"):
             auto_yes = True
+            i += 1
+        elif a == "--headless":
+            auto_yes = True
+            headless_flag = True
             i += 1
         elif a == "--no-sandbox":
             sandbox_override = "off"
@@ -12653,6 +12855,34 @@ def main(argv: list[str] | None = None) -> int:
             filtered.append(a)
             i += 1
     args = filtered
+    if headless_flag:
+        return _run_with_headless_env(
+            lambda: _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag)
+        )
+    return _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag)
+
+
+def _run_with_headless_env(fn) -> int:
+    prev = os.environ.get("RUN_BLOCK_HEADLESS")
+    os.environ["RUN_BLOCK_HEADLESS"] = "1"
+    try:
+        return fn()
+    finally:
+        if prev is None:
+            os.environ.pop("RUN_BLOCK_HEADLESS", None)
+        else:
+            os.environ["RUN_BLOCK_HEADLESS"] = prev
+
+
+def _dispatch_cli(
+    args: list[str],
+    prompt_args: list[str],
+    prog: str,
+    auto_yes: bool,
+    sandbox_override: str | None,
+    has_start_opt: bool,
+    has_bare_sandbox_flag: bool,
+) -> int:
 
     if not args:
         if sandbox_override is not None and not has_start_opt:
