@@ -1,3 +1,19 @@
+# 🎯 [NEXT] B16: Fix run -r session resolution override and audit full-reply block extraction edge cases
+
+- Depends on: F84, B15
+- Bump: `PATCH`
+- Fix `extract_reply_block()` in `src/runner.py` so an explicit session parsed from the block header (`chosen["session"]`, e.g. `s458` from `run s458/7 <<'RUN_BLOCK'`) is preserved rather than overwritten by `default_session` (`session = str(chosen["session"]) if chosen.get("session") else default_session`), keeping `default_session` strictly as a fallback for session-less blocks (`fenced_fallback` or bare `run <<'RUN_BLOCK'`) and as a candidate-selection hint.
+- Fix `cmd_run_reply()` and `_resolve_reply_session()` in `src/runner.py` to distinguish an explicit CLI session override (`run -r <session>`, where `session_arg` is provided by the user) from an auto-inferred fallback session when `session_arg is None`:
+  - When `session_arg is None` and the pasted block explicitly specifies `run s458/7 <<'RUN_BLOCK'`, execute in `s458` even if a newer session (such as `s459`) exists in the same `Workdir`.
+  - When a reply contains multiple candidate blocks (e.g. a generic `run s1/1 <<'RUN_BLOCK'` rule example followed by the real `run s458/7 <<'RUN_BLOCK'` block, or trailing hallucinated blocks) and `session_arg is None`, prefer the first candidate whose session matches an existing open/known session for the current `Workdir` (or existing session in `base`, skipping non-existent template `s1` examples) without overriding the chosen candidate's own session name.
+  - When `session_arg is None` and the block specifies a valid non-template session name that does not exist in `base` yet (e.g. `run s500/1 <<'RUN_BLOCK'`), respect `extracted_session` instead of silently redirecting it into an older open session in the same `Workdir`.
+- Audit the full `run -r` / `--run` reply extraction and reassembly pipeline (`extract_reply_block()`, `_parse_reply_cmd_tokens()`, `_find_outer_heredoc_end()`, `_is_heredoc_terminator()`, `_reassemble_split_payload()`, `_resolve_reply_session()`, and `cmd_run_reply()`) for chat copy-paste edge cases:
+  - Unfenced or half-fenced blocks with a glued closing fence on the terminator line (`RUN_BLOCK``` ` or `RUN_FIX``` ` with optional trailing spaces) and surrounding `---` horizontal rules or prose lines.
+  - Multi-session workspace state where `s458` and a newer `s459` both exist in `base` for the same `Workdir` and `run -r` (without arguments) is given a block targeting `s458/7`.
+  - Double-pass safety when `cmd_run_reply()` passes `extracted["payload"]` into `cmd_normal()` / `cmd_fix()` (which call `_reassemble_split_payload()`), ensuring inner heredocs or nested `run ... <<'RUN_BLOCK'` documentation examples inside `payload` are never truncated or stripped on the second pass.
+  - Step renumbering (`renumbered_from` and `# run: <session>/<step>` header rewrite) when `session_arg` explicitly overrides the block's session versus when `session_arg is None` and only the step number inside the target session is adjusted.
+- Add regression unit tests in `tests/test_runner.py` covering unfenced `run s458/7 <<'RUN_BLOCK' ... RUN_BLOCK``` ` replies when a newer session `s459` exists, multi-candidate replies with `s1/1` prose examples across multiple open sessions, explicit `run -r <session>` override vs `run -r` auto-detection, and double-pass nested heredoc preservation.
+
 # 🎯 [NEXT] F85: Export non-interactive pager defaults in child step execution environment
 
 - Depends on: D3
@@ -25,7 +41,7 @@
 
 # ⚪ [NEW] F93: Split src/runner.py by responsibility
 
-- Depends on: F94, B15
+- Depends on: F94, B15, B16
 src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
 
 # ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
@@ -64,7 +80,7 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
 
 - Depends on: D10, F85
 - Depends on: B14 -> F92 -> F84
-- Depends on: F94, B15 -> F93
+- Depends on: F94, B15, B16 -> F93
 - Implement the built-in LLM API agent mode in `run` per `D10` so `todo <ID> | context | run` (or standalone `run`) can drive multi-step agent sessions directly over provider APIs while preserving `c(opy)` clipboard and `run -r` workflows:
   - Provider profiles, API key loading, and child environment secret scrubbing (`scrub_child_env()` in `src/runner.py`, `src/config.py`).
   - Stdlib `urllib.request` HTTP/SSE streaming client, single polymorphic `run` tool schema (`edits`, `script`, `fix_target`, `done`, `done_note`), and fallback reply extraction via `extract_reply_block()`.
