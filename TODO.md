@@ -139,6 +139,12 @@ src/runner.py keeps growing (about 2600 lines after F74) and mixes step executio
   - Exact post-turn provider token and cache usage accounting (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`) recorded in `<session>/chat.json` and `<session>/meta.json` and surfaced in `Stats:` across `END STEP` and `END SESSION` while preserving offline stdlib pre-flight estimation (`count_tokens()`, `format_stats()`).
   - Interactive TUI agent loop in `START SESSION`, `START STEP` (`BLOCK PLAN` reasoning + structured `edits` diff preview), `END STEP`, and `END SESSION` (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`).
 
+# ⚪ [NEW] F100: Refine README.md progressive disclosure, add Options table, and update producer chain example
+
+- Keep the introduction and `Quick Start` scenario-focused by moving low-level step descriptor/artifact details (`<session>/<step>/out`, `aborted`, `error`, `meta.json`) and `--fix` fuzzy-anchor heuristics (`similarity >= 0.85`, traceback tail extraction) into a dedicated reference section in the second half of `README.md`.
+- Add a structured `Options` table under `CLI Reference` matching `run --help` and `agents/stack/cli/docs.md`.
+- Update the legacy producer chain example `chain: ["todo_md"]` to `chain: ["vitalio/todo-md"]`.
+
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
 - Depends on: F79, F83, F88
