@@ -73,7 +73,8 @@ rules are loaded via `.context.bundle`.
   (`run --continue [session]` / `-c`), safe autopilot (`--autopilot`), and
   supervisor-session stepping (`run --step <session> --propose|--approve|--reject|--reply|--autopilot`).
   `scrub_child_env()` always strips provider API key env vars from child step
-  processes across all sandbox modes (`off`, `nonet`, `strict`).
+  processes across all sandbox modes (`off`, `nonet`, `strict`), and project
+  `.run-block.json` files are restricted to a non-privileged setting allowlist.
 - `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
   piped `stdin` (`run` / `<command> | run` -> `<session>/0` and
   `<session>/meta.json`), injecting embedded `bash` terminal block rules via
