@@ -61,12 +61,16 @@ rules are loaded via `.context.bundle`.
   `--bundle-plan` text/CLI output (`cmd_bundle_plan()`).
 - `src/agent.py` (designed in `docs/adr/0001-built-in-api-agent-mode.md`) —
   built-in LLM API agent transport: model/role profile resolution
-  (`~/.config/run-block/models.json`, `RUN_BLOCK_MODEL*`), `Bundle-Protocol: 1`
-  cache-prefix splitting (`system` rules + `AGENTS.md` vs `user[0]` session
-  headers + dynamic parts), stdlib `urllib.request` HTTP/SSE streaming clients
-  (Anthropic Messages and OpenAI-compatible Chat Completions), single `run`
-  tool schema (`script`, optional `fix_target`), append-only `<session>/chat.json`
-  transcript and provider token/cache usage tracking, safe autopilot, and
+  (`~/.config/run-block/config.json` / `models.json`, `RUN_BLOCK_MODEL*`,
+  `--profile <name>` / `-P`), `Bundle-Protocol: 1` cache-prefix splitting
+  (`system` rules with one-time `agents/run-api.md` swap + `AGENTS.md` vs
+  `user[0]` session headers + dynamic parts), stdlib `urllib.request` HTTP/SSE
+  streaming clients (Anthropic Messages and OpenAI-compatible Chat Completions),
+  single `run` tool schema (`script`, nullable `fix_target`, multi-call guard),
+  append-only `<session>/chat.json` transcript (1:1 synchronized with
+  `<session>/<step>/` artifacts) and provider token/cache usage tracking,
+  strict `awaiting_reply` handling on prose-only turns, session continuation
+  (`run --continue [session]` / `-c`), safe autopilot (`--autopilot`), and
   supervisor-session stepping (`run --step <session> --propose|--approve|--reject|--reply|--autopilot`).
   `scrub_child_env()` always strips provider API key env vars from child step
   processes across all sandbox modes (`off`, `nonet`, `strict`).
