@@ -49,6 +49,16 @@
   - Persist append-only conversation turns, threshold context compaction (`RUN_BLOCK_COMPACT_TOKENS`), and exact provider usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`, `response_at`) in `<session>/chat.json`, `<session>/<step>/meta.json`, and `<session>/meta.json`.
   - Add offline unit tests in `tests/test_agent.py` using mocked HTTP/SSE streams to verify prefix splitting, one-time `EMBEDDED_RULE_API` replacement, multi-call guard, `cache_control` breakpoint placement, usage accounting, and threshold compaction.
 
+# 🎯 [NEXT] F106: Add model-order (system/user) view mode and interactive toggle to --bundle-plan and START SESSION info
+
+- Depends on: F102
+- Bump: `MINOR`
+- Add an explicit model-delivery order view mode alongside the existing source-chain tree in `src/bundle_view.py`, `src/ui_info.py`, `src/header.py`, and `README.md`:
+  - Support `--order` (and `--tree`, default `--tree`) on `run --bundle-plan [<session>] [--order | --tree] [--json] [--part N]`.
+  - In `order` mode, render bundle parts strictly in their stitched prompt delivery order grouped under the two API message containers defined in `docs/adr/0001-built-in-api-agent-mode.md`: `[system]` (all `kind == "rule"` parts in exact `===== Rules =====` order plus root `AGENTS.md` `kind == "file"`) and `[user]` (`kind == "header"` session preamble followed by `cmd`, remaining `file`, and `prompt` parts in exact `line_start..line_end` order), displaying each part's canonical part index.
+  - In the interactive `START SESSION` `i(nfo)` fullscreen viewer (`src/ui_info.py`), bind hotkey `o` (`o(rder): model/tree` in the footer bar) to toggle live between the source-chain tree and the model-delivery order table while keeping `Tab: parts` and `Enter: open part` navigation working seamlessly in both modes.
+- Add unit tests in `tests/test_bundle.py` and `tests/test_ui.py` covering `--bundle-plan --order`, `[system]`/`[user]` grouping metrics, and interactive `o` mode toggling in `START SESSION` info.
+
 # 🎯 [NEXT] F103: Add proposed step state machine, safe autopilot, and supervisor-session CLI (run --step)
 
 - Depends on: F93
