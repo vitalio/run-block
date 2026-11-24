@@ -53,7 +53,7 @@ HELP_COMMANDS = (
     ("{prog}", "Start a rule-only session on TTY stdin (or read a bundle from piped stdin)"),
     ("<command> | {prog}", "Start a new session from a stdin context bundle into {base_dir}/<session>/0"),
     ("{prog} [-y] <session>/<step>", "Run the block from stdin (-y/--yes: auto-confirm START STEP and reopen a completed session)"),
-    ("{prog} -r | --run [-y] [session]", "Run full model reply from editor (TTY) or stdin with block extraction and step inference"),
+    ("{prog} -r | --run [-c] [-y] [sess]", "Run full model reply from clipboard (-c), editor (TTY), or stdin with step inference"),
     ("{prog} --plan", "Analyze the script from stdin and print the JSON execution and safety plan"),
     ("{prog} --bundle-plan [sess]", "Print the Parts table and warnings of a bundle from stdin or session (--json, --part N)"),
     ("{prog} --fix [-y] <session>/<ref>", "Patch <ref> script via Python on stdin and run as <ref>_N"),
@@ -74,7 +74,8 @@ HELP_COMMANDS = (
 )
 
 HELP_OPTIONS = (
-    ("-r, --run [session]", "Full-reply mode: extract block & reasoning from editor (TTY) or piped stdin and infer step"),
+    ("-r, --run [session]", "Full-reply mode: extract block & reasoning from clipboard (-c), editor (TTY), or piped stdin"),
+    ("-c, --clipboard", "Read full model reply directly from system clipboard (use with -r/--run, e.g. {prog} -rc)"),
     ("-y, --yes", "Auto-confirm START STEP and reopen a completed session (keeps TUI cards and clipboard prompts)"),
     ("--headless", "Non-interactive headless mode without TUI boxes or prompts (same as RUN_BLOCK_HEADLESS=1)"),
     ("-p, --prompt TEXT", "Embed repeatable prompt text into the started session bundle (===== Prompt =====)"),

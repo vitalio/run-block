@@ -2220,6 +2220,104 @@ class TestRunner(RunBlockTestCase):
             (self.tmp / "s500" / "1" / "out").read_text(encoding="utf-8"),
         )
 
+    def test_read_clipboard_text_backends_and_pre_allocation_reply_validation(self):
+        fence = chr(96) * 3
+
+        # 1. clipboard_read_command symmetry across Wayland, X11 (xclip/xsel), macOS (pbpaste), and WSL (powershell.exe)
+        backend_cases = (
+            ({"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}, {"wl-paste": "/usr/bin/wl-paste"}, ["wl-paste", "--no-newline"]),
+            ({"WAYLAND_DISPLAY": "", "DISPLAY": ":0"}, {"xclip": "/usr/bin/xclip"}, ["xclip", "-selection", "clipboard", "-o"]),
+            ({"WAYLAND_DISPLAY": "", "DISPLAY": ":0"}, {"xsel": "/usr/bin/xsel"}, ["xsel", "--clipboard", "--output"]),
+            ({"WAYLAND_DISPLAY": "", "DISPLAY": ""}, {"pbpaste": "/usr/bin/pbpaste"}, ["pbpaste"]),
+            (
+                {"WAYLAND_DISPLAY": "", "DISPLAY": ""},
+                {"powershell.exe": "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"},
+                ["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"],
+            ),
+            ({"WAYLAND_DISPLAY": "", "DISPLAY": ""}, {}, None),
+        )
+        for env_over, which_map, exp_cmd in backend_cases:
+            with self.subTest(exp_cmd=exp_cmd), \
+                 unittest.mock.patch.dict(os.environ, env_over, clear=False), \
+                 unittest.mock.patch.object(self.mod.shutil, "which", side_effect=lambda b, m=which_map: m.get(b)):
+                self.assertEqual(self.mod.clipboard_read_command(), exp_cmd)
+
+        # 2. read_clipboard_text returns decoded stdout on rc=0 and empty string on non-zero or missing utility
+        fake_cp_ok = subprocess.CompletedProcess(["wl-paste", "--no-newline"], 0, stdout=b"clipboard body\n", stderr=b"")
+        fake_cp_err = subprocess.CompletedProcess(["wl-paste", "--no-newline"], 1, stdout=b"", stderr=b"Nothing is copied")
+        with unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=["wl-paste", "--no-newline"]), \
+             unittest.mock.patch.object(self.mod.subprocess, "run", return_value=fake_cp_ok):
+            self.assertEqual(self.mod.read_clipboard_text(), "clipboard body\n")
+        with unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=["wl-paste", "--no-newline"]), \
+             unittest.mock.patch.object(self.mod.subprocess, "run", return_value=fake_cp_err):
+            self.assertEqual(self.mod.read_clipboard_text(), "")
+        with unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=None):
+            self.assertEqual(self.mod.read_clipboard_text(), "")
+
+        # 3. Pre-allocation validation rejects empty, plain prose, random fenced snippet (without session),
+        # session bundle (<session>/0), captured step output ([s1/1] START..END), and empty RUN_BLOCK
+        # BEFORE allocating any <session>/<step>/ directory on disk.
+        self.mod.start_session("s1")
+        bundle_0_text = (self.tmp / "s1" / "0").read_text(encoding="utf-8")
+        non_actionable_cases = (
+            ("empty_clipboard", "", None, "empty clipboard"),
+            ("whitespace_only", "   \n\t  ", "s1", "empty clipboard"),
+            ("plain_prose", "Just some copied terminal text or URL https://example.com without any block.", "s1", "no executable"),
+            ("random_fence_no_session", "Some README snippet:\n" + fence + "bash\ngit status\n" + fence + "\n", None, "no executable"),
+            ("session_bundle_0", bundle_0_text, None, "session context bundle"),
+            ("session_bundle_0_explicit", bundle_0_text, "s1", "session context bundle"),
+            ("step_output_artifact", "[s1/1] START\nhello\n[s1/1] END (12ms)\n", "s1", "captured step output"),
+            ("empty_heredoc_block", "Reasoning.\n\nrun s1/1 <<'RUN_BLOCK'\n   \nRUN_BLOCK\n", "s1", "extracted block is empty"),
+        )
+        for case_name, clip_payload, sess_arg, exp_err in non_actionable_cases:
+            with self.subTest(case=case_name), \
+                 unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=["wl-paste", "--no-newline"]), \
+                 unittest.mock.patch.object(self.mod, "read_clipboard_text", return_value=clip_payload), \
+                 unittest.mock.patch.object(self.mod, "prompt_reply_in_editor", side_effect=AssertionError("editor must not open")):
+                err_buf = io.StringIO()
+                out_buf = io.StringIO()
+                with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
+                    rc_bad = self.mod.cmd_run_reply(sess_arg, None, auto_yes=True, from_clipboard=True)
+                self.assertEqual(rc_bad, 2, msg=err_buf.getvalue())
+                self.assertIn(exp_err, err_buf.getvalue())
+                # Verify zero step directories were allocated in s1 (or any other session)
+                self.assertEqual(list(self.mod._iter_session_steps(self.tmp / "s1")), [])
+                self.assertEqual([p.name for p in self.tmp.iterdir() if p.is_dir()], ["s1"])
+
+        # 4. Missing clipboard utility fails cleanly with rc=2 and zero step allocation
+        with unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=None):
+            err_buf = io.StringIO()
+            with contextlib.redirect_stderr(err_buf):
+                rc_no_util = self.mod.cmd_run_reply("s1", None, auto_yes=True, from_clipboard=True)
+            self.assertEqual(rc_no_util, 2)
+            self.assertIn("no clipboard utility found", err_buf.getvalue())
+            self.assertEqual(list(self.mod._iter_session_steps(self.tmp / "s1")), [])
+
+        # 5. Valid clipboard reply executes directly without opening editor
+        valid_clip_reply = (
+            "Executing step 1 directly from system clipboard.\n\n"
+            + fence + "bash\n"
+            "run s1/1 <<'RUN_BLOCK'\n"
+            "echo from_clipboard_ok\n"
+            "RUN_BLOCK\n"
+            + fence + "\n"
+        )
+        fake_tty_stdin = io.StringIO()
+        fake_tty_stdin.isatty = lambda: True  # type: ignore[method-assign]
+        with unittest.mock.patch.object(self.mod.sys, "stdin", fake_tty_stdin), \
+             unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=["wl-paste", "--no-newline"]), \
+             unittest.mock.patch.object(self.mod, "read_clipboard_text", return_value=valid_clip_reply), \
+             unittest.mock.patch.object(self.mod, "prompt_reply_in_editor", side_effect=AssertionError("editor must not open")), \
+             contextlib.redirect_stdout(io.StringIO()):
+            rc_ok = self.mod.cmd_run_reply(None, None, auto_yes=True, from_clipboard=True)
+        self.assertEqual(rc_ok, 0)
+        self.assertTrue((self.tmp / "s1" / "1" / "block.sh").is_file())
+        self.assertIn("from_clipboard_ok", (self.tmp / "s1" / "1" / "out").read_text(encoding="utf-8"))
+        self.assertEqual(
+            self.mod.read_step_meta(self.tmp / "s1" / "1").get("reasoning"),
+            "Executing step 1 directly from system clipboard.",
+        )
+
 
     def test_auto_yes_keeps_interactive_tui_cards_while_headless_suppresses_them(self):
         class _Tty(io.StringIO):

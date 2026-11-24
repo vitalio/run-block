@@ -89,7 +89,7 @@ class TestCli(RunBlockTestCase):
     def test_help_lists_session_inspection_flags(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
         self._assert_ok(r)
-        for flag in ("--info", "--filter", "--script", "--out", "-r", "--run", "RUN_BLOCK_PAGER=cat|inherit"):
+        for flag in ("--info", "--filter", "--script", "--out", "-r", "--run", "-c", "--clipboard", "RUN_BLOCK_PAGER=cat|inherit"):
             with self.subTest(flag=flag):
                 self.assertIn(flag, r.stdout)
 
@@ -117,11 +117,30 @@ class TestCli(RunBlockTestCase):
         self.assertIn("[s1/2] START", r_eq.stdout)
         self.assertNotIn("╭─ END STEP ", r_eq.stdout)
 
+        # Clipboard ingestion via -rc, -r -c, and -r --clipboard without opening editor
+        for idx_clip, clip_args in enumerate(
+            (["-rc", "-y", "s1"], ["-r", "-c", "-y", "s1"], ["-r", "--clipboard", "--headless", "s1"]),
+            start=3,
+        ):
+            with self.subTest(clip_args=clip_args), \
+                 unittest.mock.patch.object(self.mod, "clipboard_read_command", return_value=["wl-paste", "--no-newline"]), \
+                 unittest.mock.patch.object(self.mod, "read_clipboard_text", return_value=reply), \
+                 unittest.mock.patch.object(self.mod, "prompt_reply_in_editor", side_effect=AssertionError("editor should not open")):
+                r_clip = self._run_in_process(clip_args)
+                self._assert_ok(r_clip)
+                out_p = self.tmp / "s1" / str(idx_clip) / "out"
+                self.assertTrue(out_p.is_file())
+                self.assertIn("reply_routed_ok", out_p.read_text(encoding="utf-8"))
+
         bad_cases = (
             (["-r", "s1", "s2"], 1, "usage:"),
+            (["-rc", "s1", "s2"], 1, "usage:"),
             (["-r", "--bogus"], 1, "usage:"),
             (["--run="], 1, "usage:"),
+            (["-c"], 1, "-c/--clipboard requires -r/--run"),
+            (["--clipboard"], 1, "-c/--clipboard requires -r/--run"),
             (["-r", "-p", "x"], 1, "cannot be used"),
+            (["-rc", "-p", "x"], 1, "cannot be used"),
             (["-r", "bad/name/extra"], 1, "invalid"),
             (["-r", "-y", "s1"], 2, "empty reply"),
         )
@@ -198,7 +217,7 @@ class TestCli(RunBlockTestCase):
         self.assertIn("<session>/<step>/out", step_ref_section)
         self.assertIn("similarity >= 0.85", step_ref_section)
         options_section = readme_md[opts_idx:env_idx]
-        for flag in ("-r", "--run", "-y", "--yes", "--headless", "-p", "--prompt", "--sandbox", "--no-sandbox", "-V", "--version", "-h", "--help"):
+        for flag in ("-r", "--run", "-c", "--clipboard", "-y", "--yes", "--headless", "-p", "--prompt", "--sandbox", "--no-sandbox", "-V", "--version", "-h", "--help"):
             self.assertIn(flag, options_section)
 
     def test_self_update_and_check_update(self):

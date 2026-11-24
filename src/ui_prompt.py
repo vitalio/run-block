@@ -846,6 +846,40 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
         return False
 
 
+def clipboard_read_command() -> list[str] | None:
+    if shutil.which("wl-paste") and os.environ.get("WAYLAND_DISPLAY"):
+        return ["wl-paste", "--no-newline"]
+    if shutil.which("xclip") and os.environ.get("DISPLAY"):
+        return ["xclip", "-selection", "clipboard", "-o"]
+    if shutil.which("xsel") and os.environ.get("DISPLAY"):
+        return ["xsel", "--clipboard", "--output"]
+    if shutil.which("pbpaste"):
+        return ["pbpaste"]
+    if shutil.which("powershell.exe"):
+        return ["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"]
+    return None
+
+
+def read_clipboard_text() -> str:
+    cmd = clipboard_read_command()
+    if cmd is None:
+        return ""
+    try:
+        r = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ""
+        return r.stdout.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def prompt_reply_in_editor(tty_streams: tuple[object, object] | None = None) -> str:
     fd, name = tempfile.mkstemp(prefix="run_block_reply_", suffix=".md")
     os.close(fd)

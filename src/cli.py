@@ -314,6 +314,21 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 sandbox_override = "strict"
                 i += 1
+        elif (
+            len(a) > 2
+            and a.startswith("-")
+            and not a.startswith("--")
+            and set(a[1:]).issubset({"r", "c", "y"})
+            and ("r" in a[1:] or "c" in a[1:])
+            and (i == 0 or args[i - 1] not in ("-m", "--filter", "--session"))
+        ):
+            if "y" in a[1:]:
+                auto_yes = True
+            if "r" in a[1:]:
+                filtered.append("-r")
+            if "c" in a[1:]:
+                filtered.append("-c")
+            i += 1
         else:
             filtered.append(a)
             i += 1
@@ -448,22 +463,35 @@ def _dispatch_cli(
     if args[0] in ("--start", "--bundle"):
         return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)
 
-    if args[0] in ("-r", "--run") or args[0].startswith("--run="):
-        run_usage = f"{prog} --run [-y] [session]"
+    if args[0] in ("-r", "--run", "-c", "--clipboard") or args[0].startswith("--run="):
+        run_usage = f"{prog} --run [-c] [-y] [session]"
         if prompt_args:
             _reject_prompt_for(args[0].split("=", 1)[0], run_usage)
+        has_run = False
+        from_clipboard = False
         run_session: str | None = None
-        if args[0].startswith("--run="):
-            val = args[0].split("=", 1)[1]
-            if not val or len(args) > 1:
+        for tok in args:
+            if tok in ("-r", "--run"):
+                has_run = True
+            elif tok.startswith("--run="):
+                has_run = True
+                val = tok.split("=", 1)[1]
+                if not val or run_session is not None:
+                    raise SystemExit(f"{prog}: usage: {run_usage}")
+                run_session = val
+            elif tok in ("-c", "--clipboard"):
+                from_clipboard = True
+            elif tok.startswith("-") or run_session is not None:
                 raise SystemExit(f"{prog}: usage: {run_usage}")
-            run_session = val
-        elif len(args) > 2 or (len(args) == 2 and args[1].startswith("-")):
-            raise SystemExit(f"{prog}: usage: {run_usage}")
-        elif len(args) == 2:
-            run_session = args[1]
+            else:
+                run_session = tok
+        if not has_run:
+            raise SystemExit(f"{prog}: -c/--clipboard requires -r/--run (usage: {run_usage})")
         return cmd_run_reply(
-            run_session, auto_yes=auto_yes, sandbox_override=sandbox_override
+            run_session,
+            auto_yes=auto_yes,
+            sandbox_override=sandbox_override,
+            from_clipboard=from_clipboard,
         )
 
     if args[0] == "--fix":

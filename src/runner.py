@@ -1751,6 +1751,25 @@ def _candidate_session_tiers() -> list[set[str]]:
     return [t for t in (open_matching, any_matching, open_any, all_existing) if t]
 
 
+def _is_non_reply_clipboard_artifact(norm: str) -> str | None:
+    stripped = norm.strip()
+    if not stripped:
+        return None
+    nonempty = [ln.strip() for ln in stripped.split("\n") if ln.strip()]
+    if len(nonempty) >= 2:
+        m_start = re.match(r"^\[([A-Za-z0-9._-]+/\d+(?:_\d+)?)\] START$", nonempty[0])
+        if m_start and re.match(rf"^\[{re.escape(m_start.group(1))}\] END\b", nonempty[-1]):
+            return f"reply is captured step output ({m_start.group(1)}), not a model reply"
+    head_block = stripped.split("\n\n", 1)[0]
+    if (
+        re.search(r"^Session:\s+\S+$", head_block, flags=re.MULTILINE)
+        and re.search(r"^Next-Block:\s+\S+$", head_block, flags=re.MULTILINE)
+        and re.search(r"^===== Rules =====$", stripped, flags=re.MULTILINE)
+    ):
+        return "reply is a session context bundle (<session>/0), not a model reply"
+    return None
+
+
 def extract_reply_block(
     reply_text: str,
     default_session: str | None = None,
@@ -1759,6 +1778,9 @@ def extract_reply_block(
 ) -> dict[str, object]:
     """Extract the first actionable run / --fix block (matching default_session when present) and preceding reasoning, discarding trailing hallucinations."""
     norm = reply_text.replace("\r\n", "\n")
+    artifact_err = _is_non_reply_clipboard_artifact(norm)
+    if artifact_err is not None:
+        return {"ok": False, "error": artifact_err}
     lines = norm.split("\n")
 
     candidates: list[dict[str, object]] = []
@@ -2020,6 +2042,7 @@ def cmd_run_reply(
     *,
     auto_yes: bool = False,
     sandbox_override: str | None = None,
+    from_clipboard: bool = False,
 ) -> int:
     prog = prog_name()
     if in_run_block():
@@ -2033,23 +2056,39 @@ def cmd_run_reply(
             raise SystemExit(f"{prog}: invalid session name: {session_arg!r}")
 
     if reply_text is None:
-        if sys.stdin.isatty():
+        if from_clipboard:
+            if clipboard_read_command() is None:
+                sys.stderr.write(f"{prog}: no clipboard utility found (requires wl-paste, xclip, xsel, pbpaste, or powershell.exe)\n")
+                return 2
+            reply_text = read_clipboard_text()
+        elif sys.stdin.isatty():
             reply_text = prompt_reply_in_editor()
         else:
             reply_text = sys.stdin.read()
 
     if not reply_text or not reply_text.strip():
-        sys.stderr.write(f"{prog}: empty reply (nothing to run)\n")
+        src_hint = "empty clipboard" if from_clipboard else "empty reply"
+        sys.stderr.write(f"{prog}: {src_hint} (nothing to run)\n")
         return 2
 
     extracted = extract_reply_block(
         reply_text,
         default_session=session_arg,
-        allow_fenced_fallback=True,
+        allow_fenced_fallback=bool(session_arg),
     )
     if not extracted.get("ok"):
         err_msg = str(extracted.get("error") or "no executable block found in reply")
         sys.stderr.write(f"{prog}: {err_msg}\n")
+        return 2
+
+    kind = str(extracted.get("kind") or "normal")
+    raw_payload = str(extracted.get("payload") or "")
+    payload, split_err = _reassemble_split_payload(raw_payload)
+    if split_err:
+        sys.stderr.write(f"{prog}: {split_err}\n")
+        return 2
+    if not payload.strip():
+        sys.stderr.write(f"{prog}: extracted block is empty\n")
         return 2
 
     extracted_sess = str(extracted["session"]) if extracted.get("session") else None
@@ -2058,9 +2097,6 @@ def cmd_run_reply(
     sdir = base / session
     sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
     ensure_session_bundle(sdir, sandbox_mode=sandbox_override)
-
-    kind = str(extracted.get("kind") or "normal")
-    payload = str(extracted.get("payload") or "")
     reasoning = str(extracted.get("reasoning") or "").strip() or None
     raw_step = str(extracted["step"]) if extracted.get("step") else None
     orig_ref = str(extracted["ref"]) if extracted.get("ref") and "/" in str(extracted["ref"]) else None

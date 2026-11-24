@@ -36,12 +36,12 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.38.1"
+VERSION = "0.39.0"
 REPO_MARKER = "run-block-repo: vitalio/run-block"
 LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
 REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run-block/main/run"
-EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run}` Markdown code block:\n\n```bash\n{cmd:run} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks. If any command inside a block prints a traceback or error (even when a later command in the same block exits `0` without `set -e`), treat the step as failed and fix the error before proceeding.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is renumbered (`[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), continue sequentially from `<new+1>`. Pipe `<bundle_cmd> | {cmd:run}` to initialize a session (`--bundle-plan [<session>] [--part N]` inspects bundle parts), or run `{cmd:run} -r [session]` / `--run [session]` on the host to ingest a full reply with automatic block extraction and step inference. Never pass `-y` or `--yes` on a `{cmd:run}` command line.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Session completion & handoff (`--done`): `{cmd:run} --done [<session>] [-m "<note>"]` marks a session completed and can be followed inside the same block by `<bundle_cmd> | {cmd:run}` to initialize a new session (nested `<session>/<step>`, `--fix`, and `--retry` calls inside a running block are rejected). Emit `--done` only in a dedicated final block at the end of the session completion summary reply, after all commits, pushes, and verification checks have succeeded in earlier steps — never combine `--done` with verification commands, tests, or commits in the same block.'
+EMBEDDED_RULE_BASH = '## Terminal blocks (`{cmd:run}`)\n\nYou have no direct shell access. To run commands, end your reply with at most one `{cmd:run}` Markdown code block:\n\n```bash\n{cmd:run} s1/1 <<\'RUN_BLOCK\'\ngit status -sb\nRUN_BLOCK\n```\n\n### CRITICAL — STRICT LAYOUT & MARKDOWN FENCE RULES\n\n1. ONE BLOCK PER MESSAGE, ALWAYS AT THE VERY END (BATCH COMMANDS INSIDE IT): Batch all related file reads, edits, and checks into a single block (never output two blocks or read one file per turn). Once you emit the closing fence of that single block, end your message immediately — never anticipate or simulate command output, never continue reasoning after the block, and wait for the user to reply with `[<session>/<step>]` results before taking the next step.\n2. COLUMN-0 FENCES & SEPARATE-LINE HEREDOC TERMINATOR: Leave an empty line before the opening `bash` fence. Start the opening fence, `{cmd:run} ... <<\'RUN_BLOCK\'`, `RUN_BLOCK` (or `RUN_FIX`), and the closing fence at column 0, each on its own separate line. Always emit a newline immediately after `RUN_BLOCK` (or `RUN_FIX`) so the closing fence stands alone on the final line.\n3. NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED `$ ... $` IN MULTILINE LITERALS: Never write three consecutive backticks (even inside `old`/`new` Markdown replacement anchors — anchor on surrounding non-fence lines, or construct via `chr(96) * 3`) or a standalone `RUN_BLOCK` / `RUN_FIX` line inside the script body. Also avoid placing two `$` characters on the same line inside multiline string literals (chat Markdown/LaTeX renderers treat `$ ... $` outside broken fences as inline math and strip spaces; use `chr(36)` or separate lines).\n4. ISOLATED SHELL & FAIL-FAST: Each block runs in a fresh `bash` process in `Workdir` (`cd` and shell variables do not persist across blocks). Enable `set -euo pipefail` only in state-mutating/build/commit blocks, never in read-only inspection blocks. If any command inside a block prints a traceback or error (even when a later command in the same block exits `0` without `set -e`), treat the step as failed and fix the error before proceeding.\n\n### Session & Step Numbering (`<session>/<step>`) & `--fix`\n\n- Sequential steps: Start from `Next-Block: <session>/<step>` in the header (`s1/1`) and increment after each `[<session>/<step>]` result (`s1/2`, `s1/3`, ...). Every executed block consumes its step number; never reuse or skip a number, and never re-emit an unexecuted block if the script did not change. If a step is renumbered (`[<session>/<new>] Note: renumbered from <session>/<old> to <session>/<new>...`), continue sequentially from `<new+1>`. Pipe `<bundle_cmd> | {cmd:run}` to initialize a session (`--bundle-plan [<session>] [--part N]` inspects bundle parts), or run `{cmd:run} -r [-c] [session]` / `{cmd:run} -rc [session]` on the host to ingest a full reply (from clipboard with `-c`/`--clipboard`, editor on TTY, or `stdin`) with automatic block extraction and step inference. Never pass `-y` or `--yes` on a `{cmd:run}` command line.\n- Use `--fix <session>/<target>` for small, targeted patches on failure: When a block fails and prior commands were idempotent (read-only checks, `bash -n`, or atomic in-memory checks before `.write_text()`), use `{cmd:run} --fix <session>/<target>` to apply a small, targeted patch to `text` in Python (`text` and `re` are preloaded; `import`, `_` attributes, and file I/O are forbidden). If the fix is comparable in size to the original block or requires rewriting multiple sections, emit a fresh `<session>/<step+1>` block directly instead:\n\n```bash\n{cmd:run} --fix s1/1 <<\'RUN_FIX\'\nold = \'wrong_command\'\nnew = \'right_command\'\nassert text.count(old) == 1\ntext = text.replace(old, new, 1)\nRUN_FIX\n```\n- Fix chaining & 2-attempt limit: Each `--fix` call allocates the next slot (`s1/1_1`, `s1/1_2`, ...). When chaining fixes, target the latest executed script (`s1/1_1`) or the base step (`s1/1`). After at most 2 consecutive failed `--fix` attempts on a step (or when `STOP --fix` is printed), stop calling `--fix` on that step and emit a fresh `<session>/<step+1>` block instead.\n- Session completion & handoff (`--done`): `{cmd:run} --done [<session>] [-m "<note>"]` marks a session completed and can be followed inside the same block by `<bundle_cmd> | {cmd:run}` to initialize a new session (nested `<session>/<step>`, `--fix`, and `--retry` calls inside a running block are rejected). Emit `--done` only in a dedicated final block at the end of the session completion summary reply, after all commits, pushes, and verification checks have succeeded in earlier steps — never combine `--done` with verification commands, tests, or commits in the same block.'
 
 
 HELP_USAGE = (
@@ -53,7 +53,7 @@ HELP_COMMANDS = (
     ("{prog}", "Start a rule-only session on TTY stdin (or read a bundle from piped stdin)"),
     ("<command> | {prog}", "Start a new session from a stdin context bundle into {base_dir}/<session>/0"),
     ("{prog} [-y] <session>/<step>", "Run the block from stdin (-y/--yes: auto-confirm START STEP and reopen a completed session)"),
-    ("{prog} -r | --run [-y] [session]", "Run full model reply from editor (TTY) or stdin with block extraction and step inference"),
+    ("{prog} -r | --run [-c] [-y] [sess]", "Run full model reply from clipboard (-c), editor (TTY), or stdin with step inference"),
     ("{prog} --plan", "Analyze the script from stdin and print the JSON execution and safety plan"),
     ("{prog} --bundle-plan [sess]", "Print the Parts table and warnings of a bundle from stdin or session (--json, --part N)"),
     ("{prog} --fix [-y] <session>/<ref>", "Patch <ref> script via Python on stdin and run as <ref>_N"),
@@ -74,7 +74,8 @@ HELP_COMMANDS = (
 )
 
 HELP_OPTIONS = (
-    ("-r, --run [session]", "Full-reply mode: extract block & reasoning from editor (TTY) or piped stdin and infer step"),
+    ("-r, --run [session]", "Full-reply mode: extract block & reasoning from clipboard (-c), editor (TTY), or piped stdin"),
+    ("-c, --clipboard", "Read full model reply directly from system clipboard (use with -r/--run, e.g. {prog} -rc)"),
     ("-y, --yes", "Auto-confirm START STEP and reopen a completed session (keeps TUI cards and clipboard prompts)"),
     ("--headless", "Non-interactive headless mode without TUI boxes or prompts (same as RUN_BLOCK_HEADLESS=1)"),
     ("-p, --prompt TEXT", "Embed repeatable prompt text into the started session bundle (===== Prompt =====)"),
@@ -6848,6 +6849,40 @@ def copy_file_to_clipboard(cmd: list[str], out_path: Path) -> bool:
         return False
 
 
+def clipboard_read_command() -> list[str] | None:
+    if shutil.which("wl-paste") and os.environ.get("WAYLAND_DISPLAY"):
+        return ["wl-paste", "--no-newline"]
+    if shutil.which("xclip") and os.environ.get("DISPLAY"):
+        return ["xclip", "-selection", "clipboard", "-o"]
+    if shutil.which("xsel") and os.environ.get("DISPLAY"):
+        return ["xsel", "--clipboard", "--output"]
+    if shutil.which("pbpaste"):
+        return ["pbpaste"]
+    if shutil.which("powershell.exe"):
+        return ["powershell.exe", "-NoProfile", "-Command", "Get-Clipboard"]
+    return None
+
+
+def read_clipboard_text() -> str:
+    cmd = clipboard_read_command()
+    if cmd is None:
+        return ""
+    try:
+        r = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ""
+        return r.stdout.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def prompt_reply_in_editor(tty_streams: tuple[object, object] | None = None) -> str:
     fd, name = tempfile.mkstemp(prefix="run_block_reply_", suffix=".md")
     os.close(fd)
@@ -10805,6 +10840,25 @@ def _candidate_session_tiers() -> list[set[str]]:
     return [t for t in (open_matching, any_matching, open_any, all_existing) if t]
 
 
+def _is_non_reply_clipboard_artifact(norm: str) -> str | None:
+    stripped = norm.strip()
+    if not stripped:
+        return None
+    nonempty = [ln.strip() for ln in stripped.split("\n") if ln.strip()]
+    if len(nonempty) >= 2:
+        m_start = re.match(r"^\[([A-Za-z0-9._-]+/\d+(?:_\d+)?)\] START$", nonempty[0])
+        if m_start and re.match(rf"^\[{re.escape(m_start.group(1))}\] END\b", nonempty[-1]):
+            return f"reply is captured step output ({m_start.group(1)}), not a model reply"
+    head_block = stripped.split("\n\n", 1)[0]
+    if (
+        re.search(r"^Session:\s+\S+$", head_block, flags=re.MULTILINE)
+        and re.search(r"^Next-Block:\s+\S+$", head_block, flags=re.MULTILINE)
+        and re.search(r"^===== Rules =====$", stripped, flags=re.MULTILINE)
+    ):
+        return "reply is a session context bundle (<session>/0), not a model reply"
+    return None
+
+
 def extract_reply_block(
     reply_text: str,
     default_session: str | None = None,
@@ -10813,6 +10867,9 @@ def extract_reply_block(
 ) -> dict[str, object]:
     """Extract the first actionable run / --fix block (matching default_session when present) and preceding reasoning, discarding trailing hallucinations."""
     norm = reply_text.replace("\r\n", "\n")
+    artifact_err = _is_non_reply_clipboard_artifact(norm)
+    if artifact_err is not None:
+        return {"ok": False, "error": artifact_err}
     lines = norm.split("\n")
 
     candidates: list[dict[str, object]] = []
@@ -11074,6 +11131,7 @@ def cmd_run_reply(
     *,
     auto_yes: bool = False,
     sandbox_override: str | None = None,
+    from_clipboard: bool = False,
 ) -> int:
     prog = prog_name()
     if in_run_block():
@@ -11087,23 +11145,39 @@ def cmd_run_reply(
             raise SystemExit(f"{prog}: invalid session name: {session_arg!r}")
 
     if reply_text is None:
-        if sys.stdin.isatty():
+        if from_clipboard:
+            if clipboard_read_command() is None:
+                sys.stderr.write(f"{prog}: no clipboard utility found (requires wl-paste, xclip, xsel, pbpaste, or powershell.exe)\n")
+                return 2
+            reply_text = read_clipboard_text()
+        elif sys.stdin.isatty():
             reply_text = prompt_reply_in_editor()
         else:
             reply_text = sys.stdin.read()
 
     if not reply_text or not reply_text.strip():
-        sys.stderr.write(f"{prog}: empty reply (nothing to run)\n")
+        src_hint = "empty clipboard" if from_clipboard else "empty reply"
+        sys.stderr.write(f"{prog}: {src_hint} (nothing to run)\n")
         return 2
 
     extracted = extract_reply_block(
         reply_text,
         default_session=session_arg,
-        allow_fenced_fallback=True,
+        allow_fenced_fallback=bool(session_arg),
     )
     if not extracted.get("ok"):
         err_msg = str(extracted.get("error") or "no executable block found in reply")
         sys.stderr.write(f"{prog}: {err_msg}\n")
+        return 2
+
+    kind = str(extracted.get("kind") or "normal")
+    raw_payload = str(extracted.get("payload") or "")
+    payload, split_err = _reassemble_split_payload(raw_payload)
+    if split_err:
+        sys.stderr.write(f"{prog}: {split_err}\n")
+        return 2
+    if not payload.strip():
+        sys.stderr.write(f"{prog}: extracted block is empty\n")
         return 2
 
     extracted_sess = str(extracted["session"]) if extracted.get("session") else None
@@ -11112,9 +11186,6 @@ def cmd_run_reply(
     sdir = base / session
     sdir.mkdir(mode=0o700, parents=True, exist_ok=True)
     ensure_session_bundle(sdir, sandbox_mode=sandbox_override)
-
-    kind = str(extracted.get("kind") or "normal")
-    payload = str(extracted.get("payload") or "")
     reasoning = str(extracted.get("reasoning") or "").strip() or None
     raw_step = str(extracted["step"]) if extracted.get("step") else None
     orig_ref = str(extracted["ref"]) if extracted.get("ref") and "/" in str(extracted["ref"]) else None
@@ -12958,6 +13029,21 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 sandbox_override = "strict"
                 i += 1
+        elif (
+            len(a) > 2
+            and a.startswith("-")
+            and not a.startswith("--")
+            and set(a[1:]).issubset({"r", "c", "y"})
+            and ("r" in a[1:] or "c" in a[1:])
+            and (i == 0 or args[i - 1] not in ("-m", "--filter", "--session"))
+        ):
+            if "y" in a[1:]:
+                auto_yes = True
+            if "r" in a[1:]:
+                filtered.append("-r")
+            if "c" in a[1:]:
+                filtered.append("-c")
+            i += 1
         else:
             filtered.append(a)
             i += 1
@@ -13092,22 +13178,35 @@ def _dispatch_cli(
     if args[0] in ("--start", "--bundle"):
         return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)
 
-    if args[0] in ("-r", "--run") or args[0].startswith("--run="):
-        run_usage = f"{prog} --run [-y] [session]"
+    if args[0] in ("-r", "--run", "-c", "--clipboard") or args[0].startswith("--run="):
+        run_usage = f"{prog} --run [-c] [-y] [session]"
         if prompt_args:
             _reject_prompt_for(args[0].split("=", 1)[0], run_usage)
+        has_run = False
+        from_clipboard = False
         run_session: str | None = None
-        if args[0].startswith("--run="):
-            val = args[0].split("=", 1)[1]
-            if not val or len(args) > 1:
+        for tok in args:
+            if tok in ("-r", "--run"):
+                has_run = True
+            elif tok.startswith("--run="):
+                has_run = True
+                val = tok.split("=", 1)[1]
+                if not val or run_session is not None:
+                    raise SystemExit(f"{prog}: usage: {run_usage}")
+                run_session = val
+            elif tok in ("-c", "--clipboard"):
+                from_clipboard = True
+            elif tok.startswith("-") or run_session is not None:
                 raise SystemExit(f"{prog}: usage: {run_usage}")
-            run_session = val
-        elif len(args) > 2 or (len(args) == 2 and args[1].startswith("-")):
-            raise SystemExit(f"{prog}: usage: {run_usage}")
-        elif len(args) == 2:
-            run_session = args[1]
+            else:
+                run_session = tok
+        if not has_run:
+            raise SystemExit(f"{prog}: -c/--clipboard requires -r/--run (usage: {run_usage})")
         return cmd_run_reply(
-            run_session, auto_yes=auto_yes, sandbox_override=sandbox_override
+            run_session,
+            auto_yes=auto_yes,
+            sandbox_override=sandbox_override,
+            from_clipboard=from_clipboard,
         )
 
     if args[0] == "--fix":

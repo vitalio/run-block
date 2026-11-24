@@ -29,12 +29,14 @@ rules are loaded via `.context.bundle`.
   composition, bundle/operation breakdown tables, and `PART N/M`, `BUNDLE R/M`,
   and step operation `PART k/N` subviews.
 - `src/ui_prompt.py` — `/dev/tty` lifecycle, `SIGWINCH` debounce watcher,
-  editor launch and `.orig` backups, clipboard command resolution/copying, and
-  interactive confirmation and clipboard prompts (`confirm_execution()`,
-  `prompt_yes_no_box()`, `offer_clipboard_copy()`).
+  editor launch and `.orig` backups, clipboard command resolution, copying, and
+  reading (`clipboard_command()`, `clipboard_read_command()`,
+  `read_clipboard_text()`), and interactive confirmation and clipboard prompts
+  (`confirm_execution()`, `prompt_yes_no_box()`, `offer_clipboard_copy()`).
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
-  `-r`/`--run [session]` full-reply ingestion (`extract_reply_block()`,
-  `cmd_run_reply()`), `--fix` patching, `--retry`, `--list`, `--show`,
+  `-r`/`--run [-c|--clipboard] [session]` (`run -rc`) full-reply ingestion with
+  pre-allocation reply validation (`extract_reply_block()`, `cmd_run_reply()`),
+  `--fix` patching, `--retry`, `--list`, `--show`,
   `--clean`, `-y`/`--yes` auto-confirm mode, and `--headless` (`RUN_BLOCK_HEADLESS=1`) headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
   slave or the capture pipe write end), so `out` keeps exact write order and
   the `END STEP` box takes its `Error:` line from the last meaningful line of

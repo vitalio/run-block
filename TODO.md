@@ -14,16 +14,6 @@
   - Classify features into daily core workflows, useful inspection/safety tools, and over-engineered or redundant options that can be simplified, consolidated, or removed.
   - Record agreed simplifications, flag/UX cleanups, and module boundaries for `F93` in `AGENTS.md` and `TODO.md`.
 
-# 🎯 [NEXT] F105: Add clipboard ingestion for run -r (run -rc / --clipboard) and pre-allocation reply validation
-
-- Depends on: B16
-- Bump: `MINOR`
-- Add direct system clipboard ingestion to `run -r` / `--run` and reject empty or non-actionable replies before allocating a step directory in `src/ui_prompt.py`, `src/runner.py`, `src/cli.py`, and `src/header.py`:
-  - Add `read_clipboard_text()` in `src/ui_prompt.py` symmetric with `clipboard_command()` (`wl-paste --no-newline` under `WAYLAND_DISPLAY`, `xclip -selection clipboard -o` or `xsel --clipboard --output` under `DISPLAY`, `pbpaste` on macOS, or `powershell.exe -NoProfile -Command Get-Clipboard` under WSL).
-  - Support `-c` / `--clipboard` with `-r` / `--run` (`run -rc [session]`, `run -r -c [session]`, `run -r --clipboard [session]`) in `src/cli.py` and `cmd_run_reply()` (`src/runner.py`) to read the copied model reply directly from the system clipboard without opening `$VISUAL` / `$EDITOR`.
-  - Validate that the reply payload (from clipboard, editor, or piped `stdin`) is non-empty and contains an actionable block (`extract_reply_block()`) *before* allocating `<session>/<step>/` on disk, so accidental invocations with plain clipboard text fail cleanly with zero orphan step directories.
-  - Document `run -rc` / `run -r --clipboard` in `src/header.py` (`--help`), `README.md`, and `AGENTS.md`, and add unit tests in `tests/test_cli.py` and `tests/test_runner.py`.
-
 # 🎯 [NEXT] F101: Add unified config.json settings loader, model/role profile resolution, and unconditional child env API key scrubbing
 
 - Depends on: D10, F85

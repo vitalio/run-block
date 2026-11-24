@@ -65,14 +65,21 @@ git status -sb
 python3 -m unittest
 RUN_BLOCK
 
+run -rc
+run -r --clipboard s1
 run -r
 wl-paste | run -r s1
 ```
 
-With `run -r [session]` / `run --run [session]`, you can paste or pipe an entire
-model reply (reasoning prose + code block): when `stdin` is a TTY, `run -r`
-opens a temporary buffer in `$VISUAL` / `$EDITOR`; when piped, it reads from
-`stdin`. It automatically extracts the first actionable `RUN_BLOCK` or
+With `run -r [-c] [session]` / `run --run [--clipboard] [session]` (or shorthand
+`run -rc [session]`), you can ingest an entire model reply (reasoning prose +
+code block): with `-c` / `--clipboard`, `run` reads directly from the system
+clipboard (`wl-paste`, `xclip`, `xsel`, `pbpaste`, or `powershell.exe`); when
+`stdin` is a TTY without `-c`, `run -r` opens a temporary buffer in `$VISUAL` /
+`$EDITOR`; when piped, it reads from `stdin`. Replies are validated before
+allocating `<session>/<step>/` on disk, so accidental invocations with plain
+clipboard text fail cleanly with zero orphan step directories. It automatically
+extracts the first actionable `RUN_BLOCK` or
 `--fix` / `RUN_FIX` block (matching `[session]` when given, preserving nested
 doc/heredoc examples, and discarding any trailing hallucinated output or
 subsequent blocks), repairs split fences or missing terminators, infers
@@ -288,7 +295,7 @@ run --bundle-plan s1 --part 2
 | `run [-p TEXT]` | Start a rule-only session on TTY `stdin` (or read context bundle from piped `stdin`), embedding optional repeatable `-p`/`--prompt` text |
 | `<command> \| run [-p TEXT]` | Start a new session from `stdin` context bundle into `<session>/0`, appending optional `-p`/`--prompt` text |
 | `run [-y] [--headless] <session>/<step>` | Run a block from `stdin` (`-y`/`--yes` auto-confirms `START STEP` and reopens a completed session while keeping TUI cards; `--headless` disables TUI boxes and prompts) |
-| `run -r`, `--run [-y] [session]` | Ingest a full model reply from `$VISUAL`/`$EDITOR` (on TTY `stdin`) or piped `stdin`, extract and repair the `RUN_BLOCK` / `RUN_FIX` block (or fenced code block when `[session]` is given), infer `<session>/<next_step>`, and display model reasoning in `START STEP` |
+| `run -r`, `--run [-c] [-y] [session]` | Ingest a full model reply from the system clipboard (`-c`/`--clipboard`, e.g. `run -rc`), `$VISUAL`/`$EDITOR` (on TTY `stdin`), or piped `stdin`, validate and repair the `RUN_BLOCK` / `RUN_FIX` block (or fenced code block when `[session]` is given) before allocating `<session>/<next_step>`, and display model reasoning in `START STEP` |
 | `run --plan` | Analyze script from `stdin` and print JSON execution and safety plan |
 | `run --bundle-plan [<session>] [--json] [--part N]` | Print the `Parts (<N>):` table and diagnostics from `stdin` or an existing session (`--part N` prints only that part's text) |
 | `run --fix [-y] <session>/<target>` | Patch `<target>` script via Python on `stdin` and run as `<target>_N` |
@@ -311,7 +318,8 @@ run --bundle-plan s1 --part 2
 
 | Option | Description |
 | :--- | :--- |
-| `-r`, `--run [session]` | Full-reply mode: extract block and reasoning from `$VISUAL`/`$EDITOR` (on TTY `stdin`) or piped `stdin` and infer `<session>/<next_step>` |
+| `-r`, `--run [session]` | Full-reply mode: extract block and reasoning from clipboard (`-c`), `$VISUAL`/`$EDITOR` (on TTY `stdin`), or piped `stdin` and infer `<session>/<next_step>` |
+| `-c`, `--clipboard` | Read full model reply directly from the system clipboard (combine with `-r`/`--run`, e.g. `run -rc [session]`) |
 | `-y`, `--yes` | Auto-confirm `START STEP` and reopen a completed session (keeps TUI cards and clipboard prompts) |
 | `--headless` | Non-interactive headless mode without TUI boxes or prompts (same as `RUN_BLOCK_HEADLESS=1`) |
 | `-p`, `--prompt TEXT` | Embed repeatable prompt text into the started session bundle (`===== Prompt =====`) |
