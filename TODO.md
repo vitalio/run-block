@@ -26,6 +26,39 @@
   - Resolve provider API keys in parent memory (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `RUN_BLOCK_API_KEY`, profile `api_key_env`, or `api_key_cmd`) and unconditionally strip all provider API key environment variables from `child_env` in `scrub_child_env()` across all sandbox modes (`off`, `nonet`, `strict`).
   - Document `config.json` / `--config` and `--profile` / `-P` in `README.md` and `AGENTS.md`, and add unit tests in `tests/test_cli.py` and `tests/test_runner.py` covering config precedence, project allowlist filtering, `--config` CLI operations, profile/role resolution, and unconditional secret scrubbing.
 
+# 🎯 [NEXT] D4: Design workspace state fingerprinting and drift detection across steps
+
+- Depends on: F92, F93
+- Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
+- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_runner.py` and `tests/test_safety.py`.
+
+# 🎯 [NEXT] D6: Design session execution policies and post-step revert guards
+
+- Depends on: D4
+- Evaluate declarative session-level execution constraints, granular per-step sandbox permissions, and network domain allowlisting in `meta.json` / `.context.bundle` (`src/bundle.py`, `src/config.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`):
+  - Role & path write policies: support role-based allowed write globs (e.g. `role=plan` restricted to `TODO*.md`, `role=design` restricted to `docs/adr/**`, `AGENTS.md`, and `TODO*.md`, `role=review` read-only), hard blocks on destructive patterns (`rm -rf /`, `rm -rf ~`, outside-`Workdir` deletes, `.git/hooks` or `~/.ssh` tampering), and pre-step working-tree snapshots (`git stash create`) with one-key `r(evert)` in `END STEP` (or automatic rollback on policy violation).
+  - Granular per-step sandbox permissions in `START STEP`: default to `nonet` / `strict` OS-level isolation (`bwrap` / `sandbox-exec`, hiding `~` and `~/.ssh` so even obfuscated Python/Node commands triggered by a prompt injection cannot exfiltrate secrets or access the network at the syscall level), automatically bind-mount discovered `.todo_projects` sibling repositories (read-only by default, read-write when targeted by `todo -C <project>`), detect when a step requires network access (`git push`/`pull`, `curl`) or extra directory mounts in `src/safety.py`, and let the user grant one-step network or extra-folder access interactively in `START STEP` via `s(andbox)` without disabling isolation for the rest of the session.
+  - Network domain allowlist proxy (`allowed_domains`): design a lightweight stdlib-only localhost HTTP `CONNECT` / SOCKS proxy inside the parent `run` process bridged into the `nonet` / `strict` sandbox so steps can be restricted to explicit trusted domains (e.g. `github.com`, `api.github.com`, `pypi.org`) while blocking all direct outbound sockets, arbitrary domains, and DNS exfiltration.
+- Cover enforcement, per-step permission prompts, domain proxy filtering, and rollback semantics in `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py`.
+
+# 🎯 [NEXT] D7: Design pre-flight sandbox dry-run preview via temporary git worktree
+
+- Depends on: D6
+- Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
+- Define how actual mutated files and diff summaries are presented in `START STEP` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_runner.py` and `tests/test_safety.py`.
+
+# 🎯 [NEXT] D5: Design tamper-evident hash chain and parent-step verification for session history
+
+- Depends on: D4
+- Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
+- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`agents/run.md`), a `run --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
+
+# 🎯 [NEXT] D8: Design explicit parent-step DAG lineage for session branches and retries
+
+- Depends on: D5
+- Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
+- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
+
 # 🎯 [NEXT] F104: Inject protocol reminder into step output when reply contains multiple blocks or trailing prose
 
 - Depends on: B16, L1
@@ -87,39 +120,6 @@
 
 - Depends on: F94, B15, B16, D11
 src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
-
-# ⚪ [NEW] D4: Design workspace state fingerprinting and drift detection across steps
-
-- Depends on: F92, F93
-- Explore computing a lightweight workspace state fingerprint (`state_before` / `state_after`, e.g. Git `HEAD` + status/diff digest or non-Git directory metadata hash) around step execution in `src/runner.py`.
-- Define how state drift between consecutive steps (manual edits or external processes modifying files after the previous step's `state_after`) is detected, surfaced in `src/ui.py` (`START STEP` / `END STEP`), and classified as mutating vs read-only in `src/safety.py` and `tests/test_runner.py` and `tests/test_safety.py`.
-
-# ⚪ [NEW] D5: Design tamper-evident hash chain and parent-step verification for session history
-
-- Depends on: D4
-- Evaluate storing a SHA-256 digest per executed step (covering script text, exit code, output, and post-step state fingerprint) linked via `prev_hash` in `src/runner.py`.
-- Clarify protocol details for optional parent-hash anchoring in `Next-Block` headers (`agents/run.md`), a `run --verify <session>` integrity check in `src/cli.py`, and test coverage in `tests/test_runner.py` and `tests/test_cli.py`.
-
-# ⚪ [NEW] D6: Design session execution policies and post-step revert guards
-
-- Depends on: D4
-- Evaluate declarative session-level execution constraints, granular per-step sandbox permissions, and network domain allowlisting in `meta.json` / `.context.bundle` (`src/bundle.py`, `src/config.py`, `src/runner.py`, `src/safety.py`, `src/ui.py`):
-  - Role & path write policies: support role-based allowed write globs (e.g. `role=plan` restricted to `TODO*.md`, `role=design` restricted to `docs/adr/**`, `AGENTS.md`, and `TODO*.md`, `role=review` read-only), hard blocks on destructive patterns (`rm -rf /`, `rm -rf ~`, outside-`Workdir` deletes, `.git/hooks` or `~/.ssh` tampering), and pre-step working-tree snapshots (`git stash create`) with one-key `r(evert)` in `END STEP` (or automatic rollback on policy violation).
-  - Granular per-step sandbox permissions in `START STEP`: default to `nonet` / `strict` OS-level isolation (`bwrap` / `sandbox-exec`, hiding `~` and `~/.ssh` so even obfuscated Python/Node commands triggered by a prompt injection cannot exfiltrate secrets or access the network at the syscall level), automatically bind-mount discovered `.todo_projects` sibling repositories (read-only by default, read-write when targeted by `todo -C <project>`), detect when a step requires network access (`git push`/`pull`, `curl`) or extra directory mounts in `src/safety.py`, and let the user grant one-step network or extra-folder access interactively in `START STEP` via `s(andbox)` without disabling isolation for the rest of the session.
-  - Network domain allowlist proxy (`allowed_domains`): design a lightweight stdlib-only localhost HTTP `CONNECT` / SOCKS proxy inside the parent `run` process bridged into the `nonet` / `strict` sandbox so steps can be restricted to explicit trusted domains (e.g. `github.com`, `api.github.com`, `pypi.org`) while blocking all direct outbound sockets, arbitrary domains, and DNS exfiltration.
-- Cover enforcement, per-step permission prompts, domain proxy filtering, and rollback semantics in `tests/test_runner.py`, `tests/test_safety.py`, and `tests/test_ui.py`.
-
-# ⚪ [NEW] D7: Design pre-flight sandbox dry-run preview via temporary git worktree
-
-- Depends on: D6
-- Explore an optional pre-flight simulation mode (`src/config.py`, `src/runner.py`) that executes a candidate block inside a temporary lightweight `git worktree` (or isolated copy) before touching the main working tree.
-- Define how actual mutated files and diff summaries are presented in `START STEP` (`src/ui.py`, `src/safety.py`), how cleanup and non-Git fallbacks behave, and how to test safely in `tests/test_runner.py` and `tests/test_safety.py`.
-
-# ⚪ [NEW] D8: Design explicit parent-step DAG lineage for session branches and retries
-
-- Depends on: D5
-- Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
-- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
