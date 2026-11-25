@@ -810,7 +810,6 @@ def _collect_info_report(
                 details=True,
                 max_width=max_content_w,
                 plan=plan_obj,
-                include_part_count=True,
                 edited=b_edited,
             )
             if breakdown:
@@ -1089,30 +1088,6 @@ def _build_info_screen(
         scroll_hint=scroll_hint,
         position_label=f"Part {part_cursor}/{len(selectable)}" if selected_row_idx is not None else None,
         always_hint=selected_row_idx is not None,
-    )
-
-
-def _build_bundle_details_screen(
-    label: str,
-    bundle_path: Path,
-    cols: int,
-    rows: int,
-    scroll_top: int,
-    *,
-    sdir: Path | None = None,
-    edited: bool = False,
-) -> tuple[str, int, int]:
-    return _build_info_screen(
-        "START SESSION",
-        label,
-        cols,
-        rows,
-        scroll_top,
-        sdir=sdir,
-        out_path=bundle_path,
-        edit_target=bundle_path,
-        edited=edited,
-        allow_copy=True,
     )
 
 
@@ -1577,26 +1552,3 @@ def _show_info_fullscreen(
     finally:
         tty_w.write("\033[?25h\033[?1049l")
         tty_w.flush()
-
-
-def _show_bundle_details_fullscreen(
-    label: str,
-    bundle_path: Path,
-    tty_r,
-    tty_w,
-    *,
-    sdir: Path | None = None,
-    edited: bool = False,
-) -> str:
-    res = _show_info_fullscreen(
-        title_kind="START SESSION",
-        label=label,
-        tty_r=tty_r,
-        tty_w=tty_w,
-        sdir=sdir,
-        out_path=bundle_path,
-        edit_target=bundle_path,
-        edited=edited,
-        allow_copy=True,
-    )
-    return str(res.get("action") or "back")

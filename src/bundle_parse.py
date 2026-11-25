@@ -1,5 +1,4 @@
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
-BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
 CANONICAL_FRAGMENT_KINDS = ("rule", "file", "cmd", "prompt")
@@ -14,24 +13,9 @@ TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
 EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)(?:run|blocks/bash)$")
 
 
-def _strip_rule_description(raw_text: str) -> str:
-    lines = raw_text.replace("\r\n", "\n").splitlines()
-    while lines and lines[0].startswith("# Description:"):
-        lines.pop(0)
-    return "\n".join(lines).strip("\n")
-
-
 def get_embedded_block_rule() -> tuple[str, str]:
     rule_id = "vitalio/run-block:run"
-    raw = EMBEDDED_RULE_BASH
-    if raw == "__EMBEDDED_RULE_BASH__":
-        src_path = Path(__file__).resolve().parent.parent / "agents/run.md"
-        if src_path.is_file():
-            raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
-        else:
-            raw = ""
-    else:
-        raw = _strip_rule_description(raw)
+    raw = EMBEDDED_RULE_BASH if EMBEDDED_RULE_BASH != "__EMBEDDED_RULE_BASH__" else ""
     prog = prog_name()
     rendered = raw.replace("{cmd:run}", prog).replace("{cmd:run_block}", prog)
     return rule_id, rendered
@@ -338,12 +322,6 @@ def get_bundle_boundary(headers: list[tuple[str, str]]) -> str | None:
     return val or None
 
 
-def get_bundle_name(headers: list[tuple[str, str]]) -> str | None:
-    transport = extract_bundle_transport_headers(headers)
-    val = transport.get(BUNDLE_NAME_HEADER, "").strip()
-    return val or None
-
-
 def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
     transport = extract_bundle_transport_headers(headers)
     val = transport.get(BUNDLE_PROTOCOL_HEADER, "").strip()
@@ -609,7 +587,7 @@ def analyze_bundle_warnings(
                     "message": f"fragment {label!r} is oversized (~{_human_tok(gpt_cnt)} > {_human_tok(frag_limit)} tokens)",
                 }
             )
-        if kind not in ("rule", "rules") and part_texts is not None and idx_0 < len(part_texts):
+        if kind not in (CANONICAL_FRAGMENT_KINDS[0], "rules") and part_texts is not None and idx_0 < len(part_texts):
             sec_hits = scan_content_secrets(part_texts[idx_0])
             if sec_hits:
                 labels: list[str] = []

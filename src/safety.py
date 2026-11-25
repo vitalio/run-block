@@ -71,7 +71,7 @@ def get_active_risk_rules() -> list[tuple[str, str, re.Pattern[str]]]:
     if "external-write" in disabled:
         disabled.update(("git-push", "net-write"))
     custom_map: dict[str, str] = {}
-    env_rules = os.environ.get("RUN_BLOCK_SAFETY_RULES", "").strip()
+    env_rules, _ = get_setting("safety_rules")
     if env_rules:
         for item in env_rules.split(";"):
             part = item.strip()
@@ -1578,6 +1578,7 @@ def run_approve_cmd(
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
+            timeout=30,
             check=False,
         )
     except Exception as exc:
@@ -1807,25 +1808,29 @@ def build_sandbox_exec(
         return cmd
 
     if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
+        def _sbpl_subpath(p: Path | str) -> str:
+            escaped = str(p).replace("\\", "\\\\").replace('"', '\\"')
+            return f'(subpath "{escaped}")'
+
         tmp_real = Path(tempfile.gettempdir()).resolve()
         rules = [
             "(version 1)",
             "(allow default)",
             '(deny file-write* (subpath "/"))',
-            f'(allow file-write* (subpath "{tmp_real}"))',
+            f"(allow file-write* {_sbpl_subpath(tmp_real)})",
             '(allow file-write* (subpath "/private/tmp"))',
             '(allow file-write* (subpath "/dev"))',
-            f'(allow file-write* (subpath "{wdir}"))',
-            f'(deny file-write* (subpath "{bdir}"))',
+            f"(allow file-write* {_sbpl_subpath(wdir)})",
+            f"(deny file-write* {_sbpl_subpath(bdir)})",
         ]
         git_hooks = wdir / ".git" / "hooks"
         if git_hooks.exists():
-            rules.append(f'(deny file-write* (subpath "{git_hooks}"))')
+            rules.append(f"(deny file-write* {_sbpl_subpath(git_hooks)})")
         for rel in secret_rel_subpaths:
             sp = home / rel
             if sp.exists():
-                rules.append(f'(deny file-read* (subpath "{sp}"))')
-                rules.append(f'(deny file-write* (subpath "{sp}"))')
+                rules.append(f"(deny file-read* {_sbpl_subpath(sp)})")
+                rules.append(f"(deny file-write* {_sbpl_subpath(sp)})")
         if norm == "nonet":
             rules.append('(deny network* (remote ip))')
         profile = " ".join(rules)

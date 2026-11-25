@@ -402,63 +402,6 @@ def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120, *, 
     return _render_bundle_table(_collect_hierarchy_rows(plan, edited=edited), max_width=max_width)
 
 
-def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
-    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    if not parts:
-        return []
-    groups = group_bundle_parts(parts)
-    items: list[tuple[str, str]] = []
-    for g in groups:
-        kind = str(g.get("kind") or "part")
-        chain = [str(x) for x in (g.get("chain") or []) if str(x)]
-        grp = str(g.get("group") or "")
-        cnt = int(g.get("count") or 0)
-        names = list(g.get("names") or [])
-        if chain:
-            if cnt == 1 and names:
-                lbl = _join_chain_label(chain, str(names[0]))
-            elif cnt > 1:
-                lbl = f"{grp} ({cnt})"
-            else:
-                lbl = grp
-        elif cnt == 1 and names:
-            lbl = str(names[0])
-        else:
-            lbl = f"{cnt} part" + ("s" if cnt != 1 else "")
-        lines_cnt = int(g.get("lines") or 0)
-        chars_cnt = int(g.get("chars") if g.get("chars") is not None else (g.get("bytes") or 0))
-        gpt_cnt = int(g.get("gpt") or 0)
-        claude_cnt = int(g.get("claude") or 0)
-        share = float(g.get("share_pct") or 0.0)
-        err_cnt = int(g.get("rc_errors") or 0)
-        meta = f"{lines_cnt}L · {_human_chars(chars_cnt, short=True)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"
-        if err_cnt:
-            meta += f" · {err_cnt} rc!=0"
-        items.append((kind, f"{lbl}  [{meta}]"))
-    return items
-
-
-def format_bundle_part_items(plan: dict[str, object]) -> list[tuple[str, str]]:
-    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    items: list[tuple[str, str]] = []
-    for p in parts:
-        kind = str(p.get("kind") or "part")
-        chain = _resolve_part_chain(p)
-        lbl = _join_chain_label(chain, _part_label(p))
-        lines_cnt = int(p.get("lines") or 0)
-        chars_cnt = _part_chars(p)
-        gpt_cnt = int(p.get("gpt") or 0)
-        claude_cnt = int(p.get("claude") or 0)
-        share = float(p.get("share_pct") or 0.0)
-        extras: list[str] = [f"{lines_cnt}L", _human_chars(chars_cnt, short=True), f"{_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"]
-        if "rc" in p:
-            extras.append(f"rc={p['rc']}")
-        if "ms" in p:
-            extras.append(f"{p['ms']}ms")
-        items.append((kind, f"{lbl}  [{' · '.join(extras)}]"))
-    return items
-
-
 def format_bundle_warning_items(plan: dict[str, object]) -> list[tuple[str, str]]:
     warns = [w for w in (plan.get("warnings") or []) if isinstance(w, dict)]
     return [
@@ -516,9 +459,10 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
         sess = session_arg.split("/", 1)[0] if session_arg.endswith("/0") else session_arg
         if not re.fullmatch(r"[A-Za-z0-9._-]+", sess):
             raise SystemExit(f"{prog}: invalid session name: {session_arg!r}")
-        sdir = BASE_DIR / sess
+        base = default_base_dir()
+        sdir = base / sess
         if not sdir.is_dir():
-            raise SystemExit(f"{prog}: session {sess!r} not found in {BASE_DIR}")
+            raise SystemExit(f"{prog}: session {sess!r} not found in {base}")
         plan = load_session_bundle_plan(sdir)
         if plan is None:
             raise SystemExit(f"{prog}: no bundle data found for session {sess!r}")

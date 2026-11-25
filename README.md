@@ -2,37 +2,15 @@
 
 **Safe, sequential terminal block execution protocol for AI coding agents.**
 
-`run` (`vitalio/run-block`) is a zero-dependency Python 3 CLI that connects any chat LLM to your
-local terminal without API keys or background daemons. It initializes a
-rule-only session on bare TTY invocation (`run`) or ingests a context
-bundle on `stdin` (`<command> | run` -> `~/.local/state/run-block/<session>/0`),
-then executes numbered Bash or PowerShell blocks (`<session>/1`, `<session>/2`,
-...) with syntax validation, a pre-execution safety scanner, PTY streaming, and
-one-keystroke clipboard handoff with Claude/GPT/Gemini token counts.
-
-## Key Features
-
-- **Zero-daemon chat-to-terminal loop** — single-file Python 3 standard-library
-  CLI that bridges any web or desktop chat LLM to your local shell via
-  clipboard-ready session bundles and numbered `<session>/<step>` execution
-  blocks.
-- **AST & regex safety scanner** — pre-execution `START STEP` analysis
-  classifies shell and Python operations, expands multi-file AST actions,
-  requires explicit confirmation on risky commands, and supports `--plan`,
-  `--sandbox`, and external `RUN_BLOCK_APPROVE_CMD` validators.
-- **Interactive TUI cards & fullscreen `i(nfo)` inspector** — compact inline
-  cards (`START SESSION`, `START STEP`, `END STEP`, `END SESSION`) with
-  `SIGWINCH` reflow, in-place `p(rompt)` note appending, and a borderless
-  alternate-screen `i(nfo)` viewer with `Tab` part navigation and artifact
-  editing (`e`/`s`/`o`/`m`/`v`).
-- **Context bundle protocol & token accounting** — parses `Key: Value` and
-  `Bundle-*` preamble headers, strips `Bundle-Boundary` part markers into
-  hierarchical `bundle_plan` token/share tables (`--bundle-plan`, `--part N`),
-  and preserves raw markup in `<session>/0.raw` for lossless editing.
-- **Targeted `--fix` patching & session lifecycle** — recovers failed steps via
-  small Python patches (`<target>_1`, `<target>_2`), tracks session completion
-  and accumulated statistics with `--done`, and supports deferred nested
-  session chaining inside running blocks (`IN_RUN_BLOCK=1`).
+`run` (`vitalio/run-block`) is a zero-dependency Python 3 CLI that connects any
+chat LLM to your local terminal without API keys or background daemons. It
+initializes a rule-only session on bare TTY invocation (`run`) or ingests a
+context bundle on `stdin` (`<command> | run` ->
+`~/.local/state/run-block/<session>/0`), then executes numbered Bash blocks
+(`<session>/1`, `<session>/2`, ...) with syntax validation, an AST/regex safety
+scanner, PTY streaming, interactive TUI cards with a fullscreen `i(nfo)`
+inspector, targeted `--fix` patching, and one-keystroke clipboard handoff with
+Claude/GPT/Gemini token counts.
 
 ## Quick Installation
 
@@ -166,7 +144,7 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
 | `Enter` (in `Tab` cursor) | `START SESSION` `i(nfo)` | Open `PART N/M` for a leaf part or `BUNDLE R/M` (with constituent part delimiters) for a `[bundle]` folder row |
 | `Enter` (in `Tab` cursor) | Step `i(nfo)` | Open `PART k/N` for the selected operation: `Command`, `Timing`, `Script-Range`, and `Range: lines a-b of <out>` with the operation's captured output slice from `<step>/out` (script lines in `START STEP` or without `out`); `n`/`N` step across operations, `e`/`o` edit `out`, `s` edits the script, `m` opens `meta.json` |
 | `n` / `N` | `PART` / `BUNDLE` viewer | Step forward or backward across sequential numbered rows `1..M` |
-| `e` (`e(dit)`) | `START SESSION` / `START STEP` | Edit `<session>/0.raw` (preserving boundary markup and `0.orig`) or `block.sh`/`.ps1` (`block.orig.*`) and re-parse in place |
+| `e` (`e(dit)`) | `START SESSION` / `START STEP` | Edit `<session>/0.raw` (preserving boundary markup and `0.orig`) or `block.sh` (`block.orig.sh`) and re-parse in place |
 | `s` (`s(cript)`) / `o` (`o(utput)`) | Step `i(nfo)` views | Edit saved block script or captured step output in `$VISUAL`/`$EDITOR` (preserving `*.orig` backups and updating stats) |
 | `O` / `o` (`overwrite`) | `STEP ALREADY EXISTS` `i(nfo)` | Overwrite the existing step directory and proceed with the new block |
 | `p` (`p(rompt)`) | Copyable `i(nfo)` views | Append a prompt or output note via `$VISUAL`/`$EDITOR` and recalculate token stats |
@@ -204,8 +182,7 @@ lowercase `[y/n/i(nfo)]:` and require an explicit `y` or `n`.
 - **Bundle protocol version & fragment kinds**: `Bundle-Protocol: 1` declares
   `context-bundle-protocol` v1; an unsupported version prints a warning on
   `stderr` while the bundle is still ingested. Fragments use the 4 canonical
-  kinds `rule`, `file`, `cmd`, and `prompt` (legacy `include` normalizes to
-  `file`, and legacy `task` / `context` normalize to `prompt`). Repeatable
+  kinds `rule`, `file`, `cmd`, and `prompt`. Repeatable
   `-p`/`--prompt` text and interactive `p(rompt)` notes merge only into a
   trailing root user `prompt` fragment (`chain: []`, `name: "Prompt"`), or
   append a new trailing root `Prompt` part after upstream producer `prompt`
@@ -340,6 +317,7 @@ standard environment variables:
 | `RUN_BLOCK_DIR` | `~/.local/state/run-block` | Session storage directory (`$XDG_STATE_HOME/run-block` on POSIX; automatically migrates legacy `~/.local/state/run_block`) |
 | `RUN_BLOCK_CWD` | `auto` | `auto` (existing `Workdir` preamble header or session `Workdir` from `<session>/0`, nearest `.context.bundle`/`.agents_bundle`/`AGENTS.md` dir up to Git root, Git root, or `$PWD`), `cwd` (always `$PWD`), or explicit path |
 | `RUN_BLOCK_CLIPBOARD` | `prompt` | `prompt` (interactive `[Y/n]` prompt), `auto` (copy automatically), `never` |
+| `RUN_BLOCK_NO_CLIPBOARD` | `0` | Set to `1` to disable clipboard prompts and automatic copying (same as `RUN_BLOCK_CLIPBOARD=never`) |
 | `RUN_BLOCK_HEADLESS` | `0` | Set to `1` (or pass `--headless`) for raw stdout protocol without TUI boxes or prompts |
 | `RUN_BLOCK_SANDBOX` | `off` | Execution sandbox mode (`off`, `strict`, `nonet`, or custom wrapper prefix; active non-`off` modes are persisted in `<session>/0` `Sandbox:` header) |
 | `RUN_BLOCK_APPROVE_CMD` | *(none)* | External/LLM validator command receiving `--plan` JSON on `stdin` (`0`=approve, `2`=prompt user with stdout note, other=reject) |
@@ -351,9 +329,11 @@ standard environment variables:
 | `RUN_BLOCK_MAX_FIX_ATTEMPTS` | `2` | Max consecutive failed `--fix` attempts per base step before requiring `<session>/<step+1>` |
 | `RUN_BLOCK_MAX_STATE_MB` | `100` | Warn on `stderr` when total session state size exceeds this threshold in MB (`0` disables) |
 | `RUN_BLOCK_SHELL` | `bash` | Shell binary (`bash` or POSIX `sh`) |
+| `RUN_BLOCK_EDITOR` | `auto` | Override editor command for `e(dit)`/`s(cript)`/`o(utput)`/`v(iew)` inside `i(nfo)` (`auto` uses `VISUAL` / `EDITOR`) |
 | `VISUAL` / `EDITOR` | `vim`/`less`/`nano` | Terminal editor/viewer for `e(dit)`/`s(cript)`/`o(utput)`/`v(iew)` inside `i(nfo)` |
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |
+| `RUN_BLOCK_UPDATE_URL` | GitHub `main/run` | Override remote script URL used by `--update` and `--check-update` |
 
 ### Variables Exported to Step Processes
 

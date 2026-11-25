@@ -16,7 +16,9 @@ def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run"
     if raw.lower().endswith(".py") and len(raw) > 3:
         raw = raw[:-3]
-    return raw or "run"
+    if not raw or raw.startswith("-"):
+        return "run"
+    return raw
 
 
 def _state_parent_dir() -> Path:
@@ -48,17 +50,18 @@ def _migrate_state_dir(parent: Path) -> Path:
     return target
 
 
-def _os_default_base_dir(prog: str | None = None) -> Path:
+def _os_default_base_dir(prog: str | None = None, *, migrate: bool = True) -> Path:
     _ = prog
-    return _migrate_state_dir(_state_parent_dir())
+    parent = _state_parent_dir()
+    return _migrate_state_dir(parent) if migrate else (parent / "run-block")
 
 
-def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
+def get_setting(key: str, prog: str | None = None, *, migrate: bool = True) -> tuple[str, str]:
     """Returns (value, source) where source is 'env' or 'default'."""
     if key == "base_dir":
         if os.environ.get("RUN_BLOCK_DIR"):
             return os.environ["RUN_BLOCK_DIR"], "env"
-        return str(_os_default_base_dir(prog)), "default"
+        return str(_os_default_base_dir(prog, migrate=migrate)), "default"
     if key == "work_dir":
         if os.environ.get("RUN_BLOCK_CWD"):
             return os.environ["RUN_BLOCK_CWD"], "env"
@@ -214,28 +217,25 @@ def get_session_state(sdir: Path) -> str:
     return "empty"
 
 
-def default_base_dir(prog: str | None = None) -> Path:
-    val, _ = get_setting("base_dir", prog=prog)
+def default_base_dir(prog: str | None = None, *, migrate: bool = True) -> Path:
+    val, _ = get_setting("base_dir", prog=prog, migrate=migrate)
     return Path(val)
-
-
-BASE_DIR = default_base_dir()
 
 
 HELP_MAX_COLS = 100
 HELP_MAX_LABEL_COL = 48
 
 
-def _help_section(title: str, rows: tuple, fmt: dict) -> list[str]:
+def _help_section(title: str, rows: tuple, fmt: dict, col: int) -> list[str]:
     labels = [label.format(**fmt) for label, _ in rows]
-    col = min(max(len(x) for x in labels) + 4, HELP_MAX_LABEL_COL)
     width = HELP_MAX_COLS - col
     lines = [title]
     for label, (_, desc) in zip(labels, rows):
         wrapped = textwrap.wrap(desc.format(**fmt), width=width, break_long_words=True, break_on_hyphens=False) or [""]
         head = "  " + label
-        if len(head) + 2 <= col:
-            lines.append((head.ljust(col) + wrapped[0]).rstrip())
+        head_w = display_width(head)
+        if head_w + 2 <= col:
+            lines.append((head + " " * (col - head_w) + wrapped[0]).rstrip())
             rest = wrapped[1:]
         else:
             lines.append(head)
@@ -246,10 +246,13 @@ def _help_section(title: str, rows: tuple, fmt: dict) -> list[str]:
 
 def usage_text() -> str:
     prog = prog_name()
-    fmt = {"prog": prog, "base_dir": default_base_dir(prog)}
+    fmt = {"prog": prog, "base_dir": default_base_dir(prog, migrate=False)}
+    sections = (("Commands:", HELP_COMMANDS), ("Options:", HELP_OPTIONS), ("Environment:", HELP_ENV))
+    all_labels = [label.format(**fmt) for _, rows in sections for label, _ in rows]
+    col = min(max(display_width(x) for x in all_labels) + 4, HELP_MAX_LABEL_COL)
     out = ["Usage:"] + ["  " + s.format(**fmt) for s in HELP_USAGE]
-    for title, rows in (("Commands:", HELP_COMMANDS), ("Options:", HELP_OPTIONS), ("Environment:", HELP_ENV)):
-        out += ["", *_help_section(title, rows, fmt)]
+    for title, rows in sections:
+        out += ["", *_help_section(title, rows, fmt, col)]
     return "\n".join(out) + "\n"
 
 
@@ -665,13 +668,19 @@ def _session_bundle_workdir(session_dir: Path | None) -> Path | None:
     return _resolve_existing_dir(raw)
 
 
+_SANDBOX_OFF_TOKENS = ("", "0", "off", "false", "no", "none", "disable", "disabled")
+_SANDBOX_STRICT_TOKENS = ("1", "on", "true", "yes", "auto", "strict", "bwrap", "seatbelt", "sandbox-exec")
+_SANDBOX_NONET_TOKENS = ("nonet", "no-net", "offline", "bwrap-nonet", "seatbelt-nonet")
+SANDBOX_MODE_TOKENS = tuple(t for t in (*_SANDBOX_OFF_TOKENS, *_SANDBOX_STRICT_TOKENS, *_SANDBOX_NONET_TOKENS) if t)
+
+
 def normalize_sandbox_mode(raw: str) -> str:
     v = raw.strip().lower()
-    if v in ("", "0", "off", "false", "no", "none", "disable", "disabled"):
+    if v in _SANDBOX_OFF_TOKENS:
         return "off"
-    if v in ("1", "on", "true", "yes", "auto", "strict", "bwrap", "seatbelt", "sandbox-exec"):
+    if v in _SANDBOX_STRICT_TOKENS:
         return "strict"
-    if v in ("nonet", "no-net", "offline", "bwrap-nonet", "seatbelt-nonet"):
+    if v in _SANDBOX_NONET_TOKENS:
         return "nonet"
     return raw.strip()
 

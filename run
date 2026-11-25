@@ -36,7 +36,7 @@ except ImportError:
     tty = None  # type: ignore[assignment]
     HAS_PTY = False
 
-VERSION = "0.39.1"
+VERSION = "0.39.2"
 REPO_MARKER = "run-block-repo: vitalio/run-block"
 LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
 REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
@@ -113,7 +113,9 @@ def prog_name() -> str:
     raw = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else "run"
     if raw.lower().endswith(".py") and len(raw) > 3:
         raw = raw[:-3]
-    return raw or "run"
+    if not raw or raw.startswith("-"):
+        return "run"
+    return raw
 
 
 def _state_parent_dir() -> Path:
@@ -145,17 +147,18 @@ def _migrate_state_dir(parent: Path) -> Path:
     return target
 
 
-def _os_default_base_dir(prog: str | None = None) -> Path:
+def _os_default_base_dir(prog: str | None = None, *, migrate: bool = True) -> Path:
     _ = prog
-    return _migrate_state_dir(_state_parent_dir())
+    parent = _state_parent_dir()
+    return _migrate_state_dir(parent) if migrate else (parent / "run-block")
 
 
-def get_setting(key: str, prog: str | None = None) -> tuple[str, str]:
+def get_setting(key: str, prog: str | None = None, *, migrate: bool = True) -> tuple[str, str]:
     """Returns (value, source) where source is 'env' or 'default'."""
     if key == "base_dir":
         if os.environ.get("RUN_BLOCK_DIR"):
             return os.environ["RUN_BLOCK_DIR"], "env"
-        return str(_os_default_base_dir(prog)), "default"
+        return str(_os_default_base_dir(prog, migrate=migrate)), "default"
     if key == "work_dir":
         if os.environ.get("RUN_BLOCK_CWD"):
             return os.environ["RUN_BLOCK_CWD"], "env"
@@ -311,28 +314,25 @@ def get_session_state(sdir: Path) -> str:
     return "empty"
 
 
-def default_base_dir(prog: str | None = None) -> Path:
-    val, _ = get_setting("base_dir", prog=prog)
+def default_base_dir(prog: str | None = None, *, migrate: bool = True) -> Path:
+    val, _ = get_setting("base_dir", prog=prog, migrate=migrate)
     return Path(val)
-
-
-BASE_DIR = default_base_dir()
 
 
 HELP_MAX_COLS = 100
 HELP_MAX_LABEL_COL = 48
 
 
-def _help_section(title: str, rows: tuple, fmt: dict) -> list[str]:
+def _help_section(title: str, rows: tuple, fmt: dict, col: int) -> list[str]:
     labels = [label.format(**fmt) for label, _ in rows]
-    col = min(max(len(x) for x in labels) + 4, HELP_MAX_LABEL_COL)
     width = HELP_MAX_COLS - col
     lines = [title]
     for label, (_, desc) in zip(labels, rows):
         wrapped = textwrap.wrap(desc.format(**fmt), width=width, break_long_words=True, break_on_hyphens=False) or [""]
         head = "  " + label
-        if len(head) + 2 <= col:
-            lines.append((head.ljust(col) + wrapped[0]).rstrip())
+        head_w = display_width(head)
+        if head_w + 2 <= col:
+            lines.append((head + " " * (col - head_w) + wrapped[0]).rstrip())
             rest = wrapped[1:]
         else:
             lines.append(head)
@@ -343,10 +343,13 @@ def _help_section(title: str, rows: tuple, fmt: dict) -> list[str]:
 
 def usage_text() -> str:
     prog = prog_name()
-    fmt = {"prog": prog, "base_dir": default_base_dir(prog)}
+    fmt = {"prog": prog, "base_dir": default_base_dir(prog, migrate=False)}
+    sections = (("Commands:", HELP_COMMANDS), ("Options:", HELP_OPTIONS), ("Environment:", HELP_ENV))
+    all_labels = [label.format(**fmt) for _, rows in sections for label, _ in rows]
+    col = min(max(display_width(x) for x in all_labels) + 4, HELP_MAX_LABEL_COL)
     out = ["Usage:"] + ["  " + s.format(**fmt) for s in HELP_USAGE]
-    for title, rows in (("Commands:", HELP_COMMANDS), ("Options:", HELP_OPTIONS), ("Environment:", HELP_ENV)):
-        out += ["", *_help_section(title, rows, fmt)]
+    for title, rows in sections:
+        out += ["", *_help_section(title, rows, fmt, col)]
     return "\n".join(out) + "\n"
 
 
@@ -762,13 +765,19 @@ def _session_bundle_workdir(session_dir: Path | None) -> Path | None:
     return _resolve_existing_dir(raw)
 
 
+_SANDBOX_OFF_TOKENS = ("", "0", "off", "false", "no", "none", "disable", "disabled")
+_SANDBOX_STRICT_TOKENS = ("1", "on", "true", "yes", "auto", "strict", "bwrap", "seatbelt", "sandbox-exec")
+_SANDBOX_NONET_TOKENS = ("nonet", "no-net", "offline", "bwrap-nonet", "seatbelt-nonet")
+SANDBOX_MODE_TOKENS = tuple(t for t in (*_SANDBOX_OFF_TOKENS, *_SANDBOX_STRICT_TOKENS, *_SANDBOX_NONET_TOKENS) if t)
+
+
 def normalize_sandbox_mode(raw: str) -> str:
     v = raw.strip().lower()
-    if v in ("", "0", "off", "false", "no", "none", "disable", "disabled"):
+    if v in _SANDBOX_OFF_TOKENS:
         return "off"
-    if v in ("1", "on", "true", "yes", "auto", "strict", "bwrap", "seatbelt", "sandbox-exec"):
+    if v in _SANDBOX_STRICT_TOKENS:
         return "strict"
-    if v in ("nonet", "no-net", "offline", "bwrap-nonet", "seatbelt-nonet"):
+    if v in _SANDBOX_NONET_TOKENS:
         return "nonet"
     return raw.strip()
 
@@ -982,7 +991,7 @@ def get_active_risk_rules() -> list[tuple[str, str, re.Pattern[str]]]:
     if "external-write" in disabled:
         disabled.update(("git-push", "net-write"))
     custom_map: dict[str, str] = {}
-    env_rules = os.environ.get("RUN_BLOCK_SAFETY_RULES", "").strip()
+    env_rules, _ = get_setting("safety_rules")
     if env_rules:
         for item in env_rules.split(";"):
             part = item.strip()
@@ -2489,6 +2498,7 @@ def run_approve_cmd(
             stderr=subprocess.STDOUT,
             text=True,
             env=env,
+            timeout=30,
             check=False,
         )
     except Exception as exc:
@@ -2718,35 +2728,35 @@ def build_sandbox_exec(
         return cmd
 
     if sys.platform == "darwin" and Path("/usr/bin/sandbox-exec").is_file():
+        def _sbpl_subpath(p: Path | str) -> str:
+            escaped = str(p).replace("\\", "\\\\").replace('"', '\\"')
+            return f'(subpath "{escaped}")'
+
         tmp_real = Path(tempfile.gettempdir()).resolve()
         rules = [
             "(version 1)",
             "(allow default)",
             '(deny file-write* (subpath "/"))',
-            f'(allow file-write* (subpath "{tmp_real}"))',
+            f"(allow file-write* {_sbpl_subpath(tmp_real)})",
             '(allow file-write* (subpath "/private/tmp"))',
             '(allow file-write* (subpath "/dev"))',
-            f'(allow file-write* (subpath "{wdir}"))',
-            f'(deny file-write* (subpath "{bdir}"))',
+            f"(allow file-write* {_sbpl_subpath(wdir)})",
+            f"(deny file-write* {_sbpl_subpath(bdir)})",
         ]
         git_hooks = wdir / ".git" / "hooks"
         if git_hooks.exists():
-            rules.append(f'(deny file-write* (subpath "{git_hooks}"))')
+            rules.append(f"(deny file-write* {_sbpl_subpath(git_hooks)})")
         for rel in secret_rel_subpaths:
             sp = home / rel
             if sp.exists():
-                rules.append(f'(deny file-read* (subpath "{sp}"))')
-                rules.append(f'(deny file-write* (subpath "{sp}"))')
+                rules.append(f"(deny file-read* {_sbpl_subpath(sp)})")
+                rules.append(f"(deny file-write* {_sbpl_subpath(sp)})")
         if norm == "nonet":
             rules.append('(deny network* (remote ip))')
         profile = " ".join(rules)
         return ["/usr/bin/sandbox-exec", "-p", profile, *exec_cmd]
 
     return exec_cmd
-
-
-def gpt_encoder() -> None:
-    return None
 
 
 def count_tokens(data: bytes) -> dict[str, int | bool]:
@@ -3716,10 +3726,8 @@ def _build_start_bundle_parts(
     details: bool = False,
     max_width: int | None = None,
     plan: dict[str, object] | None = None,
-    include_part_count: bool = True,
     edited: bool = False,
 ) -> tuple[list[str], list[str]]:
-    _ = include_part_count
     if plan is None:
         fn_load = globals().get("load_session_bundle_plan")
         if callable(fn_load):
@@ -3743,17 +3751,6 @@ def _build_start_bundle_parts(
         warnings_sec.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
         warnings_sec.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_row_len, indent="  ")))
     return breakdown, warnings_sec
-
-def _build_start_bundle_sections(
-    sdir: Path | None,
-    bundle_path: Path,
-    *,
-    details: bool = False,
-    max_width: int | None = None,
-) -> list[str]:
-    b, w = _build_start_bundle_parts(sdir, bundle_path, details=details, max_width=max_width)
-    return [*b, "", *w] if (b and w) else [*b, *w]
-
 
 def build_box_body_lines(
     out_path: Path,
@@ -3832,16 +3829,12 @@ def build_box_body_lines(
             base_lines = hdr_lines
     if is_bundle_box:
         has_stats_line = any(line.startswith("Stats:") for line in base_lines)
-        has_stats_count = bool(
-            stats and isinstance(bundle_plan_obj, dict) and int(bundle_plan_obj.get("part_count") or 0) > 0
-        )
         b_breakdown, b_warnings = _build_start_bundle_parts(
             resolved_sdir,
             err_src,
             details=bundle_details,
             max_width=max_width,
             plan=bundle_plan_obj,
-            include_part_count=not has_stats_count,
             edited=is_edited,
         )
         out_lines = list(base_lines)
@@ -3865,12 +3858,10 @@ def _clipboard_prompt_line(title_kind: str) -> str:
 def format_clipboard_box(
     label: str,
     out_path: Path,
-    ok: bool = True,
     rc: int | None = None,
     stats: str | None = None,
     title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
-    cmd_str: str | None = None,
     edited: bool | None = None,
     error_source: Path | None = None,
     duration_s: float | None = None,
@@ -3881,7 +3872,6 @@ def format_clipboard_box(
     term_cols: int | None = None,
     term_rows: int | None = None,
 ) -> tuple[str, int, int]:
-    _ = ok, cmd_str
     if term_cols is None or term_rows is None:
         det_cols, det_rows = _term_size()
         if term_cols is None:
@@ -4075,10 +4065,11 @@ def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None
                 if re.fullmatch(r"\d+(?:_\d+)?", anc.name) and not (anc / "0").is_file():
                     continue
                 return anc
+    base = default_base_dir()
     if label:
         sess = label.split("/", 1)[0].strip()
-        if sess and (BASE_DIR / sess).is_dir():
-            return BASE_DIR / sess
+        if sess and (base / sess).is_dir():
+            return base / sess
     if path_hint is not None:
         for anc in (path_hint.parent, path_hint.parent.parent):
             if re.fullmatch(r"s\d+", anc.name):
@@ -4086,7 +4077,7 @@ def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None
     if label:
         sess = label.split("/", 1)[0].strip()
         if sess:
-            return BASE_DIR / sess
+            return base / sess
     return None
 
 
@@ -4364,11 +4355,9 @@ def format_prompt_box(
     title: str,
     content_lines: list[str],
     prompt_line: str,
-    status_lines: list[str] | tuple[str, ...] = (),
     term_cols: int | None = None,
     term_rows: int | None = None,
 ) -> tuple[str, int, int]:
-    _ = status_lines
     return _render_block(
         title,
         content_lines,
@@ -5209,7 +5198,6 @@ def _collect_info_report(
                 details=True,
                 max_width=max_content_w,
                 plan=plan_obj,
-                include_part_count=True,
                 edited=b_edited,
             )
             if breakdown:
@@ -5488,30 +5476,6 @@ def _build_info_screen(
         scroll_hint=scroll_hint,
         position_label=f"Part {part_cursor}/{len(selectable)}" if selected_row_idx is not None else None,
         always_hint=selected_row_idx is not None,
-    )
-
-
-def _build_bundle_details_screen(
-    label: str,
-    bundle_path: Path,
-    cols: int,
-    rows: int,
-    scroll_top: int,
-    *,
-    sdir: Path | None = None,
-    edited: bool = False,
-) -> tuple[str, int, int]:
-    return _build_info_screen(
-        "START SESSION",
-        label,
-        cols,
-        rows,
-        scroll_top,
-        sdir=sdir,
-        out_path=bundle_path,
-        edit_target=bundle_path,
-        edited=edited,
-        allow_copy=True,
     )
 
 
@@ -5978,29 +5942,6 @@ def _show_info_fullscreen(
         tty_w.flush()
 
 
-def _show_bundle_details_fullscreen(
-    label: str,
-    bundle_path: Path,
-    tty_r,
-    tty_w,
-    *,
-    sdir: Path | None = None,
-    edited: bool = False,
-) -> str:
-    res = _show_info_fullscreen(
-        title_kind="START SESSION",
-        label=label,
-        tty_r=tty_r,
-        tty_w=tty_w,
-        sdir=sdir,
-        out_path=bundle_path,
-        edit_target=bundle_path,
-        edited=edited,
-        allow_copy=True,
-    )
-    return str(res.get("action") or "back")
-
-
 def open_tty():
     return (
         open("/dev/tty", "w", encoding="utf-8", errors="replace"),
@@ -6204,15 +6145,11 @@ def _fit_prompt_content_lines(lines: list[str], max_width: int) -> list[str]:
 
 def _build_prompt_yes_no_suffix(
     default_yes: bool,
-    has_script: bool = False,
-    has_output: bool = False,
-    can_copy: bool = False,
     has_renumber: bool = False,
     renumber_only: bool = False,
     copy_on_yes: bool = False,
     has_info: bool = False,
 ) -> str:
-    _ = has_script, has_output, can_copy
     if renumber_only:
         parts = ["r(enumber)", "n"]
     elif copy_on_yes and has_renumber:
@@ -6260,20 +6197,12 @@ def prompt_yes_no_box(
     overw_msg = overwrite_status or (f"✓ Overwriting {label}." if label else "✓ Overwriting existing step.")
     suffix = _build_prompt_yes_no_suffix(
         eff_default_yes,
-        has_script=has_script,
-        has_output=has_output,
-        can_copy=can_copy,
         has_renumber=has_renumber,
         renumber_only=renumber_only,
         copy_on_yes=copy_on_yes,
         has_info=has_info,
     )
     prompt_line = f"-> {question} {suffix}"
-    status_list: list[str] = [yes_status, no_status]
-    if has_renumber:
-        status_list.append(renum_msg)
-    if allow_overwrite:
-        status_list.append(overw_msg)
     clip_target: Path | None = None
     clip: tuple[list[str], str] | None = None
 
@@ -6289,12 +6218,6 @@ def prompt_yes_no_box(
         clip = clipboard_command(clip_target)
 
     _refresh_clip_target()
-    if can_copy and clip_target is not None:
-        status_list.append(f"✓ Copied {clip_target} to clipboard.")
-        if clip is not None:
-            status_list.append(f"✗ Clipboard copy failed; run: {clip[1]}")
-        else:
-            status_list.append(f"✗ No clipboard tool found for {clip_target}.")
     extra_keys: dict[str, str] = {}
     if has_renumber:
         extra_keys["r"] = "renumber"
@@ -6310,16 +6233,11 @@ def prompt_yes_no_box(
         title,
         _fit_prompt_content_lines(init_lines, max(24, prev_cols - 2)),
         prompt_line,
-        status_lines=status_list,
         term_cols=prev_cols,
         term_rows=prev_rows,
     )
     _, border_col = _block_colors(title)
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    box_lines_init = box.splitlines()
-    prefixed_prompt = (
-        box_lines_init[-2] if len(box_lines_init) >= 2 else _prefix_block_line(prompt_line, border_color=border_col)
-    )
     try:
         if tty_streams is not None:
             tty_w, tty_r = tty_streams
@@ -6353,17 +6271,10 @@ def prompt_yes_no_box(
                             title,
                             _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
                             prompt_line,
-                            status_lines=status_list,
                             term_cols=new_cols,
                             term_rows=new_rows,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        box_lines_res = box.splitlines()
-                        prefixed_prompt = (
-                            box_lines_res[-2]
-                            if len(box_lines_res) >= 2
-                            else _prefix_block_line(prompt_line, border_color=border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -6399,17 +6310,10 @@ def prompt_yes_no_box(
                             title,
                             _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
                             prompt_line,
-                            status_lines=status_list,
                             term_cols=new_cols,
                             term_rows=new_rows,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        box_lines_res = box.splitlines()
-                        prefixed_prompt = (
-                            box_lines_res[-2]
-                            if len(box_lines_res) >= 2
-                            else _prefix_block_line(prompt_line, border_color=border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -6664,10 +6568,6 @@ def confirm_execution(
     )
     _, border_col = _block_colors("START STEP")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    ce_lines = box.splitlines()
-    prefixed_prompt = (
-        ce_lines[-2] if len(ce_lines) >= 2 else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-    )
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -6702,12 +6602,6 @@ def confirm_execution(
                             reasoning=reasoning,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        ce_lines = box.splitlines()
-                        prefixed_prompt = (
-                            ce_lines[-2]
-                            if len(ce_lines) >= 2
-                            else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -6780,12 +6674,6 @@ def confirm_execution(
                             reasoning=reasoning,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        ce_lines = box.splitlines()
-                        prefixed_prompt = (
-                            ce_lines[-2]
-                            if len(ce_lines) >= 2
-                            else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -6972,7 +6860,6 @@ def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
 def offer_clipboard_copy(
     label: str,
     out_path: Path,
-    ok: bool = True,
     rc: int | None = None,
     title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
@@ -7020,12 +6907,10 @@ def offer_clipboard_copy(
     box, rule_width, cursor_offset = format_clipboard_box(
         label,
         copy_target,
-        ok=ok,
         rc=rc,
         stats=stats_line(copy_target),
         title_kind=title_kind,
         extra_lines=extra_lines,
-        cmd_str=cmd_str,
         edited=is_edited,
         error_source=edit_target,
         duration_s=duration_s,
@@ -7038,10 +6923,6 @@ def offer_clipboard_copy(
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    occ_lines = box.splitlines()
-    prefixed_line2 = (
-        occ_lines[-2] if len(occ_lines) >= 2 else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-    )
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -7077,12 +6958,10 @@ def offer_clipboard_copy(
                 box, rule_width, cursor_offset = format_clipboard_box(
                     label,
                     copy_target,
-                    ok=ok,
                     rc=rc,
                     stats=stats_line(copy_target),
                     title_kind=title_kind,
                     extra_lines=extra_lines,
-                    cmd_str=cmd_str,
                     edited=is_edited,
                     error_source=edit_target,
                     duration_s=duration_s,
@@ -7110,12 +6989,10 @@ def offer_clipboard_copy(
                         box, rule_width, cursor_offset = format_clipboard_box(
                             label,
                             copy_target,
-                            ok=ok,
                             rc=rc,
                             stats=stats_line(copy_target),
                             title_kind=title_kind,
                             extra_lines=extra_lines,
-                            cmd_str=cmd_str,
                             edited=is_edited,
                             error_source=edit_target,
                             duration_s=duration_s,
@@ -7127,12 +7004,6 @@ def offer_clipboard_copy(
                             term_rows=max(6, new_rows - 1),
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        occ_lines = box.splitlines()
-                        prefixed_line2 = (
-                            occ_lines[-2]
-                            if len(occ_lines) >= 2
-                            else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -7167,12 +7038,10 @@ def offer_clipboard_copy(
                             box, rule_width, cursor_offset = format_clipboard_box(
                                 label,
                                 copy_target,
-                                ok=ok,
                                 rc=rc,
                                 stats=stats_line(copy_target),
                                 title_kind=title_kind,
                                 extra_lines=extra_lines,
-                                cmd_str=cmd_str,
                                 edited=is_edited,
                                 error_source=edit_target,
                                 duration_s=duration_s,
@@ -7184,12 +7053,6 @@ def offer_clipboard_copy(
                                 term_rows=max(6, new_rows - 1),
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            occ_lines = box.splitlines()
-                            prefixed_line2 = (
-                                occ_lines[-2]
-                                if len(occ_lines) >= 2
-                                else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                            )
                             move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()
@@ -7219,7 +7082,6 @@ def offer_clipboard_copy(
 
 
 BUNDLE_BOUNDARY_HEADER = "bundle-boundary"
-BUNDLE_NAME_HEADER = "bundle-name"
 BUNDLE_PROTOCOL_HEADER = "bundle-protocol"
 SUPPORTED_BUNDLE_PROTOCOLS = ("1",)
 CANONICAL_FRAGMENT_KINDS = ("rule", "file", "cmd", "prompt")
@@ -7234,24 +7096,9 @@ TERMINAL_BLOCK_HEADING_RE = re.compile(r"(?m)^## Terminal blocks \(")
 EMBEDDED_RULE_ID_RE = re.compile(r"(?:^|:)(?:run|blocks/bash)$")
 
 
-def _strip_rule_description(raw_text: str) -> str:
-    lines = raw_text.replace("\r\n", "\n").splitlines()
-    while lines and lines[0].startswith("# Description:"):
-        lines.pop(0)
-    return "\n".join(lines).strip("\n")
-
-
 def get_embedded_block_rule() -> tuple[str, str]:
     rule_id = "vitalio/run-block:run"
-    raw = EMBEDDED_RULE_BASH
-    if raw == "__EMBEDDED_RULE_BASH__":
-        src_path = Path(__file__).resolve().parent.parent / "agents/run.md"
-        if src_path.is_file():
-            raw = _strip_rule_description(src_path.read_text(encoding="utf-8"))
-        else:
-            raw = ""
-    else:
-        raw = _strip_rule_description(raw)
+    raw = EMBEDDED_RULE_BASH if EMBEDDED_RULE_BASH != "__EMBEDDED_RULE_BASH__" else ""
     prog = prog_name()
     rendered = raw.replace("{cmd:run}", prog).replace("{cmd:run_block}", prog)
     return rule_id, rendered
@@ -7558,12 +7405,6 @@ def get_bundle_boundary(headers: list[tuple[str, str]]) -> str | None:
     return val or None
 
 
-def get_bundle_name(headers: list[tuple[str, str]]) -> str | None:
-    transport = extract_bundle_transport_headers(headers)
-    val = transport.get(BUNDLE_NAME_HEADER, "").strip()
-    return val or None
-
-
 def get_bundle_protocol(headers: list[tuple[str, str]]) -> str | None:
     transport = extract_bundle_transport_headers(headers)
     val = transport.get(BUNDLE_PROTOCOL_HEADER, "").strip()
@@ -7829,7 +7670,7 @@ def analyze_bundle_warnings(
                     "message": f"fragment {label!r} is oversized (~{_human_tok(gpt_cnt)} > {_human_tok(frag_limit)} tokens)",
                 }
             )
-        if kind not in ("rule", "rules") and part_texts is not None and idx_0 < len(part_texts):
+        if kind not in (CANONICAL_FRAGMENT_KINDS[0], "rules") and part_texts is not None and idx_0 < len(part_texts):
             sec_hits = scan_content_secrets(part_texts[idx_0])
             if sec_hits:
                 labels: list[str] = []
@@ -7952,15 +7793,34 @@ def _assign_part_ranges(
     plan["line_offset"] = 0
 
 
-def _body_line_offset(full_text: str) -> int:
+def _preamble_prefix_and_offset(full_text: str) -> tuple[str, int]:
     try:
-        _, body = parse_stdin_preamble(full_text)
+        preamble_headers, body = parse_stdin_preamble(full_text)
     except Exception:
-        return 0
+        return "", 0
+    if not preamble_headers:
+        return "", 0
+    norm = full_text.replace("\r\n", "\n")
     if not body.strip():
-        return 0
-    body_pos = full_text.find(body[:200])
-    return full_text.count("\n", 0, body_pos) if body_pos > 0 else 0
+        return norm, norm.count("\n")
+    lines = norm.splitlines(keepends=True)
+    sep_idx: int | None = None
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            sep_idx = idx
+            break
+    if sep_idx is None:
+        return "", 0
+    body_idx = sep_idx + 1
+    while body_idx < len(lines) and not lines[body_idx].strip():
+        body_idx += 1
+    prefix = "".join(lines[:body_idx])
+    return prefix, body_idx
+
+
+def _body_line_offset(full_text: str) -> int:
+    _, offset = _preamble_prefix_and_offset(full_text)
+    return offset
 
 
 def _shift_part_ranges(plan: dict[str, object], offset: int) -> dict[str, object]:
@@ -8040,11 +7900,10 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_line
     sum_claude = sum(int(p.get("claude") or 0) for p in non_hdr_parts)
     full_tok = count_tokens(full_text.encode("utf-8"))
     try:
-        preamble_headers, body = parse_stdin_preamble(full_text)
+        preamble_headers, _ = parse_stdin_preamble(full_text)
     except Exception:
-        preamble_headers, body = [], full_text
-    body_pos = full_text.find(body[:200]) if body.strip() else -1
-    prefix = full_text[:body_pos] if body_pos > 0 else (full_text if (preamble_headers and not body.strip()) else "")
+        preamble_headers = []
+    prefix, offset = _preamble_prefix_and_offset(full_text)
     pre_tok = count_tokens(prefix.encode("utf-8")) if prefix else {}
 
     def _hdr_val(key: str, sum_val: int) -> int:
@@ -8064,7 +7923,6 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_line
         out["gpt"] = sum_gpt + hdr_gpt
         out["claude"] = sum_claude + hdr_claude
         out["gpt_exact"] = bool(full_tok["gpt_exact"])
-        offset = _body_line_offset(full_text)
         hdr_end = max(1, offset) if offset > 0 else max(1, len(prefix.splitlines()))
         hdr_part: dict[str, object] = {
             "index": 1,
@@ -8113,48 +7971,6 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_line
     if track_lines:
         out = _shift_part_ranges(out, _body_line_offset(full_text))
     return out
-
-
-def group_bundle_parts(parts: list[dict[str, object]]) -> list[dict[str, object]]:
-    buckets: dict[tuple[str, tuple[str, ...]], dict[str, object]] = {}
-    order: list[tuple[str, tuple[str, ...]]] = []
-    for entry in parts:
-        kind = str(entry.get("kind") or "part")
-        chain = tuple(_resolve_part_chain(entry))
-        group = " / ".join(chain) if chain else ""
-        key = (kind, chain)
-        if key not in buckets:
-            order.append(key)
-            buckets[key] = {
-                "kind": kind,
-                "group": group,
-                "chain": list(chain),
-                "count": 0,
-                "lines": 0,
-                "chars": 0,
-                "bytes": 0,
-                "gpt": 0,
-                "claude": 0,
-                "share_pct": 0.0,
-                "names": [],
-                "rc_errors": 0,
-            }
-        b = buckets[key]
-        b["count"] = int(b["count"]) + 1
-        b["lines"] = int(b["lines"]) + int(entry.get("lines") or 0)
-        b["chars"] = int(b["chars"]) + _part_chars(entry)
-        b["bytes"] = int(b["bytes"]) + int(entry.get("bytes") or 0)
-        b["gpt"] = int(b["gpt"]) + int(entry.get("gpt") or 0)
-        b["claude"] = int(b["claude"]) + int(entry.get("claude") or 0)
-        b["share_pct"] = round(float(b["share_pct"]) + float(entry.get("share_pct") or 0.0), 1)
-        name = str(entry.get("name") or entry.get("id") or "")
-        names_list = b["names"]
-        if name and isinstance(names_list, list) and name not in names_list:
-            names_list.append(name)
-        rc_val = entry.get("rc")
-        if isinstance(rc_val, int) and rc_val != 0:
-            b["rc_errors"] = int(b["rc_errors"]) + 1
-    return [buckets[k] for k in order]
 
 
 def _build_bundle_plan(
@@ -8926,63 +8742,6 @@ def format_bundle_parts_lines(plan: dict[str, object], max_width: int = 120, *, 
     return _render_bundle_table(_collect_hierarchy_rows(plan, edited=edited), max_width=max_width)
 
 
-def format_bundle_group_items(plan: dict[str, object]) -> list[tuple[str, str]]:
-    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    if not parts:
-        return []
-    groups = group_bundle_parts(parts)
-    items: list[tuple[str, str]] = []
-    for g in groups:
-        kind = str(g.get("kind") or "part")
-        chain = [str(x) for x in (g.get("chain") or []) if str(x)]
-        grp = str(g.get("group") or "")
-        cnt = int(g.get("count") or 0)
-        names = list(g.get("names") or [])
-        if chain:
-            if cnt == 1 and names:
-                lbl = _join_chain_label(chain, str(names[0]))
-            elif cnt > 1:
-                lbl = f"{grp} ({cnt})"
-            else:
-                lbl = grp
-        elif cnt == 1 and names:
-            lbl = str(names[0])
-        else:
-            lbl = f"{cnt} part" + ("s" if cnt != 1 else "")
-        lines_cnt = int(g.get("lines") or 0)
-        chars_cnt = int(g.get("chars") if g.get("chars") is not None else (g.get("bytes") or 0))
-        gpt_cnt = int(g.get("gpt") or 0)
-        claude_cnt = int(g.get("claude") or 0)
-        share = float(g.get("share_pct") or 0.0)
-        err_cnt = int(g.get("rc_errors") or 0)
-        meta = f"{lines_cnt}L · {_human_chars(chars_cnt, short=True)} · {_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"
-        if err_cnt:
-            meta += f" · {err_cnt} rc!=0"
-        items.append((kind, f"{lbl}  [{meta}]"))
-    return items
-
-
-def format_bundle_part_items(plan: dict[str, object]) -> list[tuple[str, str]]:
-    parts = [p for p in (plan.get("parts") or []) if isinstance(p, dict)]
-    items: list[tuple[str, str]] = []
-    for p in parts:
-        kind = str(p.get("kind") or "part")
-        chain = _resolve_part_chain(p)
-        lbl = _join_chain_label(chain, _part_label(p))
-        lines_cnt = int(p.get("lines") or 0)
-        chars_cnt = _part_chars(p)
-        gpt_cnt = int(p.get("gpt") or 0)
-        claude_cnt = int(p.get("claude") or 0)
-        share = float(p.get("share_pct") or 0.0)
-        extras: list[str] = [f"{lines_cnt}L", _human_chars(chars_cnt, short=True), f"{_format_tok_pair(gpt_cnt, claude_cnt)} ({share:.1f}%)"]
-        if "rc" in p:
-            extras.append(f"rc={p['rc']}")
-        if "ms" in p:
-            extras.append(f"{p['ms']}ms")
-        items.append((kind, f"{lbl}  [{' · '.join(extras)}]"))
-    return items
-
-
 def format_bundle_warning_items(plan: dict[str, object]) -> list[tuple[str, str]]:
     warns = [w for w in (plan.get("warnings") or []) if isinstance(w, dict)]
     return [
@@ -9040,9 +8799,10 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
         sess = session_arg.split("/", 1)[0] if session_arg.endswith("/0") else session_arg
         if not re.fullmatch(r"[A-Za-z0-9._-]+", sess):
             raise SystemExit(f"{prog}: invalid session name: {session_arg!r}")
-        sdir = BASE_DIR / sess
+        base = default_base_dir()
+        sdir = base / sess
         if not sdir.is_dir():
-            raise SystemExit(f"{prog}: session {sess!r} not found in {BASE_DIR}")
+            raise SystemExit(f"{prog}: session {sess!r} not found in {base}")
         plan = load_session_bundle_plan(sdir)
         if plan is None:
             raise SystemExit(f"{prog}: no bundle data found for session {sess!r}")
@@ -9088,12 +8848,13 @@ def cmd_bundle_plan(argv: list[str], stdin_text: str | None = None) -> int:
 
 
 def ensure_base() -> Path:
-    BASE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    base = default_base_dir()
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
-        BASE_DIR.chmod(0o700)
+        base.chmod(0o700)
     except OSError:
         pass
-    return BASE_DIR
+    return base
 
 
 def next_session_name(base: Path) -> str:
@@ -9742,7 +9503,7 @@ def not_run_exit(
         and clipboard_command(err_target) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
+        offer_clipboard_copy(label, err_target, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             err_target, rc=rc, stats=stats_line(err_target), extra_lines=body_lines, label=label, sdir=sdir
@@ -9750,7 +9511,7 @@ def not_run_exit(
         sys.stdout.write(format_info_box("NOT RUN", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
+            offer_clipboard_copy(label, err_target, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     return rc
 
 
@@ -10186,7 +9947,7 @@ def _validate_step_script_syntax(
         and clipboard_command(out_path) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
+        offer_clipboard_copy(label, out_path, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
@@ -10194,7 +9955,7 @@ def _validate_step_script_syntax(
         sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
+            offer_clipboard_copy(label, out_path, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     return chk.returncode
 
 
@@ -10212,7 +9973,6 @@ def run_script(
     script_path: Path,
     out_path: Path,
     header_lines: list[str] | None = None,
-    cleanup_on_abort: list[Path] | None = None,
     auto_yes: bool = False,
     sandbox_override: str | None = None,
     footer_on_fail: str | None = None,
@@ -10531,7 +10291,6 @@ def run_script(
         offer_clipboard_copy(
             label,
             out_path,
-            ok=(rc == 0),
             rc=rc,
             duration_s=duration_s,
             op_timings=op_timings,
@@ -10765,7 +10524,7 @@ def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | Non
         elif tok in ("-y", "--yes", "--headless", "--no-sandbox"):
             i += 1
         elif tok == "--sandbox":
-            if i + 1 < len(tokens) and tokens[i + 1].lower() in _SANDBOX_MODE_TOKENS:
+            if i + 1 < len(tokens) and tokens[i + 1].lower() in SANDBOX_MODE_TOKENS:
                 i += 2
             else:
                 i += 1
@@ -10787,10 +10546,13 @@ def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | Non
             s_part, st_part = ref.split("/", 1)
             if not re.fullmatch(r"[A-Za-z0-9._-]+", s_part):
                 return None
-            step_pat = r"\d+(?:_\d+)?" if is_fix else r"\d+(?:_\d+)?"
-            if not re.fullmatch(step_pat, st_part):
+            step_pat = r"\d+(?:_\d+)?" if is_fix else r"\d+"
+            if re.fullmatch(step_pat, st_part):
+                session, step = s_part, st_part
+            elif not is_fix and re.fullmatch(r"\d+_\d+", st_part):
+                session, step = s_part, None
+            else:
                 return None
-            session, step = s_part, st_part
         else:
             if not re.fullmatch(r"[A-Za-z0-9._-]+", ref):
                 return None
@@ -11577,7 +11339,6 @@ def cmd_normal(
         label,
         script_path,
         out_path,
-        cleanup_on_abort=[script_path],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         renumbered_from=renumbered_from,
@@ -11898,7 +11659,6 @@ def cmd_fix(
         script_path,
         out_path,
         header_lines=header,
-        cleanup_on_abort=[fix_path, script_path],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         footer_on_fail=stop_directive if reach_limit else None,
@@ -12285,7 +12045,6 @@ def cmd_retry(
         f"{session}/{step}",
         script_path,
         out_path,
-        cleanup_on_abort=[],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
     )
@@ -12308,7 +12067,7 @@ def cmd_sandbox(argv: list[str]) -> int:
     for a in argv:
         if re.fullmatch(r"s\d+", a) and session_arg is None and mode_arg is not None:
             session_arg = a
-        elif mode_arg is None and a.lower() in ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net"):
+        elif mode_arg is None and a.lower() in SANDBOX_MODE_TOKENS:
             mode_arg = normalize_sandbox_mode(a)
         elif session_arg is None and re.fullmatch(r"[A-Za-z0-9._-]+", a) and (ensure_base() / a).is_dir():
             session_arg = a
@@ -12804,7 +12563,7 @@ def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:
         and clipboard_mode() == "prompt"
         and clipboard_command(bundle_path) is not None
     ):
-        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
+        offer_clipboard_copy(label0, bundle_path, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="START SESSION"
@@ -12812,7 +12571,7 @@ def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:
         sys.stdout.write(format_info_box("START SESSION", full_body) + "\n")
         sys.stdout.flush()
         if offer_copy and not in_run_block():
-            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
+            offer_clipboard_copy(label0, bundle_path, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
 
 
 def refresh_bundle_meta(bundle_path: Path) -> None:
@@ -13021,8 +12780,6 @@ def cmd_uninstall(purge: bool = False, target_dir: Path | None = None) -> int:
     return 0
 
 
-_SANDBOX_MODE_TOKENS = ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
-
 
 def _extract_prompt_args(argv: list[str]) -> tuple[list[str], list[str]]:
     prog = prog_name()
@@ -13087,7 +12844,7 @@ def main(argv: list[str] | None = None) -> int:
     has_bare_sandbox_flag = False
     for idx, tok in enumerate(raw_args):
         if tok == "--sandbox":
-            if idx + 1 >= len(raw_args) or raw_args[idx + 1].lower() not in _SANDBOX_MODE_TOKENS:
+            if idx + 1 >= len(raw_args) or raw_args[idx + 1].lower() not in SANDBOX_MODE_TOKENS:
                 has_bare_sandbox_flag = True
 
     args, prompt_args = _extract_prompt_args(raw_args)
@@ -13118,7 +12875,7 @@ def main(argv: list[str] | None = None) -> int:
         rest_sb = args[1:]
         if not any("/" in x or x.startswith("-") for x in rest_sb):
             has_session_arg = len(rest_sb) >= 2 or (
-                len(rest_sb) == 1 and rest_sb[0].lower() not in _SANDBOX_MODE_TOKENS
+                len(rest_sb) == 1 and rest_sb[0].lower() not in SANDBOX_MODE_TOKENS
             )
             if in_run_block() or has_session_arg or has_bare_sandbox_flag or (
                 sys.stdin.isatty() and not prompt_args
@@ -13148,7 +12905,7 @@ def main(argv: list[str] | None = None) -> int:
             sandbox_override = a.split("=", 1)[1] or "strict"
             i += 1
         elif a == "--sandbox":
-            if i + 1 < len(args) and args[i + 1].lower() in _SANDBOX_MODE_TOKENS:
+            if i + 1 < len(args) and args[i + 1].lower() in SANDBOX_MODE_TOKENS:
                 sandbox_override = args[i + 1]
                 i += 2
             else:

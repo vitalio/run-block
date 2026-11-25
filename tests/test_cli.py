@@ -66,13 +66,14 @@ class TestCli(RunBlockTestCase):
         sections: dict[str, list[str]] = {}
         current = ""
         for ln in r.stdout.splitlines():
-            self.assertLessEqual(len(ln), 100, ln)
+            self.assertLessEqual(self.mod.display_width(ln), 100, ln)
             if ln and not ln.startswith(" "):
                 current = ln
                 sections[current] = []
             elif ln and current:
                 sections[current].append(ln)
         self.assertEqual(list(sections), ["Usage:", "Commands:", "Options:", "Environment:"])
+        all_cols = set()
         for title in ("Commands:", "Options:", "Environment:"):
             with self.subTest(section=title):
                 cols = set()
@@ -80,11 +81,17 @@ class TestCli(RunBlockTestCase):
                     m = re.match(r"^  \S.*?\S {2,}(?=\S)", ln)
                     if m:
                         cols.add(m.end())
+                        all_cols.add(m.end())
                 self.assertEqual(len(cols), 1, cols)
                 col = cols.pop()
                 for ln in sections[title]:
                     if not re.match(r"^  \S", ln):
                         self.assertEqual(len(ln) - len(ln.lstrip(" ")), col, ln)
+        self.assertEqual(len(all_cols), 1, all_cols)
+        for dash_arg in ("-", "-c", ""):
+            with self.subTest(argv0=dash_arg):
+                with unittest.mock.patch.object(self.mod.sys, "argv", [dash_arg]):
+                    self.assertEqual(self.mod.prog_name(), "run")
 
     def test_help_lists_session_inspection_flags(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
@@ -363,6 +370,9 @@ class TestCli(RunBlockTestCase):
             allow_idx = profile.index(f'(allow file-write* (subpath "{home_dir}"))')
             deny_idx = profile.index(f'(deny file-write* (subpath "{persistent_bdir}"))')
             self.assertLess(allow_idx, deny_idx)
+            quoted_dir = self.tmp / 'dir"with\\quote'
+            sb_quoted = self.mod.build_sandbox_exec(["bash", "1.sh"], quoted_dir, persistent_bdir, "strict")
+            self.assertIn('dir\\"with\\\\quote', sb_quoted[2])
 
         # 3. Create sessions with known sizes and timestamps for --list, --clean, and size warning
         import time as _time

@@ -104,7 +104,7 @@ class TestUi(RunBlockTestCase):
         self.assertEqual(self.mod.resolve_clipboard_target(Path("/tmp/fallback.txt"), f"Bundle: {f}\n"), f)
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
-            box_err, _, _ = self.mod.format_clipboard_box("s2/2", f, ok=False, rc=2, stats=s)
+            box_err, _, _ = self.mod.format_clipboard_box("s2/2", f, rc=2, stats=s)
         self.assertIn("╭─ END STEP ", box_err)
         self.assertIn("Step:    s2/2", box_err)
         self.assertIn("Exit:   2", box_err)
@@ -128,7 +128,6 @@ class TestUi(RunBlockTestCase):
                 "MISSING PREVIOUS STEP",
                 ["Step: s1/2", "", "Missing: s1/1"],
                 "-> Renumber to s1/1? [r(enumber)/n]:",
-                status_lines=(renum_st, no_st),
             )
         self.assertEqual(p_width, 48)
         self.assertEqual(p_off, len("│ -> Renumber to s1/1? [r(enumber)/n]:"))
@@ -253,13 +252,13 @@ class TestUi(RunBlockTestCase):
             self.assertEqual(self.mod._build_prompt_yes_no_suffix(False), "[y/N]:")
             self.assertEqual(
                 self.mod._build_prompt_yes_no_suffix(
-                    True, has_script=True, has_output=True, can_copy=True, has_renumber=True, copy_on_yes=True, has_info=True
+                    True, has_renumber=True, copy_on_yes=True, has_info=True
                 ),
                 "[Y/n/r(enumber)/i(nfo)]:",
             )
             self.assertEqual(
                 self.mod._build_prompt_yes_no_suffix(
-                    False, has_script=True, has_output=False, has_renumber=True, renumber_only=True, has_info=True
+                    False, has_renumber=True, renumber_only=True, has_info=True
                 ),
                 "[r(enumber)/n/i(nfo)]:",
             )
@@ -731,7 +730,7 @@ class TestUi(RunBlockTestCase):
         self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", buf_syn_act.getvalue())
 
         end_box_act, _, _ = self.mod.format_clipboard_box(
-            "s_strict/1", sdir_strict / "1" / "out", ok=True, rc=0
+            "s_strict/1", sdir_strict / "1" / "out", rc=0
         )
         self.assertIn("Sandbox: nonet (rw: Workdir, /tmp; secrets: hidden; net: off)", end_box_act)
 
@@ -778,9 +777,9 @@ class TestUi(RunBlockTestCase):
             def close(self) -> None:
                 pass
 
-        saved_base = self.mod.BASE_DIR
+        saved_base = os.environ.get("RUN_BLOCK_DIR")
         saved_cwd_env = os.environ.pop("RUN_BLOCK_CWD", None)
-        self.mod.BASE_DIR = sessions
+        os.environ["RUN_BLOCK_DIR"] = str(sessions)
         try:
             with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
                 plan_box, _, _ = self.mod.format_safety_box(
@@ -816,7 +815,7 @@ class TestUi(RunBlockTestCase):
 
             # Direct format_clipboard_box WITHOUT explicit sdir also resolves s1 (not s1/1)
             with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((100, 24))):
-                direct_end, _, _ = self.mod.format_clipboard_box("s1/1", sdir / "1" / "out", ok=True, rc=0)
+                direct_end, _, _ = self.mod.format_clipboard_box("s1/1", sdir / "1" / "out", rc=0)
             for hdr_ln in expected_headers:
                 with self.subTest(direct_end_hdr=hdr_ln):
                     self.assertIn(hdr_ln, direct_end)
@@ -851,7 +850,10 @@ class TestUi(RunBlockTestCase):
                     self.assertIn(hdr_ln, nr_rendered)
             self.assertNotIn("Bundle-Command:", nr_rendered)
         finally:
-            self.mod.BASE_DIR = saved_base
+            if saved_base is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = saved_base
             if saved_cwd_env is not None:
                 os.environ["RUN_BLOCK_CWD"] = saved_cwd_env
 
@@ -1178,8 +1180,8 @@ class TestUi(RunBlockTestCase):
             ],
         )
 
-        old_base = self.mod.BASE_DIR
-        self.mod.BASE_DIR = sessions
+        old_base = os.environ.get("RUN_BLOCK_DIR")
+        os.environ["RUN_BLOCK_DIR"] = str(sessions)
         try:
             op_timings = [
                 {"step": 1, "tag": "read", "desc": "cat file", "duration_ms": 15},
@@ -1197,7 +1199,6 @@ class TestUi(RunBlockTestCase):
                     bundle_box, _, _ = self.mod.format_clipboard_box(
                         "s58/0",
                         bundle_p,
-                        ok=True,
                         rc=0,
                         stats="120 lines · 4.2k chars · ~1.1k–1.2k tokens",
                         title_kind="START SESSION",
@@ -1223,7 +1224,6 @@ class TestUi(RunBlockTestCase):
                     end_box, _, _ = self.mod.format_clipboard_box(
                         "s58/1",
                         out_p,
-                        ok=False,
                         rc=1,
                         stats="45 lines · 1.8k chars · ~450–515 tokens · 1.6s",
                         title_kind="END STEP",
@@ -1318,7 +1318,7 @@ class TestUi(RunBlockTestCase):
                     self.assertEqual(col_off, self.mod.display_width(last_prompt_row))
 
                     col_end, _, _ = self.mod.format_clipboard_box(
-                        "s58/1", out_p, ok=False, rc=1, stats="10 lines · 200 chars", title_kind="END STEP", sdir=sdir
+                        "s58/1", out_p, rc=1, stats="10 lines · 200 chars", title_kind="END STEP", sdir=sdir
                     )
                     _assert_box_fits(col_end, 44, "COLOR_END@44")
                     self.assertIn("\x1b[1;91mAssertionError:", col_end)
@@ -1337,7 +1337,10 @@ class TestUi(RunBlockTestCase):
                 if saved_nc is not None:
                     os.environ["NO_COLOR"] = saved_nc
         finally:
-            self.mod.BASE_DIR = old_base
+            if old_base is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = old_base
 
     def test_progress_alignment_colors_and_silent_collapse(self):
         step_map = {
@@ -1504,7 +1507,6 @@ class TestUi(RunBlockTestCase):
             end_box, _, _ = self.mod.format_clipboard_box(
                 "s_b11/1",
                 out_p,
-                ok=True,
                 rc=0,
                 stats="2 lines · 14 chars",
                 title_kind="END STEP",
@@ -1697,8 +1699,8 @@ class TestUi(RunBlockTestCase):
                 os.close(s_fd3)
 
     def test_end_drops_steps_and_info_viewer(self):
-        old_base = self.mod.BASE_DIR
-        self.mod.BASE_DIR = self.tmp
+        old_base = os.environ.get("RUN_BLOCK_DIR")
+        os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
         try:
             sdir = self.tmp / "s54"
             sdir.mkdir(parents=True)
@@ -1853,7 +1855,10 @@ class TestUi(RunBlockTestCase):
             self.assertRegex(comp_out, r"Completed:\s+2026-11-19T20:00:00Z")
             self.assertRegex(comp_out, r"Completed-Note:\s+done")
         finally:
-            self.mod.BASE_DIR = old_base
+            if old_base is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = old_base
 
     def test_borderless_info_home_shortened_title_prompt_and_tab_cursor(self):
         # 1. read_clipboard_key supports p/P in raw TTY and p/prompt in line mode

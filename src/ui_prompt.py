@@ -201,15 +201,11 @@ def _fit_prompt_content_lines(lines: list[str], max_width: int) -> list[str]:
 
 def _build_prompt_yes_no_suffix(
     default_yes: bool,
-    has_script: bool = False,
-    has_output: bool = False,
-    can_copy: bool = False,
     has_renumber: bool = False,
     renumber_only: bool = False,
     copy_on_yes: bool = False,
     has_info: bool = False,
 ) -> str:
-    _ = has_script, has_output, can_copy
     if renumber_only:
         parts = ["r(enumber)", "n"]
     elif copy_on_yes and has_renumber:
@@ -257,20 +253,12 @@ def prompt_yes_no_box(
     overw_msg = overwrite_status or (f"✓ Overwriting {label}." if label else "✓ Overwriting existing step.")
     suffix = _build_prompt_yes_no_suffix(
         eff_default_yes,
-        has_script=has_script,
-        has_output=has_output,
-        can_copy=can_copy,
         has_renumber=has_renumber,
         renumber_only=renumber_only,
         copy_on_yes=copy_on_yes,
         has_info=has_info,
     )
     prompt_line = f"-> {question} {suffix}"
-    status_list: list[str] = [yes_status, no_status]
-    if has_renumber:
-        status_list.append(renum_msg)
-    if allow_overwrite:
-        status_list.append(overw_msg)
     clip_target: Path | None = None
     clip: tuple[list[str], str] | None = None
 
@@ -286,12 +274,6 @@ def prompt_yes_no_box(
         clip = clipboard_command(clip_target)
 
     _refresh_clip_target()
-    if can_copy and clip_target is not None:
-        status_list.append(f"✓ Copied {clip_target} to clipboard.")
-        if clip is not None:
-            status_list.append(f"✗ Clipboard copy failed; run: {clip[1]}")
-        else:
-            status_list.append(f"✗ No clipboard tool found for {clip_target}.")
     extra_keys: dict[str, str] = {}
     if has_renumber:
         extra_keys["r"] = "renumber"
@@ -307,16 +289,11 @@ def prompt_yes_no_box(
         title,
         _fit_prompt_content_lines(init_lines, max(24, prev_cols - 2)),
         prompt_line,
-        status_lines=status_list,
         term_cols=prev_cols,
         term_rows=prev_rows,
     )
     _, border_col = _block_colors(title)
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    box_lines_init = box.splitlines()
-    prefixed_prompt = (
-        box_lines_init[-2] if len(box_lines_init) >= 2 else _prefix_block_line(prompt_line, border_color=border_col)
-    )
     try:
         if tty_streams is not None:
             tty_w, tty_r = tty_streams
@@ -350,17 +327,10 @@ def prompt_yes_no_box(
                             title,
                             _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
                             prompt_line,
-                            status_lines=status_list,
                             term_cols=new_cols,
                             term_rows=new_rows,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        box_lines_res = box.splitlines()
-                        prefixed_prompt = (
-                            box_lines_res[-2]
-                            if len(box_lines_res) >= 2
-                            else _prefix_block_line(prompt_line, border_color=border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -396,17 +366,10 @@ def prompt_yes_no_box(
                             title,
                             _fit_prompt_content_lines(cur_lines, max(24, new_cols - 2)),
                             prompt_line,
-                            status_lines=status_list,
                             term_cols=new_cols,
                             term_rows=new_rows,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        box_lines_res = box.splitlines()
-                        prefixed_prompt = (
-                            box_lines_res[-2]
-                            if len(box_lines_res) >= 2
-                            else _prefix_block_line(prompt_line, border_color=border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -661,10 +624,6 @@ def confirm_execution(
     )
     _, border_col = _block_colors("START STEP")
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    ce_lines = box.splitlines()
-    prefixed_prompt = (
-        ce_lines[-2] if len(ce_lines) >= 2 else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-    )
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -699,12 +658,6 @@ def confirm_execution(
                             reasoning=reasoning,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        ce_lines = box.splitlines()
-                        prefixed_prompt = (
-                            ce_lines[-2]
-                            if len(ce_lines) >= 2
-                            else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -777,12 +730,6 @@ def confirm_execution(
                             reasoning=reasoning,
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        ce_lines = box.splitlines()
-                        prefixed_prompt = (
-                            ce_lines[-2]
-                            if len(ce_lines) >= 2
-                            else _safety_prompt_prefix(default_yes, bool(findings), border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -969,7 +916,6 @@ def _box_rows_above_prompt(box_text: str, term_cols: int) -> int:
 def offer_clipboard_copy(
     label: str,
     out_path: Path,
-    ok: bool = True,
     rc: int | None = None,
     title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
@@ -1017,12 +963,10 @@ def offer_clipboard_copy(
     box, rule_width, cursor_offset = format_clipboard_box(
         label,
         copy_target,
-        ok=ok,
         rc=rc,
         stats=stats_line(copy_target),
         title_kind=title_kind,
         extra_lines=extra_lines,
-        cmd_str=cmd_str,
         edited=is_edited,
         error_source=edit_target,
         duration_s=duration_s,
@@ -1035,10 +979,6 @@ def offer_clipboard_copy(
     )
     _, border_col = _block_colors(title_kind, has_exit=(rc is not None and rc != 0))
     bottom = _format_bottom_rule(rule_width, border_color=border_col)
-    occ_lines = box.splitlines()
-    prefixed_line2 = (
-        occ_lines[-2] if len(occ_lines) >= 2 else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-    )
     try:
         tty_w, tty_r = open_tty()
         with tty_w, tty_r:
@@ -1074,12 +1014,10 @@ def offer_clipboard_copy(
                 box, rule_width, cursor_offset = format_clipboard_box(
                     label,
                     copy_target,
-                    ok=ok,
                     rc=rc,
                     stats=stats_line(copy_target),
                     title_kind=title_kind,
                     extra_lines=extra_lines,
-                    cmd_str=cmd_str,
                     edited=is_edited,
                     error_source=edit_target,
                     duration_s=duration_s,
@@ -1107,12 +1045,10 @@ def offer_clipboard_copy(
                         box, rule_width, cursor_offset = format_clipboard_box(
                             label,
                             copy_target,
-                            ok=ok,
                             rc=rc,
                             stats=stats_line(copy_target),
                             title_kind=title_kind,
                             extra_lines=extra_lines,
-                            cmd_str=cmd_str,
                             edited=is_edited,
                             error_source=edit_target,
                             duration_s=duration_s,
@@ -1124,12 +1060,6 @@ def offer_clipboard_copy(
                             term_rows=max(6, new_rows - 1),
                         )
                         bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                        occ_lines = box.splitlines()
-                        prefixed_line2 = (
-                            occ_lines[-2]
-                            if len(occ_lines) >= 2
-                            else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                        )
                         move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                         tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                         tty_w.flush()
@@ -1164,12 +1094,10 @@ def offer_clipboard_copy(
                             box, rule_width, cursor_offset = format_clipboard_box(
                                 label,
                                 copy_target,
-                                ok=ok,
                                 rc=rc,
                                 stats=stats_line(copy_target),
                                 title_kind=title_kind,
                                 extra_lines=extra_lines,
-                                cmd_str=cmd_str,
                                 edited=is_edited,
                                 error_source=edit_target,
                                 duration_s=duration_s,
@@ -1181,12 +1109,6 @@ def offer_clipboard_copy(
                                 term_rows=max(6, new_rows - 1),
                             )
                             bottom = _format_bottom_rule(rule_width, border_color=border_col)
-                            occ_lines = box.splitlines()
-                            prefixed_line2 = (
-                                occ_lines[-2]
-                                if len(occ_lines) >= 2
-                                else _prefix_block_line(_clipboard_prompt_line(title_kind), border_color=border_col)
-                            )
                             move_up = f"\033[{up_rows}A" if up_rows > 0 else ""
                             tty_w.write(f"\r{move_up}\033[J{box}\r\033[1A\033[{cursor_offset}C")
                             tty_w.flush()

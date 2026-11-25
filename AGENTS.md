@@ -12,8 +12,8 @@ rules are loaded via `.context.bundle`.
   `VISUAL`/`EDITOR`), non-interactive child pager variable tuple
   (`CHILD_PAGER_ENV_VARS` controlled by `RUN_BLOCK_PAGER`, default `cat`),
   working directory resolution, and `usage_text()`, which renders `--help` from
-  the `HELP_*` tables (aligned description column per section, lines <= 100
-  columns).
+  the `HELP_*` tables (unified description column across all sections, lines
+  <= 100 display columns).
 - `agents/run.md` — internal embedded terminal block execution rule
   source injected by `build.py` into `src/header.py`. Update
   `agents/run.md` in the same commit whenever CLI flags, step
@@ -61,22 +61,6 @@ rules are loaded via `.context.bundle`.
 - `src/bundle_view.py` — provenance tree construction, heavy-row classification,
   hierarchical table rendering, summary/parts/warning item formatters, and
   `--bundle-plan` text/CLI output (`cmd_bundle_plan()`).
-- `src/agent.py` (designed in `docs/adr/0001-built-in-api-agent-mode.md`) —
-  built-in LLM API agent transport: model/role profile resolution
-  (`~/.config/run-block/config.json` / `models.json`, `RUN_BLOCK_MODEL*`,
-  `--profile <name>` / `-P`), `Bundle-Protocol: 1` cache-prefix splitting
-  (`system` rules with one-time `agents/run-api.md` swap + `AGENTS.md` vs
-  `user[0]` session headers + dynamic parts), stdlib `urllib.request` HTTP/SSE
-  streaming clients (Anthropic Messages and OpenAI-compatible Chat Completions),
-  single `run` tool schema (`script`, nullable `fix_target`, multi-call guard),
-  append-only `<session>/chat.json` transcript (1:1 synchronized with
-  `<session>/<step>/` artifacts) and provider token/cache usage tracking,
-  strict `awaiting_reply` handling on prose-only turns, session continuation
-  (`run --continue [session]` / `-c`), safe autopilot (`--autopilot`), and
-  supervisor-session stepping (`run --step <session> --propose|--approve|--reject|--reply|--autopilot`).
-  `scrub_child_env()` always strips provider API key env vars from child step
-  processes across all sandbox modes (`off`, `nonet`, `strict`), and project
-  `.run-block.json` files are restricted to a non-privileged setting allowlist.
 - `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
   piped `stdin` (`run` / `<command> | run` -> `<session>/0` and
   `<session>/meta.json`), injecting embedded `bash` terminal block rules via
@@ -165,8 +149,9 @@ rules are loaded via `.context.bundle`.
 - Protocol version and fragment kinds: `get_bundle_protocol()` reads
   `Bundle-Protocol`; `format_start_bundle()` warns on `stderr` for versions
   outside `SUPPORTED_BUNDLE_PROTOCOLS` without rejecting the bundle.
-  `normalize_fragment_kind()` normalizes `context-bundle-protocol` fragment
-  kinds for the 4 canonical kinds (`rule`, `file`, `cmd`, `prompt`). Upstream prompt
+  `normalize_fragment_kind()` lowercases and strips fragment kind tokens for
+  the 4 canonical `CANONICAL_FRAGMENT_KINDS` (`rule`, `file`, `cmd`, `prompt`,
+  defaulting empty kinds to `part`). Upstream prompt
   fragments carry a non-empty `chain` (and can be deduplicated by
   `_dedupe_fragments()`), whereas the user's root session prompt fragment has
   `chain: []` (`name: "Prompt"`): `inject_embedded_prompt()`,

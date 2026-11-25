@@ -1,3 +1,14 @@
+# ✅ [DONE] B18: Resolve repository audit findings across CLI help alignment, CI tag guard, state dir resolution, dead code, and docs — *2026-11-25, Resolved audit findings across help column alignment, CI tag guard, state dir resolution, dead code removal, and documentation sync*
+
+- Align `-h`/`--help` description column at a single shared column across `Commands:`, `Options:`, and `Environment:` and assert display width via `display_width()` (`HIGH-1`).
+- Add `refs/tags/v*` `VERSION` match verification step to `.github/workflows/ci.yml` `test` job (`HIGH-2`).
+- Eliminate module-import-time `BASE_DIR` state migration side effects and unify base directory resolution through `default_base_dir()` (`HIGH-3`).
+- Synchronize `AGENTS.md` and `README.md` with actual modules, canonical `README.md` sections, fragment kinds, and supported `RUN_BLOCK_*` variables (`MEDIUM-1`).
+- Deduplicate `# Description:` rule stripping, route `get_active_risk_rules()` through `get_setting("safety_rules")`, and unify `SANDBOX_MODE_TOKENS` (`MEDIUM-2`).
+- Remove unused functions (`gpt_encoder`, `_build_start_bundle_sections`, `_build_bundle_details_screen`, `_show_bundle_details_fullscreen`, `get_bundle_name`, `group_bundle_parts`, `format_bundle_group_items`, `format_bundle_part_items`) and dead parameters/locals (`cleanup_on_abort`, `include_part_count`, `status_lines`, `prefixed_prompt`, `prefixed_line2`) (`MEDIUM-4`).
+- Compute preamble/body line offset from the blank-line separator instead of `full_text.find(body[:200])` in `_body_line_offset()` and `reconcile_bundle_plan()` (`MEDIUM-5`).
+- Guard `prog_name()` against `-`/`-c` `sys.argv[0]`, rename `_f57_offer` to `_offer_clipboard_prompt`, remove stale tracked `next.txt`, add timeout and SBPL quoting in `src/safety.py`, and fix non-`--fix` step pattern handling in `_parse_reply_cmd_tokens()` (`MEDIUM-6`, `LOW-1`, `LOW-2`, `LOW-3`).
+
 # ✅ [DONE] B17: Guard --fix and run -r/-rc against duplicate slot allocation on repeated runs — *2026-11-25, Guarded --fix and run -r/-rc against duplicate slot allocation on repeated runs*
 
 - Bump: `PATCH`

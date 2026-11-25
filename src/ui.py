@@ -1,7 +1,3 @@
-def gpt_encoder() -> None:
-    return None
-
-
 def count_tokens(data: bytes) -> dict[str, int | bool]:
     text = data.decode("utf-8", "replace")
     chars = len(text)
@@ -969,10 +965,8 @@ def _build_start_bundle_parts(
     details: bool = False,
     max_width: int | None = None,
     plan: dict[str, object] | None = None,
-    include_part_count: bool = True,
     edited: bool = False,
 ) -> tuple[list[str], list[str]]:
-    _ = include_part_count
     if plan is None:
         fn_load = globals().get("load_session_bundle_plan")
         if callable(fn_load):
@@ -996,17 +990,6 @@ def _build_start_bundle_parts(
         warnings_sec.append(f"{_WARN_COLOR}{whdr}{_ANSI_RESET}" if _use_color() else whdr)
         warnings_sec.extend(_colorize_warning_lines(_wrap_labeled_items(warn_items, max_row_len, indent="  ")))
     return breakdown, warnings_sec
-
-def _build_start_bundle_sections(
-    sdir: Path | None,
-    bundle_path: Path,
-    *,
-    details: bool = False,
-    max_width: int | None = None,
-) -> list[str]:
-    b, w = _build_start_bundle_parts(sdir, bundle_path, details=details, max_width=max_width)
-    return [*b, "", *w] if (b and w) else [*b, *w]
-
 
 def build_box_body_lines(
     out_path: Path,
@@ -1085,16 +1068,12 @@ def build_box_body_lines(
             base_lines = hdr_lines
     if is_bundle_box:
         has_stats_line = any(line.startswith("Stats:") for line in base_lines)
-        has_stats_count = bool(
-            stats and isinstance(bundle_plan_obj, dict) and int(bundle_plan_obj.get("part_count") or 0) > 0
-        )
         b_breakdown, b_warnings = _build_start_bundle_parts(
             resolved_sdir,
             err_src,
             details=bundle_details,
             max_width=max_width,
             plan=bundle_plan_obj,
-            include_part_count=not has_stats_count,
             edited=is_edited,
         )
         out_lines = list(base_lines)
@@ -1118,12 +1097,10 @@ def _clipboard_prompt_line(title_kind: str) -> str:
 def format_clipboard_box(
     label: str,
     out_path: Path,
-    ok: bool = True,
     rc: int | None = None,
     stats: str | None = None,
     title_kind: str = "END STEP",
     extra_lines: list[str] | None = None,
-    cmd_str: str | None = None,
     edited: bool | None = None,
     error_source: Path | None = None,
     duration_s: float | None = None,
@@ -1134,7 +1111,6 @@ def format_clipboard_box(
     term_cols: int | None = None,
     term_rows: int | None = None,
 ) -> tuple[str, int, int]:
-    _ = ok, cmd_str
     if term_cols is None or term_rows is None:
         det_cols, det_rows = _term_size()
         if term_cols is None:
@@ -1328,10 +1304,11 @@ def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None
                 if re.fullmatch(r"\d+(?:_\d+)?", anc.name) and not (anc / "0").is_file():
                     continue
                 return anc
+    base = default_base_dir()
     if label:
         sess = label.split("/", 1)[0].strip()
-        if sess and (BASE_DIR / sess).is_dir():
-            return BASE_DIR / sess
+        if sess and (base / sess).is_dir():
+            return base / sess
     if path_hint is not None:
         for anc in (path_hint.parent, path_hint.parent.parent):
             if re.fullmatch(r"s\d+", anc.name):
@@ -1339,7 +1316,7 @@ def _resolve_session_dir(label: str | None = None, path_hint: Path | None = None
     if label:
         sess = label.split("/", 1)[0].strip()
         if sess:
-            return BASE_DIR / sess
+            return base / sess
     return None
 
 
@@ -1617,11 +1594,9 @@ def format_prompt_box(
     title: str,
     content_lines: list[str],
     prompt_line: str,
-    status_lines: list[str] | tuple[str, ...] = (),
     term_cols: int | None = None,
     term_rows: int | None = None,
 ) -> tuple[str, int, int]:
-    _ = status_lines
     return _render_block(
         title,
         content_lines,

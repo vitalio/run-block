@@ -1,10 +1,11 @@
 def ensure_base() -> Path:
-    BASE_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    base = default_base_dir()
+    base.mkdir(mode=0o700, parents=True, exist_ok=True)
     try:
-        BASE_DIR.chmod(0o700)
+        base.chmod(0o700)
     except OSError:
         pass
-    return BASE_DIR
+    return base
 
 
 def next_session_name(base: Path) -> str:
@@ -653,7 +654,7 @@ def not_run_exit(
         and clipboard_command(err_target) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
+        offer_clipboard_copy(label, err_target, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             err_target, rc=rc, stats=stats_line(err_target), extra_lines=body_lines, label=label, sdir=sdir
@@ -661,7 +662,7 @@ def not_run_exit(
         sys.stdout.write(format_info_box("NOT RUN", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, err_target, ok=False, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
+            offer_clipboard_copy(label, err_target, rc=rc, title_kind="NOT RUN", extra_lines=body_lines, sdir=sdir)
     return rc
 
 
@@ -1097,7 +1098,7 @@ def _validate_step_script_syntax(
         and clipboard_command(out_path) is not None
     )
     if can_prompt_clip:
-        offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
+        offer_clipboard_copy(label, out_path, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             out_path, rc=chk.returncode, stats=stats_line(out_path), extra_lines=box_lines, label=label, sdir=sdir
@@ -1105,7 +1106,7 @@ def _validate_step_script_syntax(
         sys.stdout.write(format_info_box("SYNTAX ERROR", full_body) + "\n")
         sys.stdout.flush()
         if not in_run_block():
-            offer_clipboard_copy(label, out_path, ok=False, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
+            offer_clipboard_copy(label, out_path, rc=chk.returncode, title_kind="SYNTAX ERROR", extra_lines=box_lines, sdir=sdir)
     return chk.returncode
 
 
@@ -1123,7 +1124,6 @@ def run_script(
     script_path: Path,
     out_path: Path,
     header_lines: list[str] | None = None,
-    cleanup_on_abort: list[Path] | None = None,
     auto_yes: bool = False,
     sandbox_override: str | None = None,
     footer_on_fail: str | None = None,
@@ -1442,7 +1442,6 @@ def run_script(
         offer_clipboard_copy(
             label,
             out_path,
-            ok=(rc == 0),
             rc=rc,
             duration_s=duration_s,
             op_timings=op_timings,
@@ -1676,7 +1675,7 @@ def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | Non
         elif tok in ("-y", "--yes", "--headless", "--no-sandbox"):
             i += 1
         elif tok == "--sandbox":
-            if i + 1 < len(tokens) and tokens[i + 1].lower() in _SANDBOX_MODE_TOKENS:
+            if i + 1 < len(tokens) and tokens[i + 1].lower() in SANDBOX_MODE_TOKENS:
                 i += 2
             else:
                 i += 1
@@ -1698,10 +1697,13 @@ def _parse_reply_cmd_tokens(arg_str: str, delim: str) -> dict[str, object] | Non
             s_part, st_part = ref.split("/", 1)
             if not re.fullmatch(r"[A-Za-z0-9._-]+", s_part):
                 return None
-            step_pat = r"\d+(?:_\d+)?" if is_fix else r"\d+(?:_\d+)?"
-            if not re.fullmatch(step_pat, st_part):
+            step_pat = r"\d+(?:_\d+)?" if is_fix else r"\d+"
+            if re.fullmatch(step_pat, st_part):
+                session, step = s_part, st_part
+            elif not is_fix and re.fullmatch(r"\d+_\d+", st_part):
+                session, step = s_part, None
+            else:
                 return None
-            session, step = s_part, st_part
         else:
             if not re.fullmatch(r"[A-Za-z0-9._-]+", ref):
                 return None
@@ -2488,7 +2490,6 @@ def cmd_normal(
         label,
         script_path,
         out_path,
-        cleanup_on_abort=[script_path],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         renumbered_from=renumbered_from,
@@ -2809,7 +2810,6 @@ def cmd_fix(
         script_path,
         out_path,
         header_lines=header,
-        cleanup_on_abort=[fix_path, script_path],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         footer_on_fail=stop_directive if reach_limit else None,
@@ -3196,7 +3196,6 @@ def cmd_retry(
         f"{session}/{step}",
         script_path,
         out_path,
-        cleanup_on_abort=[],
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
     )
@@ -3219,7 +3218,7 @@ def cmd_sandbox(argv: list[str]) -> int:
     for a in argv:
         if re.fullmatch(r"s\d+", a) and session_arg is None and mode_arg is not None:
             session_arg = a
-        elif mode_arg is None and a.lower() in ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net"):
+        elif mode_arg is None and a.lower() in SANDBOX_MODE_TOKENS:
             mode_arg = normalize_sandbox_mode(a)
         elif session_arg is None and re.fullmatch(r"[A-Za-z0-9._-]+", a) and (ensure_base() / a).is_dir():
             session_arg = a

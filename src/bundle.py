@@ -241,7 +241,7 @@ def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:
         and clipboard_mode() == "prompt"
         and clipboard_command(bundle_path) is not None
     ):
-        offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
+        offer_clipboard_copy(label0, bundle_path, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
     else:
         full_body = build_box_body_lines(
             bundle_path, rc=0, stats=stats_line(bundle_path), extra_lines=body_lines, label=label0, sdir=sdir, title_kind="START SESSION"
@@ -249,7 +249,7 @@ def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:
         sys.stdout.write(format_info_box("START SESSION", full_body) + "\n")
         sys.stdout.flush()
         if offer_copy and not in_run_block():
-            offer_clipboard_copy(label0, bundle_path, ok=True, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
+            offer_clipboard_copy(label0, bundle_path, rc=0, title_kind="START SESSION", extra_lines=body_lines, sdir=sdir)
 
 
 def refresh_bundle_meta(bundle_path: Path) -> None:

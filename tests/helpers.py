@@ -101,7 +101,6 @@ class RunBlockTestCase(unittest.TestCase):
         os.environ["XDG_STATE_HOME"] = str(self.tmp / ".xdg_state")
         os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
         self.mod = load_module()
-        self.mod.BASE_DIR = self.tmp
         if hasattr(self.mod, "_STATE_WARNED_DIRS"):
             self.mod._STATE_WARNED_DIRS.clear()
 
@@ -147,7 +146,6 @@ class RunBlockTestCase(unittest.TestCase):
         exe_path, argv = self._normalize_cmd(cmd)
         old_env = dict(os.environ)
         old_cwd = os.getcwd()
-        old_base = self.mod.BASE_DIR
         old_stdin = self.mod.sys.stdin
         old_argv = list(self.mod.sys.argv)
         old_file = getattr(self.mod, "__file__", str(SCRIPT))
@@ -162,7 +160,6 @@ class RunBlockTestCase(unittest.TestCase):
                 os.chdir(cwd)
             self.mod.sys.argv = [exe_path, *argv]
             self.mod.__file__ = exe_path
-            self.mod.BASE_DIR = self.mod.default_base_dir()
             self.mod.sys.stdin = io.StringIO(input if input is not None else "")
             with contextlib.redirect_stdout(out_buf), contextlib.redirect_stderr(err_buf):
                 try:
@@ -184,7 +181,6 @@ class RunBlockTestCase(unittest.TestCase):
             if env is not None:
                 os.environ.clear()
                 os.environ.update(old_env)
-            self.mod.BASE_DIR = old_base
         proc = subprocess.CompletedProcess(
             args=[exe_path, *argv],
             returncode=rc,
@@ -244,7 +240,7 @@ class RunBlockTestCase(unittest.TestCase):
             check=check,
         )
 
-    def _f57_offer(self, target, keys, notes, title_kind, extra_lines=None, rc=None, ok=True):
+    def _offer_clipboard_prompt(self, target, keys, notes, title_kind, extra_lines=None, rc=None):
         editor_paths: list[Path] = []
         note_iter = iter(notes)
 
@@ -275,7 +271,6 @@ class RunBlockTestCase(unittest.TestCase):
             self.mod.offer_clipboard_copy(
                 "s1/0" if title_kind == "START SESSION" else "s1/1",
                 target,
-                ok=ok,
                 rc=rc,
                 title_kind=title_kind,
                 extra_lines=extra_lines,

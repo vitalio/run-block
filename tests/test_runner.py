@@ -1545,7 +1545,7 @@ class TestRunner(RunBlockTestCase):
         f.write_text(initial_out, encoding="utf-8")
 
         with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((90, 24))):
-            end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, ok=False, rc=2, stats=self.mod.stats_line(f))
+            end_box, _, _ = self.mod.format_clipboard_box("s1/1", f, rc=2, stats=self.mod.stats_line(f))
             self.assertIn("-> Copy to clipboard? [Y/n/p(rompt)/i(nfo)]:", end_box)
             self.assertIn("Error:  noisy stderr line", end_box)
 
@@ -1580,7 +1580,7 @@ class TestRunner(RunBlockTestCase):
              unittest.mock.patch.object(self.mod, "copy_file_to_clipboard", return_value=True) as mock_copy, \
              unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((120, 24))), \
              unittest.mock.patch.object(self.mod.sys, "stdout", fake_stdout):
-            self.mod.offer_clipboard_copy("s1/1", f, ok=False, rc=2)
+            self.mod.offer_clipboard_copy("s1/1", f, rc=2)
 
         orig_out = f.with_name("out.orig")
         self.assertTrue(orig_out.is_file())
@@ -1867,25 +1867,24 @@ class TestRunner(RunBlockTestCase):
 
     def test_append_note_to_step_output_cards(self):
         cases = (
-            ("END STEP", False, 2, None),
-            ("SYNTAX ERROR", False, 2, "extra"),
-            ("NOT RUN", False, 3, "extra"),
+            ("END STEP", 2, None),
+            ("SYNTAX ERROR", 2, "extra"),
+            ("NOT RUN", 3, "extra"),
         )
-        for kind, ok, rc, extra in cases:
+        for kind, rc, extra in cases:
             with self.subTest(kind=kind):
                 f = self.tmp / kind.replace(" ", "_") / "s1" / "1" / "out"
                 f.parent.mkdir(parents=True, exist_ok=True)
                 initial_out = "[s1/1] START\nsome failure\n\n[s1/1] END (exit 2)\n"
                 f.write_text(initial_out, encoding="utf-8")
                 extra_lines = [f"Output: {f}", "Error: some failure"] if extra else None
-                tty_out, mock_copy, _ = self._f57_offer(
+                tty_out, mock_copy, _ = self._offer_clipboard_prompt(
                     f,
                     "p\np\n\n",
                     ["why did this fail?\n", "second question\n"],
                     kind,
                     extra_lines=extra_lines,
                     rc=rc,
-                    ok=ok,
                 )
                 text = f.read_text(encoding="utf-8")
                 self.assertTrue(text.startswith(initial_out.rstrip("\n")))
@@ -1901,7 +1900,7 @@ class TestRunner(RunBlockTestCase):
         f.parent.mkdir(parents=True, exist_ok=True)
         initial_out = "[s1/1] START\nok\n\n[s1/1] END (exit 0)\n"
         f.write_text(initial_out, encoding="utf-8")
-        tty_out, mock_copy, _ = self._f57_offer(f, "p\n\n", ["  \n"], "END STEP", rc=0, ok=True)
+        tty_out, mock_copy, _ = self._offer_clipboard_prompt(f, "p\n\n", ["  \n"], "END STEP", rc=0)
         self.assertEqual(f.read_text(encoding="utf-8"), initial_out)
         self.assertFalse(f.with_name("out.orig").exists())
         self.assertNotIn("(edited)", tty_out)
@@ -2132,6 +2131,20 @@ class TestRunner(RunBlockTestCase):
         self.assertTrue(res_conv["ok"])
         self.assertEqual(res_conv["kind"], "normal")
         self.assertIsNone(res_conv["step"])
+
+        # Normal RUN_BLOCK with a fix-style step number (s3/2_1 without --fix) clears step so cmd_run_reply renumbers
+        misnumbered_normal = (
+            "Normal block with fix-style step ref.\n\n"
+            "run s3/2_1 <<'RUN_BLOCK'\n"
+            "echo normal_from_fix_ref\n"
+            "RUN_BLOCK\n"
+        )
+        res_misnum = fn(misnumbered_normal)
+        self.assertTrue(res_misnum["ok"])
+        self.assertEqual(res_misnum["kind"], "normal")
+        self.assertEqual(res_misnum["session"], "s3")
+        self.assertIsNone(res_misnum["step"])
+        self.assertEqual(res_misnum["ref"], "s3/2_1")
 
         # 4. Fenced code block fallback when session is supplied
         fenced_only = (

@@ -89,15 +89,34 @@ def _assign_part_ranges(
     plan["line_offset"] = 0
 
 
-def _body_line_offset(full_text: str) -> int:
+def _preamble_prefix_and_offset(full_text: str) -> tuple[str, int]:
     try:
-        _, body = parse_stdin_preamble(full_text)
+        preamble_headers, body = parse_stdin_preamble(full_text)
     except Exception:
-        return 0
+        return "", 0
+    if not preamble_headers:
+        return "", 0
+    norm = full_text.replace("\r\n", "\n")
     if not body.strip():
-        return 0
-    body_pos = full_text.find(body[:200])
-    return full_text.count("\n", 0, body_pos) if body_pos > 0 else 0
+        return norm, norm.count("\n")
+    lines = norm.splitlines(keepends=True)
+    sep_idx: int | None = None
+    for idx, line in enumerate(lines):
+        if not line.strip():
+            sep_idx = idx
+            break
+    if sep_idx is None:
+        return "", 0
+    body_idx = sep_idx + 1
+    while body_idx < len(lines) and not lines[body_idx].strip():
+        body_idx += 1
+    prefix = "".join(lines[:body_idx])
+    return prefix, body_idx
+
+
+def _body_line_offset(full_text: str) -> int:
+    _, offset = _preamble_prefix_and_offset(full_text)
+    return offset
 
 
 def _shift_part_ranges(plan: dict[str, object], offset: int) -> dict[str, object]:
@@ -177,11 +196,10 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_line
     sum_claude = sum(int(p.get("claude") or 0) for p in non_hdr_parts)
     full_tok = count_tokens(full_text.encode("utf-8"))
     try:
-        preamble_headers, body = parse_stdin_preamble(full_text)
+        preamble_headers, _ = parse_stdin_preamble(full_text)
     except Exception:
-        preamble_headers, body = [], full_text
-    body_pos = full_text.find(body[:200]) if body.strip() else -1
-    prefix = full_text[:body_pos] if body_pos > 0 else (full_text if (preamble_headers and not body.strip()) else "")
+        preamble_headers = []
+    prefix, offset = _preamble_prefix_and_offset(full_text)
     pre_tok = count_tokens(prefix.encode("utf-8")) if prefix else {}
 
     def _hdr_val(key: str, sum_val: int) -> int:
@@ -201,7 +219,6 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_line
         out["gpt"] = sum_gpt + hdr_gpt
         out["claude"] = sum_claude + hdr_claude
         out["gpt_exact"] = bool(full_tok["gpt_exact"])
-        offset = _body_line_offset(full_text)
         hdr_end = max(1, offset) if offset > 0 else max(1, len(prefix.splitlines()))
         hdr_part: dict[str, object] = {
             "index": 1,
@@ -250,48 +267,6 @@ def reconcile_bundle_plan(plan: dict[str, object], full_text: str, *, track_line
     if track_lines:
         out = _shift_part_ranges(out, _body_line_offset(full_text))
     return out
-
-
-def group_bundle_parts(parts: list[dict[str, object]]) -> list[dict[str, object]]:
-    buckets: dict[tuple[str, tuple[str, ...]], dict[str, object]] = {}
-    order: list[tuple[str, tuple[str, ...]]] = []
-    for entry in parts:
-        kind = str(entry.get("kind") or "part")
-        chain = tuple(_resolve_part_chain(entry))
-        group = " / ".join(chain) if chain else ""
-        key = (kind, chain)
-        if key not in buckets:
-            order.append(key)
-            buckets[key] = {
-                "kind": kind,
-                "group": group,
-                "chain": list(chain),
-                "count": 0,
-                "lines": 0,
-                "chars": 0,
-                "bytes": 0,
-                "gpt": 0,
-                "claude": 0,
-                "share_pct": 0.0,
-                "names": [],
-                "rc_errors": 0,
-            }
-        b = buckets[key]
-        b["count"] = int(b["count"]) + 1
-        b["lines"] = int(b["lines"]) + int(entry.get("lines") or 0)
-        b["chars"] = int(b["chars"]) + _part_chars(entry)
-        b["bytes"] = int(b["bytes"]) + int(entry.get("bytes") or 0)
-        b["gpt"] = int(b["gpt"]) + int(entry.get("gpt") or 0)
-        b["claude"] = int(b["claude"]) + int(entry.get("claude") or 0)
-        b["share_pct"] = round(float(b["share_pct"]) + float(entry.get("share_pct") or 0.0), 1)
-        name = str(entry.get("name") or entry.get("id") or "")
-        names_list = b["names"]
-        if name and isinstance(names_list, list) and name not in names_list:
-            names_list.append(name)
-        rc_val = entry.get("rc")
-        if isinstance(rc_val, int) and rc_val != 0:
-            b["rc_errors"] = int(b["rc_errors"]) + 1
-    return [buckets[k] for k in order]
 
 
 def _build_bundle_plan(

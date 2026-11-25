@@ -181,8 +181,6 @@ def cmd_uninstall(purge: bool = False, target_dir: Path | None = None) -> int:
     return 0
 
 
-_SANDBOX_MODE_TOKENS = ("off", "0", "false", "on", "1", "true", "auto", "strict", "nonet", "no-net")
-
 
 def _extract_prompt_args(argv: list[str]) -> tuple[list[str], list[str]]:
     prog = prog_name()
@@ -247,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     has_bare_sandbox_flag = False
     for idx, tok in enumerate(raw_args):
         if tok == "--sandbox":
-            if idx + 1 >= len(raw_args) or raw_args[idx + 1].lower() not in _SANDBOX_MODE_TOKENS:
+            if idx + 1 >= len(raw_args) or raw_args[idx + 1].lower() not in SANDBOX_MODE_TOKENS:
                 has_bare_sandbox_flag = True
 
     args, prompt_args = _extract_prompt_args(raw_args)
@@ -278,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         rest_sb = args[1:]
         if not any("/" in x or x.startswith("-") for x in rest_sb):
             has_session_arg = len(rest_sb) >= 2 or (
-                len(rest_sb) == 1 and rest_sb[0].lower() not in _SANDBOX_MODE_TOKENS
+                len(rest_sb) == 1 and rest_sb[0].lower() not in SANDBOX_MODE_TOKENS
             )
             if in_run_block() or has_session_arg or has_bare_sandbox_flag or (
                 sys.stdin.isatty() and not prompt_args
@@ -308,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
             sandbox_override = a.split("=", 1)[1] or "strict"
             i += 1
         elif a == "--sandbox":
-            if i + 1 < len(args) and args[i + 1].lower() in _SANDBOX_MODE_TOKENS:
+            if i + 1 < len(args) and args[i + 1].lower() in SANDBOX_MODE_TOKENS:
                 sandbox_override = args[i + 1]
                 i += 2
             else:

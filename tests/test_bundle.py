@@ -629,8 +629,8 @@ class TestBundle(RunBlockTestCase):
             ],
         )
         self.assertEqual(
-            self.mod.get_bundle_name([("Bundle-Name", "todo_md"), ("Task", "F95")]),
-            "todo_md",
+            self.mod.extract_bundle_transport_headers([("Bundle-Name", "todo_md"), ("Task", "F95")]),
+            {"bundle-name": "todo_md"},
         )
         self.assertTrue(self.mod.is_bundle_transport_header("Bundle-Name"))
 
@@ -696,7 +696,7 @@ class TestBundle(RunBlockTestCase):
     def test_bundle_protocol_header_and_canonical_prompt_fragments(self) -> None:
         nonce = "tcnonce77"
         hdrs = [("Bundle-Name", "agents_bundle"), ("Bundle-Protocol", "1"), ("Bundle-Boundary", nonce), ("Role", "work")]
-        self.assertEqual(self.mod.get_bundle_name(hdrs), "agents_bundle")
+        self.assertEqual(self.mod.extract_bundle_transport_headers(hdrs).get("bundle-name"), "agents_bundle")
         self.assertEqual(self.mod.get_bundle_protocol(hdrs), "1")
         self.assertIsNone(self.mod.get_bundle_protocol([("Role", "work")]))
         self.assertEqual(self.mod.get_bundle_boundary(hdrs), nonce)
@@ -749,7 +749,7 @@ class TestBundle(RunBlockTestCase):
         self.assertLess(clean.index("upstream prompt line"), clean.index("===== Prompt ====="))
         self.assertLess(clean.index("===== Prompt ====="), clean.index("cli note"))
         self.assertEqual(
-            [k for k, _ in self.mod.format_bundle_part_items(plan)],
+            [p["kind"] for p in plan["parts"]],
             ["file", "prompt", "prompt", "prompt", "prompt"],
         )
         self.assertEqual(plan["warnings"], [])
@@ -968,8 +968,8 @@ class TestBundle(RunBlockTestCase):
         fake_stdout.isatty = lambda: True  # type: ignore[method-assign]
         tty_w = _KeepOpenStringIO()
         tty_r = io.StringIO("d\nd\nesc\n")
-        old_dir = self.mod.BASE_DIR
-        self.mod.BASE_DIR = sessions
+        old_dir = os.environ.get("RUN_BLOCK_DIR")
+        os.environ["RUN_BLOCK_DIR"] = str(sessions)
         saved_frag = os.environ.get("RUN_BLOCK_FRAGMENT_MAX_TOKENS")
         saved_bud = os.environ.get("RUN_BLOCK_BUNDLE_MAX_TOKENS")
         os.environ["RUN_BLOCK_FRAGMENT_MAX_TOKENS"] = "100"
@@ -988,7 +988,10 @@ class TestBundle(RunBlockTestCase):
                     extra_lines=[f"Bundle: {b0_path}"],
                 )
         finally:
-            self.mod.BASE_DIR = old_dir
+            if old_dir is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = old_dir
             if saved_frag is None:
                 os.environ.pop("RUN_BLOCK_FRAGMENT_MAX_TOKENS", None)
             else:
@@ -1168,14 +1171,14 @@ class TestBundle(RunBlockTestCase):
         self.assertNotIn("bundle-command", {k.lower() for k, _ in self.mod.parse_bundle_header_items(s1_dir, include_transport=False)})
 
         # 2. PLAN, END, NOT RUN, SYNTAX ERROR, and confirmation header lines exclude Bundle-* and clamp Title
-        old_base = self.mod.BASE_DIR
-        self.mod.BASE_DIR = sessions
+        old_base = os.environ.get("RUN_BLOCK_DIR")
+        os.environ["RUN_BLOCK_DIR"] = str(sessions)
         try:
             with unittest.mock.patch.object(self.mod.shutil, "get_terminal_size", return_value=os.terminal_size((72, 24))):
                 plan_box, _, _ = self.mod.format_safety_box(
                     "s1/1", [], default_yes=True, summary={"work_dir": str(proj.resolve()), "meta": "1 line, bash"}
                 )
-                end_box, _, _ = self.mod.format_clipboard_box("s1/1", s1_dir / "1" / "out", ok=True, rc=0)
+                end_box, _, _ = self.mod.format_clipboard_box("s1/1", s1_dir / "1" / "out", rc=0)
                 hdr_confirm = self.mod.format_session_header_lines(label="s1/1", sdir=s1_dir, work_dir=proj)
 
             for box_name, rendered in (("PLAN", plan_box), ("END", end_box), ("CONFIRM", "\n".join(hdr_confirm))):
@@ -1203,7 +1206,10 @@ class TestBundle(RunBlockTestCase):
             self.assertNotIn("Bundle-Command:", buf_syn.getvalue())
             self.assertEqual(len([ln for ln in buf_syn.getvalue().splitlines() if "Title:" in ln]), 1)
         finally:
-            self.mod.BASE_DIR = old_base
+            if old_base is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = old_base
 
         # 3. Short Title stays untruncated; wide Unicode Title respects display_width; ASCII uses '...'
         s2_dir = self.tmp / "s_short"
@@ -1318,8 +1324,6 @@ class TestBundle(RunBlockTestCase):
 
         plan1 = self.mod.load_session_bundle_plan(sessions / "s1")
         assert plan1 is not None
-        self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_group_items(plan1)))
-        self.assertFalse(any("vitalio/run_block: vitalio/run_block:" in s for _, s in self.mod.format_bundle_part_items(plan1)))
         sum1_text = "\n".join(self.mod.format_bundle_parts_lines(plan1, max_width=100))
         self.assertIn("[header]  Headers & spacing", sum1_text)
         self.assertNotIn("vitalio/run_block: vitalio/run_block:", sum1_text)
@@ -1516,9 +1520,9 @@ class TestBundle(RunBlockTestCase):
 
         # 7. Bare main() and --start in TTY stdin start a rule-only session; --sandbox stays on cmd_sandbox()
         sessions = self.tmp / "f66_tty_sessions"
-        old_base = self.mod.BASE_DIR
+        old_base = os.environ.get("RUN_BLOCK_DIR")
         old_cwd_env = os.environ.get("RUN_BLOCK_CWD")
-        self.mod.BASE_DIR = sessions
+        os.environ["RUN_BLOCK_DIR"] = str(sessions)
         os.environ["RUN_BLOCK_CWD"] = str(proj)
         try:
             class _FakeTtyIn(io.StringIO):
@@ -1552,13 +1556,22 @@ class TestBundle(RunBlockTestCase):
                 self.assertEqual(rc_sb, 0)
                 self.assertIn("Updated s2/0 -> Sandbox: nonet", buf_sb.getvalue())
         finally:
-            self.mod.BASE_DIR = old_base
+            if old_base is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = old_base
             if old_cwd_env is None:
                 os.environ.pop("RUN_BLOCK_CWD", None)
             else:
                 os.environ["RUN_BLOCK_CWD"] = old_cwd_env
 
     def test_bundle_part_line_ranges_and_part_option(self):
+        dup_hdr_text = "Session: s1\nTask: F101\nTitle: F101 plan\n\nF101\n"
+        self.assertEqual(self.mod._body_line_offset(dup_hdr_text), 4)
+        _, dup_plan = self.mod.parse_bundle_fragments("F101\n")
+        rec_dup = self.mod.reconcile_bundle_plan(dup_plan, dup_hdr_text)
+        self.assertEqual(rec_dup["parts"][1]["line_start"], 5)
+        self.assertEqual(rec_dup["parts"][1]["line_end"], 5)
         import json
 
         nonce = "abc"
@@ -1866,9 +1879,9 @@ class TestBundle(RunBlockTestCase):
 
         # 5. CLI modes (TTY and piped, bare and --start, with --session, --sandbox, --force) & incompatible rejections
         sessions = self.tmp / "f73_sessions"
-        old_base = self.mod.BASE_DIR
+        old_base = os.environ.get("RUN_BLOCK_DIR")
         old_cwd_env = os.environ.get("RUN_BLOCK_CWD")
-        self.mod.BASE_DIR = sessions
+        os.environ["RUN_BLOCK_DIR"] = str(sessions)
         os.environ["RUN_BLOCK_CWD"] = str(proj)
         try:
             class _FakeTtyIn(io.StringIO):
@@ -1970,7 +1983,10 @@ class TestBundle(RunBlockTestCase):
                         self.assertIn("-p/--prompt", str(cm.exception))
                         self.assertIn("usage:", str(cm.exception))
         finally:
-            self.mod.BASE_DIR = old_base
+            if old_base is None:
+                os.environ.pop("RUN_BLOCK_DIR", None)
+            else:
+                os.environ["RUN_BLOCK_DIR"] = old_base
             if old_cwd_env is None:
                 os.environ.pop("RUN_BLOCK_CWD", None)
             else:
@@ -1990,7 +2006,7 @@ class TestBundle(RunBlockTestCase):
         )
         bundle_file.write_text(initial_text, encoding="utf-8")
         initial_stats = self.mod.stats_line(bundle_file)
-        tty_out, mock_copy, refresh_calls = self._f57_offer(
+        tty_out, mock_copy, refresh_calls = self._offer_clipboard_prompt(
             bundle_file,
             "p\np\n\n",
             ["first note\n", "second note\n"],
@@ -2021,7 +2037,7 @@ class TestBundle(RunBlockTestCase):
             "===== Prompt =====\nOriginal ask\n"
         )
         bundle_file.write_text(initial_text, encoding="utf-8")
-        self._f57_offer(
+        self._offer_clipboard_prompt(
             bundle_file, "p\n\n", ["follow-up question\n"], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
         )
         text = bundle_file.read_text(encoding="utf-8")
@@ -2038,7 +2054,7 @@ class TestBundle(RunBlockTestCase):
         bundle_file.write_text(initial_text, encoding="utf-8")
         for blank in ("", "  \n\n\t\n"):
             with self.subTest(blank=blank):
-                tty_out, mock_copy, refresh_calls = self._f57_offer(
+                tty_out, mock_copy, refresh_calls = self._offer_clipboard_prompt(
                     bundle_file, "p\n\n", [blank], "START SESSION", extra_lines=[f"Bundle: {bundle_file}"]
                 )
                 self.assertEqual(bundle_file.read_text(encoding="utf-8"), initial_text)
