@@ -1,3 +1,13 @@
+# 🎯 [NEXT] B17: Guard --fix and run -r/-rc against duplicate slot allocation on repeated runs
+
+- Bump: `PATCH`
+- Prevent repeated `run --fix <session>/<target>` and `run -r` / `run -rc` invocations from silently allocating `<base>_<N+1>` or `<step+1>` duplicates when the target step or fix slot already exists in `src/runner.py`:
+  - Resolve the direct fix slot deterministically from `<target>` (`<base>_1` when targeting `<base>`, `<base>_<k+1>` when targeting `<base>_<k>`) instead of unconditionally scanning the session directory for `max_n + 1` in `next_fix_step()` before collision checks.
+  - Handle existing fix slots in `cmd_fix()` with the same collision contract as `cmd_normal()`: automatically reuse and clean up an `aborted` fix slot (`overwrite = True`), prompt with `STEP ALREADY EXISTS` on interactive TTY (`copy` existing `out`, `overwrite` `<target_fix>`, `renumber` to the next free fix slot `next_fix_step(target, sdir=sdir)`, or cancel), and return `NOT RUN: step already exists — output: <out_path>` in non-interactive / `--headless` mode.
+  - In `cmd_run_reply()` (`run -r` / `run -rc`), preserve an explicit block step number (`raw_step`, such as `run s487/12`) when calling `cmd_normal()` rather than pre-renumbering to `next_free_step()`, so re-running `run -rc` with an already executed reply hits `STEP ALREADY EXISTS` (or reuses an `aborted` step) instead of silently running a duplicate as `<step+1>`; use `next_free_step()` inference only when the extracted block omits a step number.
+  - Update `agents/run.md` (and rebuild `src/header.py` / `run` via `python3 build.py`) to state that chaining `--fix` must target the latest fix slot (`--fix s1/1_1` -> `s1/1_2`) because targeting `<base>` (`--fix s1/1`) always targets `<base>_1`.
+  - Add unit tests in `tests/test_runner.py` covering repeated `--fix <session>/<base>` collision handling (`aborted` slot reuse, interactive `STEP ALREADY EXISTS` copy/overwrite/renumber, non-interactive `NOT RUN`), explicit chained fixes (`--fix <base>_1` -> `<base>_2`), and repeated `run -rc` / `cmd_run_reply()` collision protection for both normal and `--fix` blocks.
+
 # 🎯 [NEXT] L1: Codify terminal execution boundaries and untrusted output framing in agents/run.md
 
 - Bump: `PATCH`
@@ -96,7 +106,8 @@
 
 - Depends on: F93
 - Depends on: F101 -> F102
-- Depends on: F104
+- Depends on: L1 -> F104
+- Depends on: B17
 - Bump: `MINOR`
 - Implement the step proposal state machine (`outcome: "proposed"`), strict `awaiting_reply` handling, session continuation (`--continue`), safe autopilot, and supervisor-session CLI in `src/agent.py`, `src/runner.py`, and `src/cli.py` per `docs/adr/0001-built-in-api-agent-mode.md`:
   - Normalize tool-call `run(script, fix_target?)` and plain-text fallback replies via `extract_reply_block()` (stripping accidental fence/heredoc wrappers and converting misplaced shell scripts in `fix_target` to sequential steps). When the model returns plain prose without a `run` tool call or runnable block, record `outcome: "awaiting_reply"` rather than auto-closing the session via heuristics.
