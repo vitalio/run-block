@@ -2101,11 +2101,15 @@ def cmd_run_reply(
     raw_step = str(extracted["step"]) if extracted.get("step") else None
     orig_ref = str(extracted["ref"]) if extracted.get("ref") and "/" in str(extracted["ref"]) else None
 
+    session_overridden = bool(extracted_sess and extracted_sess != session)
     if kind == "fix":
-        target_step = raw_step if raw_step else _resolve_latest_fix_target(sdir)
-        base_target = target_step.split("_", 1)[0]
-        if not _find_fix_chain_scripts(sdir, base_target):
-            target_step = _resolve_latest_fix_target(sdir)
+        if raw_step and not session_overridden:
+            target_step = raw_step
+        else:
+            target_step = raw_step if raw_step else _resolve_latest_fix_target(sdir)
+            base_target = target_step.split("_", 1)[0]
+            if not _find_fix_chain_scripts(sdir, base_target):
+                target_step = _resolve_latest_fix_target(sdir)
         return cmd_fix(
             f"{session}/{target_step}",
             payload,
@@ -2114,16 +2118,19 @@ def cmd_run_reply(
             reasoning=reasoning,
         )
 
-    inferred_step = str(next_free_step(sdir, min_step=1))
-    target_ref = f"{session}/{inferred_step}"
     renumbered_from: str | None = None
-    if orig_ref and orig_ref != target_ref:
-        renumbered_from = orig_ref
-        payload = _rewrite_script_step_header(payload, orig_ref, target_ref)
-    elif raw_step and raw_step != inferred_step:
-        old_lbl = f"{ extracted_sess or session }/{raw_step}"
-        renumbered_from = old_lbl
-        payload = _rewrite_script_step_header(payload, old_lbl, target_ref)
+    if raw_step and not session_overridden:
+        target_ref = f"{session}/{raw_step}"
+    else:
+        inferred_step = str(next_free_step(sdir, min_step=1))
+        target_ref = f"{session}/{inferred_step}"
+        if orig_ref and orig_ref != target_ref:
+            renumbered_from = orig_ref
+            payload = _rewrite_script_step_header(payload, orig_ref, target_ref)
+        elif raw_step and raw_step != inferred_step:
+            old_lbl = f"{extracted_sess or session}/{raw_step}"
+            renumbered_from = old_lbl
+            payload = _rewrite_script_step_header(payload, old_lbl, target_ref)
 
     return cmd_normal(
         target_ref,
@@ -2497,6 +2504,8 @@ def cmd_fix(
     _repair: bool = True,
     *,
     reasoning: str | None = None,
+    renumbered_from: str | None = None,
+    _allocated_step: str | None = None,
 ) -> int:
     if in_run_block():
         return _reject_nested_step_execution(f"--fix {ref}")
@@ -2507,10 +2516,11 @@ def cmd_fix(
     base_step = target.split("_", 1)[0]
     sdir = ensure_base() / session
     next_seq_ref = f"{session}/{next_free_step(sdir, min_step=int(base_step) + 1)}"
-    new_step = next_fix_step(target, sdir=sdir)
+    new_step = _allocated_step or next_fix_step(target)
     label = f"{session}/{new_step}"
     new_step_dir = _step_dir(sdir, new_step)
     fix_path = new_step_dir / "fix.py"
+    existing_script = _find_step_script(sdir, new_step)
     out_path = new_step_dir / "out"
     if split_err:
         return not_run_exit(
@@ -2534,6 +2544,113 @@ def cmd_fix(
     if rc_done is not None:
         return rc_done
 
+    aborted_marker = new_step_dir / "aborted"
+    overwrite = aborted_marker.exists()
+    if overwrite:
+        out_path.unlink(missing_ok=True)
+        fix_path.unlink(missing_ok=True)
+        existing_script.unlink(missing_ok=True)
+        (new_step_dir / "meta.json").unlink(missing_ok=True)
+        (new_step_dir / "error").unlink(missing_ok=True)
+        aborted_marker.unlink(missing_ok=True)
+        for orig_p in (
+            new_step_dir / "block.orig.sh",
+            new_step_dir / "fix.orig.py",
+            new_step_dir / "out.orig",
+        ):
+            orig_p.unlink(missing_ok=True)
+    elif existing_script.exists() or fix_path.exists() or out_path.exists():
+        if sys.stdout.isatty() and not no_clipboard() and not headless:
+            next_fix = next_fix_step(target, sdir=sdir)
+            next_label = f"{session}/{next_fix}"
+            existing_lines = [f"Next: {next_label}"]
+            info_script = existing_script if existing_script.exists() else (fix_path if fix_path.exists() else None)
+            if info_script is not None:
+                existing_lines.append(f"Script: {info_script}")
+            if out_path.exists():
+                existing_lines.append(f"Output: {out_path}")
+
+            def _fix_exists_lines() -> list[str]:
+                hdr = format_session_header_lines(
+                    label=label, sdir=sdir, sandbox_mode=sandbox_override
+                )
+                return [*hdr, "", *existing_lines]
+
+            if out_path.exists():
+                choice = prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    _fix_exists_lines(),
+                    "Copy out to clipboard?",
+                    default_yes=True,
+                    no_status=f"✗ Keeping existing {label}.",
+                    script_path=info_script,
+                    out_path=out_path,
+                    renumber_label=next_label,
+                    renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                    content_builder=_fix_exists_lines,
+                    copy_on_yes=True,
+                    label=label,
+                    sdir=sdir,
+                    sandbox_mode=sandbox_override,
+                    allow_overwrite=True,
+                )
+            else:
+                choice = prompt_yes_no_box(
+                    "STEP ALREADY EXISTS",
+                    _fix_exists_lines(),
+                    f"Renumber to {next_label}?",
+                    default_yes=False,
+                    no_status=f"✗ Keeping existing {label}.",
+                    script_path=info_script,
+                    renumber_label=next_label,
+                    renumber_status=f"✓ Renumbering {label} -> {next_label}.",
+                    content_builder=_fix_exists_lines,
+                    renumber_only=True,
+                    label=label,
+                    sdir=sdir,
+                    sandbox_mode=sandbox_override,
+                    allow_overwrite=True,
+                )
+            if choice == "renumber":
+                renumbered_from = label
+                new_step = next_fix
+                label = next_label
+                new_step_dir = _step_dir(sdir, new_step)
+                fix_path = new_step_dir / "fix.py"
+                existing_script = _find_step_script(sdir, new_step)
+                out_path = new_step_dir / "out"
+                aborted_marker = new_step_dir / "aborted"
+                overwrite = False
+            elif choice == "overwrite":
+                out_path.unlink(missing_ok=True)
+                fix_path.unlink(missing_ok=True)
+                existing_script.unlink(missing_ok=True)
+                (new_step_dir / "meta.json").unlink(missing_ok=True)
+                (new_step_dir / "error").unlink(missing_ok=True)
+                aborted_marker.unlink(missing_ok=True)
+                for orig_p in (
+                    new_step_dir / "block.orig.sh",
+                    new_step_dir / "fix.orig.py",
+                    new_step_dir / "out.orig",
+                ):
+                    orig_p.unlink(missing_ok=True)
+                overwrite = True
+            elif choice == "copy":
+                return 0
+            else:
+                return 2
+        if not overwrite and renumbered_from is None:
+            return not_run_exit(
+                label,
+                sdir,
+                new_step,
+                out_path,
+                f"[{label}] NOT RUN: step already exists — output: {out_path}",
+                headless=headless,
+                fix_target=target_ref,
+            )
+
+    chain = _find_fix_chain_scripts(sdir, base_step)
     max_attempts = int(get_setting("max_fix_attempts")[0])
     prior_failures = _consecutive_failed_fixes(sdir, base_step)
     if prior_failures >= max_attempts:
@@ -2659,7 +2776,14 @@ def cmd_fix(
             if repaired is not None:
                 shutil.rmtree(new_step_dir, ignore_errors=True)
                 return cmd_fix(
-                    ref, repaired, auto_yes=auto_yes, sandbox_override=sandbox_override, _repair=False, reasoning=reasoning
+                    ref,
+                    repaired,
+                    auto_yes=auto_yes,
+                    sandbox_override=sandbox_override,
+                    _repair=False,
+                    reasoning=reasoning,
+                    renumbered_from=renumbered_from,
+                    _allocated_step=new_step,
                 )
             if prompted:
                 return 2
@@ -2669,8 +2793,8 @@ def cmd_fix(
     new_step_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     _persist_step_reasoning(new_step_dir, reasoning)
     script_path = new_step_dir / f"block{ext}"
-    write_private(fix_path, fix_code)
-    write_private(script_path, chosen_new)
+    write_private(fix_path, fix_code, overwrite=overwrite)
+    write_private(script_path, chosen_new, overwrite=overwrite)
     diff = "".join(
         difflib.unified_diff(
             chosen_orig.splitlines(keepends=True),
@@ -2689,6 +2813,7 @@ def cmd_fix(
         auto_yes=auto_yes,
         sandbox_override=sandbox_override,
         footer_on_fail=stop_directive if reach_limit else None,
+        renumbered_from=renumbered_from,
         reasoning=reasoning,
     )
 

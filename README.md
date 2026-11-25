@@ -82,9 +82,10 @@ clipboard text fail cleanly with zero orphan step directories. It automatically
 extracts the first actionable `RUN_BLOCK` or
 `--fix` / `RUN_FIX` block (matching `[session]` when given, preserving nested
 doc/heredoc examples, and discarding any trailing hallucinated output or
-subsequent blocks), repairs split fences or missing terminators, infers
-the target session and next free step (`next_free_step()`), and persists the
-model's preceding prose in `<session>/<step>/meta.json` and `plan.md`.
+subsequent blocks), repairs split fences or missing terminators, preserves
+explicit block step numbers (or infers `next_free_step()` when omitted) so
+repeated runs hit duplicate guards, and persists the model's preceding prose in
+`<session>/<step>/meta.json` and `plan.md`.
 
 Before execution, `START STEP` displays the model's `Reasoning:` commentary (if
 present), the resolved working directory, numbered operations (with
@@ -104,8 +105,9 @@ RUN_FIX
 ```
 
 Use `--fix <session>/<target>` for small, targeted patches to a failed step
-(`text` and `re` are preloaded; each attempt allocates `<target>_1`,
-`<target>_2`, up to `RUN_BLOCK_MAX_FIX_ATTEMPTS`). When a fix requires rewriting
+(`text` and `re` are preloaded; targeting `<base>` allocates `<base>_1`, and
+chaining `--fix <base>_1` allocates `<base>_2`, up to
+`RUN_BLOCK_MAX_FIX_ATTEMPTS`). When a fix requires rewriting
 multiple sections, emit a fresh `<session>/<step+1>` block instead.
 
 ### 4. Complete or chain sessions (`--done`)
