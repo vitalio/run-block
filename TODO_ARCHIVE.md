@@ -184,8 +184,7 @@ Several open backlog items in TODO.md (such as B15, F96, D10, F93, F84, D4, F88,
 - Add `m(eta)` hotkey handling and footer hint (`m(eta)`) to `_open_part_viewer()` and `_build_part_screen()` in `src/ui.py` (resolving `<session>/meta.json` via `_info_meta_path("START SESSION", resolved_sdir, None, out_path)`) so `START SESSION` `PART N/M` and `BUNDLE R/M` subviews open `<session>/meta.json` consistently with step `PART k/N` views.
 - Recompute per-operation `share_pct` against current `total["chars"]` (and refresh operation/slice metrics when `block.sh` or `<step>/out` is modified) in `_format_output_breakdown()` and `_open_operation_viewer()` (`src/ui.py`) so the `END STEP` breakdown table and operation viewer stay aligned after in-place edits.
 - Handle partial lines without trailing `\n` before step markers and `\r` / ANSI cleaning consistently in `_ProgressLineFilter` (`src/runner.py`) so `out_line_start`..`out_line_end` always match line numbers in cleaned `<step>/out`.
-
-- Fix `instrument_script_for_progress()` and `summarize_script_actions()` in `src/safety.py` when a heredoc (`<<EOF` / `<<'EOF'`) starts on a `\`-continued line or inside `"$(cat <<'EOF' ... EOF)"`: track heredoc `eof_token` before/alongside `in_continuation` and `quote_state` so `printf '%s\n' '__RB_STEP__:N'` is never injected inside a heredoc body or an unclosed `"$(...)"` command substitution.
+- Fix `instrument_script_for_progress()` and `summarize_script_actions()` in `src/safety.py` when a heredoc (`<<EOF` / `<<'EOF'`) starts on a backslash-continued line or inside `"$(cat <<'EOF' ... EOF)"`: track heredoc `eof_token` before/alongside `in_continuation` and `quote_state` so `printf '%s\n' '__RB_STEP__:N'` is never injected inside a heredoc body or an unclosed `"$(...)"` command substitution.
 
 # ✅ [DONE] F96: Align context-bundle-protocol parser and prompt-note merger with canonical 4 fragment kinds (rule, file, cmd, prompt) — *2026-11-23, Normalized context-bundle-protocol fragment kinds to rule/file/cmd/prompt, checked fragment_empty on prompt parts, and distinguished upstream chain prompt fragments from root user Prompt parts during dedup and note merging*
 
@@ -923,14 +922,14 @@ Replace full-perimeter box-drawing borders (`┌─ ... ─┐`, `│ ... │`, 
 
 # ✅ [DONE] B2: Fix BLOCK PLAN analyzer for backslash continuations, external paths, quoted echo, and multi-dir Python AST — *2026-11-15, Handled shell line continuations, quoted redirects in echo/printf, external paths and *_CWD prefixes, and multi-directory Python AST loop/deletion grouping*
 
-- Join shell line continuations (trailing `\`) outside heredoc and Python blocks before classifying commands and scanning risks.
+- Join shell line continuations (trailing backslash) outside heredoc and Python blocks before classifying commands and scanning risks.
 - Ignore `>` inside single or double quotes when filtering non-redirected `echo`/`printf` statements.
 - Recognize absolute external paths under `$HOME` (e.g. `/home/<user>/<repo>/...`) and `*_CWD=/path` environment prefixes in `_infer_op_dir` so commands operating on sibling repositories are grouped under their target directory.
 - In `_analyze_python_ast` and `_emit_py_op`, track loop target variables (`for x in (...):`), surface `Path.unlink()` / `Path.rmdir()` deletions (including `fs-destructive` risk warnings), and group or summarize Python file operations across all target directories without silently dropping paths past 12 items.
 
 # ✅ [DONE] F18: Reassemble split run_block payloads caused by inner triple backticks on paste/stdin — *2026-11-15, Implemented _reassemble_split_payload in src/runner.py and added unit tests*
 
-- When a model emits literal triple backticks inside a `run_block` heredoc (for example when editing `README.md` code fences), chat Markdown renderers split the single block into multiple fenced snippets separated by ```text` or ```python` fences, leaving the outer heredoc unclosed until the final `RUN_BLOCK` terminator.
+- When a model emits literal triple backticks inside a `run_block` heredoc (for example when editing `README.md` code fences), chat Markdown renderers split the single block into multiple fenced snippets separated by `text` or `python` fence headers, leaving the outer heredoc unclosed until the final `RUN_BLOCK` terminator.
 - Detect an unclosed `run_block ... <<'RUN_BLOCK'` (or `RUN_FIX`) header in pasted/piped input before the closing terminator and reconstruct the original payload by stripping intermediate Markdown fence lines that split the block, or emit a clear diagnostic if the terminator is missing.
 
 # ✅ [DONE] B4: Add --fix diagnostics, non-overwriting fix slots, and max-attempts loop guard — *2026-11-15, Implemented rich --fix exception diagnostics, non-overwriting fix slot allocation with chain fallback, RUN_BLOCK_MAX_FIX_ATTEMPTS loop guard, and updated bash/pwsh block rules.*
