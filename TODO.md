@@ -14,6 +14,8 @@
   - Classify features into daily core workflows, useful inspection/safety tools, and over-engineered or redundant options that can be simplified, consolidated, or removed.
   - Record agreed simplifications, flag/UX cleanups, and module boundaries for `F93` in `AGENTS.md` and `TODO.md`.
 
+- Remove obsolete `RUN_BLOCK_STEP_STDOUT_INO` (`STEP_STDOUT_INO_ENV`) from `src/runner.py`, `AGENTS.md`, `README.md`, and `tests/test_runner.py` now that `todo-md` requires explicit `-B` / `--bundle` instead of FIFO pipe auto-detection.
+
 # 🎯 [NEXT] F101: Add unified config.json settings loader, model/role profile resolution, and unconditional child env API key scrubbing
 
 - Depends on: D10, F85
