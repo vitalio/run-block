@@ -1,15 +1,26 @@
+# 🎯 [NEXT] L3: Trim host CLI flags, child-session handoff instructions, and duplicate glued-fence prose in agents/run.md
+
+- Bump: `PATCH`
+- Clean up `agents/run.md` (and sync `EMBEDDED_RULE_BASH` in `src/header.py` + rebuild `./run` via `./build.py`):
+  - Remove the duplicate parenthetical `(prose glued to a closing fence line or emitted after the block causes trailing blocks to be discarded)` from Rule 1, keeping it once in Rule 2 where standalone closing fence lines are specified.
+  - Remove host-only CLI and session initialization instructions (`Pipe <bundle_cmd> | {cmd:run} to initialize a session (--bundle-plan [<session>] [--part N] inspects bundle parts), or run {cmd:run} -r [-c] [session] / {cmd:run} -rc [session] on the host to ingest a full reply (from clipboard with -c/--clipboard, editor on TTY, or stdin) with automatic block extraction and step inference.`) from `Sequential steps`, keeping `Never pass -y or --yes on a {cmd:run} command line.`
+  - Remove child-session handoff instructions (`& handoff` and `and can be followed inside the same block by <bundle_cmd> | {cmd:run} to initialize a new session`) from the `--done` bullet so worker sessions only mark their own session completed via `{cmd:run} --done [<session>] [-m "<note>"]` without proposing or spawning the next task session.
+- Update rule assertions in `tests/` if needed and verify the full test suite passes.
+
 # 🎯 [NEXT] D11: Audit run-block CLI commands, flags, settings, and TUI workflows for simplicity and user value
 
 - Conduct an interactive architectural and UX audit of `run-block` with the user before splitting `src/runner.py` (`F93`) and landing the API agent loop (`F101`–`F103`, `F88`):
   - Walk through all current CLI subcommands, flags (`src/cli.py`, `src/header.py`), environment variables (`RUN_BLOCK_*` in `src/config.py`), TUI cards/hotkeys (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`), and step/bundle execution mechanics (`src/runner.py`, `src/bundle*.py`).
   - Classify features into daily core workflows, useful inspection/safety tools, and over-engineered or redundant options that can be simplified, consolidated, or removed.
+  - Evaluate removing in-step child-session handoff (`IN_RUN_BLOCK=1` piped bundle initialization / `start_session` in `deferred.json` and `spawned_sessions`) now that task dispatch belongs to external orchestration rather than worker sessions, and review whether session completion in API mode should stay `run --done` inside `script` or use an explicit tool completion parameter/signal.
   - Record agreed simplifications, flag/UX cleanups, and module boundaries for `F93` in `AGENTS.md` and `TODO.md`.
 
 # 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
 
-- Depends on: F101
+- Depends on: F101, L3
 - Bump: `MINOR`
 - Create `src/agent.py` (registered in `build.py` `MODULE_ORDER`) and `agents/run-api.md` (`EMBEDDED_RULE_API` in `src/header.py`) implementing the API transport and prompt caching layer per `docs/adr/0001-built-in-api-agent-mode.md`:
+  - Keep `agents/run-api.md` free of host-only CLI flags (`-r`/`-rc`/`--bundle-plan`) and child-session handoff instructions (`<bundle_cmd> | {cmd:run}`), matching the cleaned-up contract in `L3`.
   - Split `<session>/0` losslessly using `bundle_plan["parts"]` (`src/bundle_plan.py`) into an immutable cross-session `system` prefix (all `kind == "rule"` parts with the `vitalio/run-block:run` fragment swapped once to `EMBEDDED_RULE_API` at `chat.json` creation + root `AGENTS.md` `kind == "file"`, excluding per-session headers) and the initial `user[0]` message (`kind == "header"` with `Session:` and `Next-Block:` + dynamic `cmd`, remaining `file`, and `prompt` parts).
   - Register the minimal single `run` tool schema (`script` required, nullable `fix_target` optional normalized from `null`/`""` to omitted; `disable_parallel_tool_use: true` / `parallel_tool_calls: false`) without separate `edits` or `done` JSON fields, and guard against OpenAI-compatible backends that emit multiple parallel `tool_calls` by accepting only `tool_calls[0]` and appending synthetic `tool_result` error responses for `tool_calls[1:]`.
   - Implement stdlib `urllib.request` streaming SSE clients for Anthropic Messages (`/v1/messages` with `cache_control: {"type": "ephemeral"}` breakpoints on `>= 1024`-token blocks under `RUN_BLOCK_CACHE=auto|system|off`) and OpenAI-compatible Chat Completions (`/v1/chat/completions` with `stream_options: {"include_usage": true}` for OpenAI, Gemini, OpenRouter, DeepSeek, and local servers).
@@ -18,7 +29,7 @@
 
 # 🎯 [NEXT] F104: Repair glued RUN_BLOCK/fence lines and inject mode-aware protocol reminders into step output
 
-- Depends on: B16, L1, L2
+- Depends on: B16, L1, L2, L3
 - Bump: `PATCH`
 - Repair glued heredoc terminators / closing fences in `extract_reply_block()` and `_reassemble_split_payload()`, and inject transport-mode-aware protocol reminders and output prompt-injection warnings in `src/runner.py`:
   - Recognize and strip closing `RUN_BLOCK` / `RUN_FIX` terminators and closing Markdown fences that have trailing backticks or prose glued onto the same line without a newline (e.g. `RUN_BLOCK<fence>Отлично!...` or `<fence>Trailing text...`), terminating the extracted script payload cleanly before that line instead of falling back to `end_idx = n_lines` and swallowing the trailing prose into `block.sh`, while recording `repaired: True`, `glued_fence: True`, and the trailing text under `trailing_prose`.
