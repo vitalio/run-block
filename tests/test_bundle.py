@@ -1110,7 +1110,7 @@ class TestBundle(RunBlockTestCase):
         self.assertEqual(r_help.returncode, 0, r_help.stderr)
         self.assertIn("--bundle-plan", r_help.stdout)
         self.assertIn("--bundle-plan", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("--bundle-plan", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
+        self.assertNotIn("--bundle-plan", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
 
     def test_hide_bundle_transport_headers_and_clamp_long_title(self):
         proj = self.tmp / "f55_proj"
@@ -1400,6 +1400,20 @@ class TestBundle(RunBlockTestCase):
         self.assertFalse(hasattr(self.mod, "EMBEDDED_RULE_PWSH"))
         self.assertIn("## Terminal blocks (`{cmd:run}`)", self.mod.EMBEDDED_RULE_BASH)
         self.assertFalse(self.mod.EMBEDDED_RULE_BASH.startswith("# Description:"))
+        flat_rule = " ".join(self.mod.EMBEDDED_RULE_BASH.split())
+        self.assertEqual(
+            flat_rule.count(
+                "(prose glued to a closing fence line or emitted after the block causes trailing blocks to be discarded)"
+            ),
+            1,
+        )
+        self.assertNotIn("--bundle-plan", flat_rule)
+        self.assertNotIn("ingest a full reply", flat_rule)
+        self.assertNotIn("Session completion & handoff", flat_rule)
+        self.assertNotIn("to initialize a new session", flat_rule)
+        self.assertIn("- Session completion (`--done`):", self.mod.EMBEDDED_RULE_BASH)
+        self.assertIn("Never pass `-y` or `--yes` on a `{cmd:run}` command line.", flat_rule)
+        self.assertTrue(all(len(ln) <= 80 for ln in self.mod.EMBEDDED_RULE_BASH.splitlines()))
 
         # 2. prog_name() substitution in embedded run rule (both {cmd:run} and {cmd:run_block})
         saved_argv0 = self.mod.sys.argv[0]
@@ -1697,7 +1711,7 @@ class TestBundle(RunBlockTestCase):
             self.assertEqual(r_help.returncode, 0)
             self.assertIn("--part N", r_help.stdout)
         self.assertIn("--part N", (ROOT / "README.md").read_text(encoding="utf-8"))
-        self.assertIn("--part N", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
+        self.assertNotIn("--part N", (ROOT / "agents/run.md").read_text(encoding="utf-8"))
 
     def test_info_part_viewer_and_part_prompt(self):
         nonce = "abc"

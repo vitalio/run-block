@@ -1,3 +1,12 @@
+# ✅ [DONE] L3: Trim host CLI flags, child-session handoff instructions, and duplicate glued-fence prose in agents/run.md — *2026-11-26, Trimmed duplicate glued-fence parenthetical, host CLI flags, and child-session handoff instructions in agents/run.md and wrapped prose at 80 columns*
+
+- Bump: `PATCH`
+- Clean up `agents/run.md` (and sync `EMBEDDED_RULE_BASH` in `src/header.py` + rebuild `./run` via `./build.py`):
+  - Remove the duplicate parenthetical `(prose glued to a closing fence line or emitted after the block causes trailing blocks to be discarded)` from Rule 1, keeping it once in Rule 2 where standalone closing fence lines are specified.
+  - Remove host-only CLI and session initialization instructions (`Pipe <bundle_cmd> | {cmd:run} to initialize a session (--bundle-plan [<session>] [--part N] inspects bundle parts), or run {cmd:run} -r [-c] [session] / {cmd:run} -rc [session] on the host to ingest a full reply (from clipboard with -c/--clipboard, editor on TTY, or stdin) with automatic block extraction and step inference.`) from `Sequential steps`, keeping `Never pass -y or --yes on a {cmd:run} command line.`
+  - Remove child-session handoff instructions (`& handoff` and `and can be followed inside the same block by <bundle_cmd> | {cmd:run} to initialize a new session`) from the `--done` bullet so worker sessions only mark their own session completed via `{cmd:run} --done [<session>] [-m "<note>"]` without proposing or spawning the next task session.
+- Update rule assertions in `tests/` if needed and verify the full test suite passes.
+
 # ✅ [DONE] L2: Forbid fenced code blocks and triple backticks inside internal thinking in agents/run.md — *2026-11-26, Forbade fenced code blocks, triple backticks, and standalone RUN_BLOCK/RUN_FIX lines inside internal thinking in agents/run.md (v0.40.1).*
 
 - Bump: `PATCH`
