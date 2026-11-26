@@ -99,14 +99,17 @@
   - Display provider token usage, cache hit percentage, and remaining Anthropic cache TTL in `Stats:` across `END STEP` and `END SESSION` while keeping fast offline `count_tokens()` estimation for pre-flight cards.
   - Document `--profile` / `-P`, `--continue` / `-c`, `--autopilot`, `--step`, `config.json` / `models.json`, and `RUN_BLOCK_MODEL*` / `RUN_BLOCK_CACHE` in `src/header.py` (`--help`), `agents/run.md`, and `README.md`, and add unit tests in `tests/test_ui.py` and `tests/test_cli.py`.
 
-# ⚪ [NEW] F93: Split src/runner.py by responsibility
-
-- Depends on: F94, B15, B16, D11, F101, F104
-src/runner.py keeps growing (about 2600 lines after F74) and mixes step execution, --fix diagnostics, payload reassembly, and session listing; this exceeds the modular cohesion guideline of roughly 300-800 lines per module.
-
 # ⚪ [NEW] F107: Split settings and profile resolution out of src/config.py
 
-src/config.py grew to about 1200 lines after F101 and now mixes settings, config-file, and model-profile resolution with session/step metadata helpers (meta.json, deferred cards, header parsing). This exceeds the ~1000-line module guideline and blurs the layering between configuration and session state.
+- Depends on: F101, D11
+- Extract session and step state/metadata persistence helpers (`<session>/meta.json`, `<session>/<step>/meta.json`, deferred session cards, session lifecycle state `get_session_state()`, and header parsing) out of `src/config.py` (~1,200 lines) into a dedicated module (or align boundaries decided in `D11`), keeping `src/config.py` focused on `_SETTING_SPECS`, `get_setting()`, `config.json` / `.run-block.json` loading, model/role profile resolution, and `usage_text()`.
+- Register the new module in `build.py` `MODULE_ORDER`, update `AGENTS.md`, and verify all existing unit tests pass.
+
+# ⚪ [NEW] F93: Split src/runner.py by responsibility
+
+- Depends on: F94, B15, B16, D11, F101, F104, F107
+- Split `src/runner.py` (~3,450 lines) along clean single-responsibility module boundaries agreed in `D11` (such as reply extraction/reassembly and `--fix` patching, session/step inspection `--list`/`--show`/`--clean`, and core step execution `run_script()` / `cmd_normal()`), keeping each module within roughly 300-800 lines.
+- Register new modules in `build.py` `MODULE_ORDER`, update `AGENTS.md`, and keep the offline test suite green.
 
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
