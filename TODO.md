@@ -106,6 +106,10 @@
 - Split `src/runner.py` (~3,450 lines) along clean single-responsibility module boundaries agreed in `D11` (such as reply extraction/reassembly and `--fix` patching, session/step inspection `--list`/`--show`/`--clean`, and core step execution `run_script()` / `cmd_normal()`), keeping each module within roughly 300-800 lines.
 - Register new modules in `build.py` `MODULE_ORDER`, update `AGENTS.md`, and keep the offline test suite green.
 
+- Tighten `extract_reply_block()` edge cases during the reply-extraction split:
+  - When a `RUN_BLOCK`/`RUN_FIX` terminator is omitted and the block closes with a plain Markdown fence followed by trailing prose that itself contains another fenced code block, stop at the first closing fence outside inner heredocs rather than swallowing the trailing fenced example via `close_fence_before_next[-1]`.
+  - Track post-chosen duplicate block references alongside distinct trailing blocks so `ignored_trailing_refs` and `total_discarded_blocks` in `format_protocol_reminder_lines()` stay consistent when both a duplicate block and another trailing block appear after the chosen block (and exclude pre-chosen template duplicates when `chosen_idx > 0`).
+
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 
 - Depends on: F79, F83, F88
