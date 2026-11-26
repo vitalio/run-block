@@ -1,3 +1,9 @@
+# ✅ [DONE] L2: Forbid fenced code blocks and triple backticks inside internal thinking in agents/run.md — *2026-11-26, Forbade fenced code blocks, triple backticks, and standalone RUN_BLOCK/RUN_FIX lines inside internal thinking in agents/run.md (v0.40.1).*
+
+- Bump: `PATCH`
+- In `agents/run.md` (`EMBEDDED_RULE_BASH`, point 3 `NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED $ ... $ IN MULTILINE LITERALS`), explicitly forbid writing three consecutive backticks / fenced code blocks or standalone `RUN_BLOCK` / `RUN_FIX` lines inside internal thinking/reasoning blocks as well as inside the script body, preventing chat CoT streaming parsers (such as Gemini / TypingMind) from breaking on fenced code drafts in thinking across all roles.
+- Rebuild `run` via `python3 build.py`, verify `python3 build.py --check`, and run the unit test suite.
+
 # ✅ [DONE] F101: Add unified config.json settings loader, model/role profile resolution, and unconditional child env API key scrubbing — *2026-11-26, config.json/.run-block.json settings, model profiles and roles, --config, -P/--profile, unconditional provider key scrubbing*
 
 - Depends on: D10, F85

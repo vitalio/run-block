@@ -1,9 +1,3 @@
-# 🎯 [NEXT] L2: Forbid fenced code blocks and triple backticks inside internal thinking in agents/run.md
-
-- Bump: `PATCH`
-- In `agents/run.md` (`EMBEDDED_RULE_BASH`, point 3 `NO INNER TRIPLE BACKTICKS, HEREDOC DELIMITERS, OR PAIRED $ ... $ IN MULTILINE LITERALS`), explicitly forbid writing three consecutive backticks / fenced code blocks or standalone `RUN_BLOCK` / `RUN_FIX` lines inside internal thinking/reasoning blocks as well as inside the script body, preventing chat CoT streaming parsers (such as Gemini / TypingMind) from breaking on fenced code drafts in thinking across all roles.
-- Rebuild `run` via `python3 build.py`, verify `python3 build.py --check`, and run the unit test suite.
-
 # 🎯 [NEXT] D11: Audit run-block CLI commands, flags, settings, and TUI workflows for simplicity and user value
 
 - Conduct an interactive architectural and UX audit of `run-block` with the user before splitting `src/runner.py` (`F93`) and landing the API agent loop (`F101`–`F103`, `F88`):
