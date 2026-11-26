@@ -48,7 +48,11 @@ rules are loaded via `.context.bundle`.
   (`confirm_execution()`, `prompt_yes_no_box()`, `offer_clipboard_copy()`).
 - `src/runner.py` — sequential session/step execution (`<session>/<step>`),
   `-r`/`--run [-c|--clipboard] [session]` (`run -rc`) full-reply ingestion with
-  pre-allocation reply validation (`extract_reply_block()`, `cmd_run_reply()`),
+  pre-allocation reply validation (`extract_reply_block()`,
+  `normalize_api_tool_script()`, `format_protocol_reminder_lines()`,
+  `cmd_run_reply()`), glued `RUN_BLOCK`/`RUN_FIX`/fence recovery, transport-mode
+  protocol reminders (`reply_transport: "text" | "api_tool"`), and output
+  prompt-injection / delimiter-spoofing warnings,
   `--fix` patching, `--retry`, `--list`, `--show`,
   `--clean`, `-y`/`--yes` auto-confirm mode, and `--headless` (`RUN_BLOCK_HEADLESS=1`) headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
   slave or the capture pipe write end), so `out` keeps exact write order and

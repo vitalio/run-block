@@ -912,6 +912,9 @@ def write_step_meta(
     reason: str | None = None,
     fix_target: str | None = None,
     reasoning: str | None = None,
+    reply_transport: str | None = None,
+    protocol_violations: dict[str, object] | None = None,
+    prompt_injection_warning: bool = False,
 ) -> Path:
     if outcome is None:
         outcome = "ok" if exit_code == 0 else "failed"
@@ -938,6 +941,12 @@ def write_step_meta(
         data["failed_step"] = int(failed_step)
     if renumbered_from:
         data["renumbered_from"] = str(renumbered_from)
+    if reply_transport:
+        data["reply_transport"] = str(reply_transport)
+    if protocol_violations:
+        data["protocol_violations"] = dict(protocol_violations)
+    if prompt_injection_warning:
+        data["prompt_injection_warning"] = True
     payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
