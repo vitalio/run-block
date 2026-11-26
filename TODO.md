@@ -15,6 +15,14 @@
   - Evaluate removing in-step child-session handoff (`IN_RUN_BLOCK=1` piped bundle initialization / `start_session` in `deferred.json` and `spawned_sessions`) now that task dispatch belongs to external orchestration rather than worker sessions, and review whether session completion in API mode should stay `run --done` inside `script` or use an explicit tool completion parameter/signal.
   - Record agreed simplifications, flag/UX cleanups, and module boundaries for `F93` in `AGENTS.md` and `TODO.md`.
 
+# 🎯 [NEXT] F108: Group run -h commands into thematic sections and drop redundant {prog} prefixes on command rows
+
+- Depends on: D11
+- Update `src/header.py` and `src/config.py` (`HELP_USAGE`, `HELP_COMMANDS` / command section tuples, `_help_section()`, `usage_text()`) to conform to the refined `agents/cli/help.md` layout contract after `D11`:
+  - Group the command entries in `run -h` into thematic command sections (`Session & Execution Commands:`, `Inspection & History Commands:`, `Configuration & Maintenance Commands:`) and omit the repeated `{prog} ` prefix on flag/subcommand rows (keeping `{prog}` in `Usage:` templates and pipeline `<command> | {prog}` rows).
+  - Keep the shared description column `col` aligned across all tabular sections (`*Commands:`, `Options:`, `Environment:`) within a compact left-column budget (`<= 100` total display columns).
+- Update `tests/test_cli.py` (`test_help_layout_width_and_alignment`) and `README.md` if needed, rebuild `./run` via `python3 build.py`, and run the test suite.
+
 # 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
 
 - Depends on: F101, L3
