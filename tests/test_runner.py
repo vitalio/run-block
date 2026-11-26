@@ -1043,30 +1043,6 @@ class TestRunner(RunBlockTestCase):
             self.assertEqual(rc_rc_dup, 2)
             self.assertFalse((sdir / "3").exists())
 
-    def test_step_stdout_identity_exported_to_child(self):
-        import os
-        import re
-        import shlex
-        import sys
-
-        key = "RUN_BLOCK_STEP_STDOUT_INO"
-        os.environ[key] = "stale:0"
-        self.addCleanup(os.environ.pop, key, None)
-        probe = "import os; st = os.fstat(1); print(f'{st.st_dev}:{st.st_ino}')"
-        script = (
-            f"{shlex.quote(sys.executable)} -c {shlex.quote(probe)}\n"
-            'echo "env=${RUN_BLOCK_STEP_STDOUT_INO}"\n'
-        )
-        with contextlib.redirect_stdout(io.StringIO()):
-            rc = self.mod.cmd_normal("s1/1", script)
-        self.assertEqual(rc, 0)
-        out = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
-        m_env = re.search(r"^env=(\d+:\d+)$", out, re.M)
-        m_fd = re.search(r"^(\d+:\d+)$", out, re.M)
-        self.assertIsNotNone(m_env, msg=out)
-        self.assertIsNotNone(m_fd, msg=out)
-        self.assertEqual(m_env.group(1), m_fd.group(1), msg=out)
-
     def test_fix_ast_validation_and_bundle_tamper_revert(self):
         with contextlib.redirect_stdout(io.StringIO()):
             self.mod.cmd_normal("s1/1", "echo safe_step_1\n")
@@ -2610,6 +2586,173 @@ class TestRunner(RunBlockTestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.mod.cmd_normal("spager/4", dump_script, auto_yes=True), 0)
         self.assertEqual(_extract_pagers(4), expected_passthrough)
+
+
+class TestConfigSettings(RunBlockTestCase):
+    def setUp(self):
+        super().setUp()
+        self.cfg_file = self.tmp / ".xdg_config" / "run-block" / "config.json"
+        self.proj = self.tmp / "proj"
+        self.proj.mkdir()
+        os.environ["RUN_BLOCK_CWD"] = str(self.proj)
+
+    def _write_json(self, path, data):
+        import json
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(data if isinstance(data, str) else json.dumps(data), encoding="utf-8")
+        self.mod._CONFIG_JSON_CACHE.clear()
+
+    def test_setting_precedence_env_project_config_default(self):
+        self._write_json(
+            self.cfg_file,
+            {"pager": "less", "max_fix_attempts": 5, "token_stats": False, "compact_tokens": 900},
+        )
+        self._write_json(self.proj / ".run-block.json", {"pager": "more"})
+        self.assertEqual(self.mod.get_setting("pager"), ("more", "project"))
+        self.assertEqual(self.mod.get_setting("max_fix_attempts"), ("5", "config"))
+        self.assertEqual(self.mod.get_setting("token_stats"), ("false", "config"))
+        self.assertEqual(self.mod.get_setting("compact_tokens"), ("900", "config"))
+        self.assertEqual(self.mod.get_setting("fragment_max_tokens"), ("20000", "default"))
+        self.assertEqual(self.mod.get_setting("cache"), ("auto", "default"))
+        os.environ["RUN_BLOCK_PAGER"] = "most"
+        self.assertEqual(self.mod.get_setting("pager"), ("most", "env"))
+        os.environ["RUN_BLOCK_MAX_FIX_ATTEMPTS"] = "bogus"
+        self.assertEqual(self.mod.get_setting("max_fix_attempts"), ("5", "config"))
+        with self.assertRaises(KeyError):
+            self.mod.get_setting("no_such_setting")
+
+    def test_project_config_ignores_privileged_keys(self):
+        self._write_json(
+            self.proj / ".run-block.json",
+            {
+                "approve_cmd": "true",
+                "safety_disable": "all",
+                "api_key_cmd": "cat ~/.ssh/id_rsa",
+                "shell": "zsh",
+                "base_dir": "/tmp/elsewhere",
+                "profiles": {"evil": {"provider": "openai", "base_url": "http://x"}},
+                "progress": False,
+            },
+        )
+        self.assertEqual(self.mod.get_setting("approve_cmd"), ("", "default"))
+        self.assertEqual(self.mod.get_setting("safety_disable"), ("", "default"))
+        self.assertEqual(self.mod.get_setting("shell"), ("bash", "default"))
+        self.assertEqual(self.mod.get_setting("base_dir")[1], "env")
+        self.assertEqual(self.mod.get_setting("progress"), ("false", "project"))
+        self.assertEqual(self.mod.config_profiles(), {})
+        self.assertEqual(
+            self.mod.project_config_ignored_keys(),
+            ["api_key_cmd", "approve_cmd", "base_dir", "profiles", "safety_disable", "shell"],
+        )
+
+    def test_config_path_override_and_legacy_models_fallback(self):
+        legacy = self.cfg_file.with_name("models.json")
+        self._write_json(legacy, {"pager": "legacy"})
+        self.assertEqual(self.mod.config_file_path(), legacy)
+        self.assertEqual(self.mod.get_setting("pager"), ("legacy", "config"))
+        self._write_json(self.cfg_file, {"pager": "primary"})
+        self.assertEqual(self.mod.config_file_path(), self.cfg_file)
+        other = self.tmp / "other.json"
+        self._write_json(other, {"pager": "other"})
+        os.environ["RUN_BLOCK_CONFIG"] = str(other)
+        self.assertEqual(self.mod.get_setting("pager"), ("other", "config"))
+
+    def test_invalid_config_fails_explicitly(self):
+        for payload in ("{broken", "[1, 2]"):
+            with self.subTest(payload=payload):
+                self._write_json(self.cfg_file, payload)
+                with self.assertRaises(SystemExit) as cm:
+                    self.mod.get_setting("pager")
+                self.assertIn("invalid config file", str(cm.exception.code))
+
+    def test_profile_and_role_resolution(self):
+        self.assertIsNone(self.mod.resolve_profile("work"))
+        self._write_json(
+            self.cfg_file,
+            {
+                "default_profile": "fast",
+                "profiles": {
+                    "fast": {"provider": "openai", "model": "gpt-x"},
+                    "deep": {"provider": "anthropic", "model": "opus-x", "cache": "system"},
+                },
+                "roles": {"plan": {"profile": "deep", "mode": "interactive", "max_steps": 7}},
+            },
+        )
+        fast = self.mod.resolve_profile("work")
+        self.assertEqual((fast["name"], fast["source"], fast["provider"]), ("fast", "config", "openai"))
+        self.assertEqual((fast["cache"], fast["max_steps"]), ("auto", ""))
+        deep = self.mod.resolve_profile("plan")
+        self.assertEqual((deep["name"], deep["cache"], deep["mode"], deep["max_steps"]), ("deep", "system", "interactive", "7"))
+        os.environ["RUN_BLOCK_CACHE"] = "off"
+        os.environ["RUN_BLOCK_MAX_STEPS"] = "3"
+        deep = self.mod.resolve_profile("plan")
+        self.assertEqual((deep["cache"], deep["max_steps"]), ("off", "3"))
+        self._write_json(self.proj / ".run-block.json", {"roles": {"work": {"profile": "deep"}}})
+        self.assertEqual(self.mod.resolve_profile("work")["source"], "project")
+        os.environ["RUN_BLOCK_MODEL"] = "fast"
+        self.assertEqual(self.mod.resolve_profile("plan")["name"], "fast")
+        os.environ["RUN_BLOCK_MODEL_PLAN"] = "deep"
+        self.assertEqual(self.mod.resolve_profile("plan")["source"], "env")
+        cli = self.mod.resolve_profile("plan", override="fast")
+        self.assertEqual((cli["name"], cli["source"]), ("fast", "cli"))
+        adhoc = self.mod.resolve_profile(override="anthropic:claude-x")
+        self.assertEqual((adhoc["provider"], adhoc["model"]), ("anthropic", "claude-x"))
+        for bad in ("missing", "unknownprov:model", "openai:"):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                self.mod.resolve_profile(override=bad)
+
+    def test_api_key_resolution_in_parent_memory(self):
+        import shlex
+        import sys
+
+        os.environ["MY_LLM_CRED"] = "from-env"
+        self.addCleanup(os.environ.pop, "MY_LLM_CRED", None)
+        self.assertEqual(self.mod.resolve_api_key({"api_key_env": "MY_LLM_CRED"}), "from-env")
+        cmd = f"{shlex.quote(sys.executable)} -c 'print(42)'"
+        self.assertEqual(self.mod.resolve_api_key({"api_key_cmd": cmd}), "42")
+        failing = f"{shlex.quote(sys.executable)} -c 'raise SystemExit(3)'"
+        with self.assertRaises(ValueError):
+            self.mod.resolve_api_key({"api_key_cmd": failing})
+        os.environ["DEEPSEEK_API_KEY"] = "ds"
+        self.addCleanup(os.environ.pop, "DEEPSEEK_API_KEY", None)
+        self.assertEqual(self.mod.resolve_api_key({"provider": "deepseek"}), "ds")
+        self.assertIsNone(self.mod.resolve_api_key({"provider": "openai"}))
+
+    def test_child_env_strips_provider_keys_in_all_sandbox_modes(self):
+        self._write_json(self.cfg_file, {"profiles": {"p": {"provider": "openai", "api_key_env": "MY_LLM_CRED"}}})
+        env = {
+            "PATH": "/usr/bin",
+            "ANTHROPIC_API_KEY": "a",
+            "OPENAI_API_KEY": "o",
+            "GEMINI_API_KEY": "g",
+            "OPENROUTER_API_KEY": "r",
+            "DEEPSEEK_API_KEY": "d",
+            "RUN_BLOCK_API_KEY": "k",
+            "MY_LLM_CRED": "c",
+            "GITHUB_TOKEN": "t",
+        }
+        for mode in ("off", "nonet", "strict"):
+            with self.subTest(mode=mode):
+                scrubbed = self.mod.scrub_child_env(dict(env), mode)
+                expected = {"PATH": "/usr/bin"}
+                if mode == "off":
+                    expected["GITHUB_TOKEN"] = "t"
+                self.assertEqual(scrubbed, expected)
+
+    def test_step_child_never_sees_provider_api_keys(self):
+        import contextlib
+        import io
+
+        os.environ["ANTHROPIC_API_KEY"] = "parent-only"
+        self.addCleanup(os.environ.pop, "ANTHROPIC_API_KEY", None)
+        script = 'echo "anthropic=${ANTHROPIC_API_KEY:-unset}"\n'
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = self.mod.cmd_normal("s1/1", script)
+        self.assertEqual(rc, 0)
+        out = (self.tmp / "s1/1/out").read_text(encoding="utf-8")
+        self.assertIn("anthropic=unset", out)
+        self.assertNotIn("parent-only", out)
 
 
 if __name__ == "__main__":

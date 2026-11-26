@@ -1747,10 +1747,12 @@ def scan_content_secrets(text: str) -> list[dict[str, object]]:
 
 
 def scrub_child_env(env: dict[str, str], sandbox_mode: str) -> dict[str, str]:
+    provider_keys = provider_secret_env_names()
+    cleaned = {k: v for k, v in env.items() if k not in provider_keys}
     norm = normalize_sandbox_mode(sandbox_mode)
     if norm == "off":
-        return env
-    cleaned = {k: v for k, v in env.items() if not SECRET_ENV_RE.match(k)}
+        return cleaned
+    cleaned = {k: v for k, v in cleaned.items() if not SECRET_ENV_RE.match(k)}
     if norm == "nonet":
         cleaned.pop("SSH_AUTH_SOCK", None)
         cleaned.pop("SSH_AGENT_PID", None)

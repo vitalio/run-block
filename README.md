@@ -102,6 +102,15 @@ renders the `END SESSION` summary card (`--list` marks completed sessions with
 `START SESSION` cards after the outer `END STEP` and hand off the clipboard to
 the newly spawned `<child>/0` bundle.
 
+### 5. Persist settings and model profiles (`--config`, `-P`)
+
+```bash
+run --config                      # settings with sources, profiles, roles
+run --config pager=less           # persist a setting in config.json (0600)
+run --config profiles.opus.provider=anthropic
+<command> | run -P opus           # start a session pinned to a profile
+```
+
 ## Interactive TUI & Keyboard Shortcuts
 
 All inline TUI cards clamp overflowing sections to the visible terminal height
@@ -287,6 +296,8 @@ run --bundle-plan s1 --part 2
 | `run --sandbox [MODE] [session]` | Show or update session sandbox mode (`off`, `strict`, `nonet`) in `<session>/0` |
 | `run --clean [opts] [session...]` | Prune sessions (`--keep N`, `--older-than DAYS`, `--max-size MB`, `--all`, or named sessions) |
 | `run --start [-p TEXT] [--session NAME]` | Start session from `stdin` context bundle or rule-only on TTY into `<session>/0` |
+| `run --config [KEY[=VALUE]]` | Show effective settings with their sources, profiles, roles, and the active profile (secrets redacted); print one key, or set it in `config.json` (`0600`; `KEY=` unsets; rejected inside a running block) |
+| `run --config --edit`, `--path` | Open `config.json` in the configured editor (validated as a JSON object afterwards) or print its path |
 | `run --update [--force]` | Self-update `run` from GitHub (`vitalio/run-block`) |
 | `run --check-update` | Check GitHub for a newer version |
 | `run --uninstall [--purge]` | Remove installed `run` / `run_block` binary (`--purge` also removes the state directory) |
@@ -302,15 +313,72 @@ run --bundle-plan s1 --part 2
 | `-y`, `--yes` | Auto-confirm `START STEP` and reopen a completed session (keeps TUI cards and clipboard prompts) |
 | `--headless` | Non-interactive headless mode without TUI boxes or prompts (same as `RUN_BLOCK_HEADLESS=1`) |
 | `-p`, `--prompt TEXT` | Embed repeatable prompt text into the started session bundle (`===== Prompt =====`) |
+| `-P`, `--profile NAME` | Model profile (or `<provider>:<model>`) for the started session; overrides role routing and `default_profile` and is saved in `<session>/meta.json` |
 | `--sandbox [MODE]` | Set the sandbox mode for the run or started session (`off`, `strict`, `nonet`); bare flag means `strict` |
 | `--no-sandbox` | Same as `--sandbox off` |
 | `-V`, `--version` | Print version and exit `0` |
 | `-h`, `--help` | Print usage help and exit `0` |
 
+## Configuration Files & Model Profiles
+
+Every setting resolves from the environment first, then the project
+`.run-block.json`, then the user `config.json`, then the built-in default;
+`run --config` prints each value with its source (`env`, `project`,
+`config`, `default`).
+
+- **User config**: `XDG_CONFIG_HOME/run-block/config.json` (default
+  `~/.config/run-block/config.json`). An existing `models.json` in the same
+  directory is used when `config.json` is absent, and `RUN_BLOCK_CONFIG=PATH`
+  overrides both. Keys are the lowercase setting names (`pager`,
+  `max_fix_attempts`, `approve_cmd`, ...) plus `default_profile`, `profiles`,
+  and `roles`. `run --config KEY=VALUE` writes the file with `0600`
+  permissions; an empty value unsets the key.
+- **Project config**: `.run-block.json` in the working directory may set only
+  non-privileged keys: `clipboard`, `token_stats`, `progress`, `pager`,
+  `max_fix_attempts`, `max_state_mb`, `bundle_max_tokens`,
+  `fragment_max_tokens`, `model`, `cache`, `compact_tokens`, `max_steps`,
+  `default_profile`, and `roles`. Hooks, commands, safety switches, sandbox,
+  paths, the update URL, and `profiles` (including `api_key_cmd`) are
+  ignored and listed by `run --config`.
+- **Invalid JSON** in either file fails with an explicit error.
+
+```json
+{
+  "pager": "cat",
+  "default_profile": "fast",
+  "profiles": {
+    "fast": {"provider": "openai", "model": "gpt-4.1-mini"},
+    "deep": {"provider": "anthropic", "model": "claude-opus-4",
+             "api_key_cmd": "pass show llm/anthropic", "cache": "system"}
+  },
+  "roles": {"plan": {"profile": "deep", "mode": "interactive", "max_steps": 40}}
+}
+```
+
+Profile fields: `provider`, `model`, `base_url`, `api_key_env`,
+`api_key_cmd`, `max_tokens`, `thinking`, `cache`. Role fields (roles `plan`,
+`design`, `work`, `review`, `law`): `profile`, `mode`, `max_steps`.
+
+The active profile is the first one found in this order: `-P`/`--profile
+NAME`, `RUN_BLOCK_MODEL_<ROLE>`, `RUN_BLOCK_MODEL`, `roles.<role>.profile`
+(role from the session `Role:` header), `model`, `default_profile`. A name
+that is not a configured profile must be `<provider>:<model>` with provider
+`anthropic`, `openai`, `gemini`, `openrouter`, or `deepseek`. The resolved
+name is saved as `"profile"` in `<session>/meta.json` when a session starts.
+Environment values of `RUN_BLOCK_CACHE` and `RUN_BLOCK_MAX_STEPS` override
+the profile `cache` and role `max_steps` fields.
+
+API keys are resolved only inside the `run` process (`api_key_env`,
+`api_key_cmd`, the provider variable, then `RUN_BLOCK_API_KEY`). Provider key
+variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `RUN_BLOCK_API_KEY`, and every
+profile `api_key_env`) are always removed from step environments, in every
+sandbox mode.
+
 ## Environment Variables
 
-`run` works out of the box with zero configuration files and honors
-standard environment variables:
+`run` works out of the box without configuration files. Environment
+variables override `.run-block.json` and `config.json` values:
 
 | Environment Variable | Default | Description |
 | :--- | :--- | :--- |
@@ -334,6 +402,13 @@ standard environment variables:
 | `RUN_BLOCK_SAFETY_DISABLE` | *(none)* | Comma-separated built-in risk categories to disable |
 | `RUN_BLOCK_SAFETY_RULES` | *(none)* | Semicolon-separated `<cat>=<regex>` rules |
 | `RUN_BLOCK_UPDATE_URL` | GitHub `main/run` | Override remote script URL used by `--update` and `--check-update` |
+| `RUN_BLOCK_CONFIG` | `XDG_CONFIG_HOME/run-block/config.json` | User config file path (falls back to an existing `models.json`) |
+| `RUN_BLOCK_MODEL` | *(none)* | Model profile name (or `<provider>:<model>`) for all sessions |
+| `RUN_BLOCK_MODEL_<ROLE>` | *(none)* | Model profile for one role (`PLAN`, `DESIGN`, `WORK`, `REVIEW`, `LAW`) |
+| `RUN_BLOCK_CACHE` | `auto` | Prompt cache breakpoint mode for API sessions (`auto`, `system`, `off`) |
+| `RUN_BLOCK_COMPACT_TOKENS` | `120000` | Input token threshold for API history compaction |
+| `RUN_BLOCK_MAX_STEPS` | *(none)* | Step limit for API autopilot sessions |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `RUN_BLOCK_API_KEY` | *(none)* | Provider API keys, read only by `run` and never exported to steps |
 
 ### Variables Exported to Step Processes
 
@@ -343,7 +418,6 @@ Every block runs with these variables in its environment:
 | :--- | :--- |
 | `IN_RUN_BLOCK` | Always `1` inside a running step |
 | `RUN_BLOCK_PARENT_SESSION` / `RUN_BLOCK_PARENT_STEP` | Session name and step directory of the running block |
-| `RUN_BLOCK_STEP_STDOUT_INO` | `<st_dev>:<st_ino>` of the step capture stdout (PTY slave or pipe write end); a producer compares it with `fstat(1)` to tell direct step console output from a shell pipeline inside the step |
 | `PAGER`, `GIT_PAGER`, `GH_PAGER`, `MANPAGER`, `SYSTEMD_PAGER`, `BAT_PAGER`, `AWS_PAGER`, `PSQL_PAGER`, `DELTA_PAGER` | Set to `RUN_BLOCK_PAGER` (default `cat`) unless disabled via `RUN_BLOCK_PAGER=inherit\|off\|0\|false` |
 
 ## License

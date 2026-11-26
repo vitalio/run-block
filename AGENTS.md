@@ -8,12 +8,25 @@ rules are loaded via `.context.bundle`.
 - `src/header.py` — `--help` row tables (`HELP_*`), standard library imports,
   version constants, and the embedded block rule placeholder
   (`EMBEDDED_RULE_BASH`) populated by `build.py`.
-- `src/config.py` — zero-config environment variable settings (`RUN_BLOCK_*`,
-  `VISUAL`/`EDITOR`), non-interactive child pager variable tuple
+- `src/config.py` — settings resolution (`_SETTING_SPECS`, `get_setting()`
+  returning `(value, source)` with precedence env, project `.run-block.json`,
+  user `config.json`, default), config file loading and `0600` writes
+  (`config_file_path()`, `set_config_value()`), model profile and role
+  resolution (`resolve_profile()`), parent-only API key resolution
+  (`resolve_api_key()`), provider key names for child scrubbing
+  (`provider_secret_env_names()`), non-interactive child pager variable tuple
   (`CHILD_PAGER_ENV_VARS` controlled by `RUN_BLOCK_PAGER`, default `cat`),
   working directory resolution, and `usage_text()`, which renders `--help` from
   the `HELP_*` tables (unified description column across all sections, lines
   <= 100 display columns).
+- Config invariants: add every new setting only to `_SETTING_SPECS`; project
+  `.run-block.json` is filtered through `PROJECT_CONFIG_ALLOWLIST` and never
+  supplies hooks, commands, safety switches, sandbox, paths, `update_url`, or
+  `profiles`; `profiles` come only from the user config; `--config` mutations
+  exit `2` inside a running block; `scrub_child_env()` (`src/safety.py`)
+  strips provider API key variables in every sandbox mode; the resolved
+  profile name is persisted as `"profile"` in `<session>/meta.json`
+  (`_SESSION_STATE_KEYS`).
 - `agents/run.md` — internal embedded terminal block execution rule
   source injected by `build.py` into `src/header.py`. Update
   `agents/run.md` in the same commit whenever CLI flags, step
@@ -44,10 +57,7 @@ rules are loaded via `.context.bundle`.
   pager defaults (`CHILD_PAGER_ENV_VARS` set to `get_setting("pager")[0]`,
   default `cat`, unless disabled via `RUN_BLOCK_PAGER=inherit|off|0|false`) in
   the child execution environment while keeping PTY `stdin` connected for
-  intentional interactive prompts. Exports `RUN_BLOCK_STEP_STDOUT_INO`
-  (`<st_dev>:<st_ino>` of the step capture stdout descriptor: the PTY slave or
-  the capture pipe write end) in the child environment so upstream producers
-  can tell direct step console output from a shell pipeline inside a step.
+  intentional interactive prompts.
 - `src/bundle_parse.py` — Bundle Input Protocol header constants and filtering,
   embedded terminal block rule and prompt injection, section metadata
   inference, fragment deduplication/overlap detection, and
@@ -121,7 +131,8 @@ rules are loaded via `.context.bundle`.
     `last: <ref> (<step_status>)`, and `next: <session>/<next_free_step>` for
     open sessions (`active` / `bundle-only`) or `[DONE]` without `next:` for
     completed sessions.
-- `src/cli.py` — CLI argument routing, self-update (`--update`,
+- `src/cli.py` — CLI argument routing, `--config` (`cmd_config()`),
+  `-P`/`--profile` extraction (session start only), self-update (`--update`,
   `--check-update`), and `--uninstall [--purge]`.
 - `tests/helpers.py` — shared `ROOT`, `SCRIPT`, `INSTALL_SH`, cached
   `load_module()`, and `RunBlockTestCase` with in-process CLI helpers (`_run`,

@@ -203,6 +203,154 @@ def _extract_prompt_args(argv: list[str]) -> tuple[list[str], list[str]]:
     return rest, prompts
 
 
+_START_FLAGS = ("--start", "--bundle", "--session", "--force")
+_START_NEUTRAL_FLAGS = ("-y", "--yes", "--headless", "--no-sandbox", "--sandbox")
+
+
+def _extract_profile_arg(argv: list[str]) -> tuple[list[str], str | None]:
+    prog = prog_name()
+    rest: list[str] = []
+    profile: str | None = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-P", "--profile"):
+            if i + 1 >= len(argv) or not argv[i + 1].strip():
+                raise SystemExit(f"{prog}: {a} requires an argument")
+            profile = argv[i + 1].strip()
+            i += 2
+        elif a.startswith("--profile="):
+            val = a.split("=", 1)[1].strip()
+            if not val:
+                raise SystemExit(f"{prog}: --profile requires an argument")
+            profile = val
+            i += 1
+        else:
+            rest.append(a)
+            i += 1
+    return rest, profile
+
+
+def _is_session_start_args(args: list[str], prompt_args: list[str]) -> bool:
+    if any(a in _START_FLAGS or a.startswith("--session=") for a in args):
+        return True
+    rest = [
+        a
+        for a in args
+        if a not in _START_NEUTRAL_FLAGS and not a.startswith("--sandbox=") and a.lower() not in SANDBOX_MODE_TOKENS
+    ]
+    if not rest:
+        return True
+    return bool(prompt_args) and all(re.fullmatch(r"s\d+", a) for a in rest)
+
+
+def _format_config_value(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _config_overview_lines() -> list[str]:
+    cfg = config_file_path()
+    proj = project_config_path()
+    lines = [f"Config:  {cfg}" + ("" if cfg.is_file() else " (missing)")]
+    if proj is not None:
+        lines.append(f"Project: {proj}" + ("" if proj.is_file() else " (missing)"))
+    ignored = project_config_ignored_keys()
+    if ignored:
+        lines.append(f"Ignored project keys: {', '.join(ignored)}")
+    rows = effective_settings()
+    width = max(len(key) for key, _, _ in rows)
+    lines += ["", "Settings:"]
+    for key, value, source in rows:
+        shown = _format_config_value(redact_config_value(key, value)) or '""'
+        lines.append(f"  {key:<{width}}  {shown}  ({source})")
+    try:
+        active = resolve_profile()
+        active_err = ""
+    except ValueError as exc:
+        active, active_err = None, str(exc)
+    lines += ["", "Profiles:"]
+    profiles = config_profiles()
+    if not profiles:
+        lines.append("  (none)")
+    for name, entry in profiles.items():
+        mark = " *" if active is not None and active.get("name") == name else ""
+        fields = " ".join(f"{k}={_format_config_value(redact_config_value(k, v))}" for k, v in entry.items())
+        lines.append(f"  {name}{mark}  {fields}".rstrip())
+    lines += ["", "Roles:"]
+    roles = config_roles()
+    if not roles:
+        lines.append("  (none)")
+    for role, fields_map in roles.items():
+        parts = " ".join(f"{f}={_format_config_value(v)} ({src})" for f, (v, src) in fields_map.items())
+        lines.append(f"  {role}  {parts}")
+    lines.append("")
+    if active is not None:
+        lines.append(f"Active profile: {active['name']} ({active['source']})")
+    elif active_err:
+        lines.append(f"Active profile: error: {active_err}")
+    else:
+        lines.append("Active profile: (none)")
+    return lines
+
+
+def _edit_config_file() -> int:
+    prog = prog_name()
+    path = config_file_path()
+    if not path.exists():
+        write_user_config({})
+    subprocess.run(resolve_editor_command() + [str(path)], check=False)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        sys.stderr.write(f"{prog}: invalid config file {path}: {exc}\n")
+        return 1
+    if not isinstance(data, dict):
+        sys.stderr.write(f"{prog}: invalid config file {path}: expected a JSON object\n")
+        return 1
+    os.chmod(path, 0o600)
+    return 0
+
+
+def cmd_config(argv: list[str]) -> int:
+    prog = prog_name()
+    usage = f"{prog} --config [KEY[=VALUE] | --edit | --path]"
+    if len(argv) > 1:
+        raise SystemExit(f"{prog}: usage: {usage}")
+    if not argv:
+        sys.stdout.write("\n".join(_config_overview_lines()) + "\n")
+        return 0
+    arg = argv[0]
+    if arg == "--path":
+        sys.stdout.write(f"{config_file_path()}\n")
+        return 0
+    mutating = arg == "--edit" or "=" in arg
+    if mutating and in_run_block():
+        sys.stderr.write(f"{prog}: cannot modify config.json from inside a running block\n")
+        return 2
+    if arg == "--edit":
+        return _edit_config_file()
+    if arg.startswith("-"):
+        raise SystemExit(f"{prog}: usage: {usage}")
+    try:
+        if "=" in arg:
+            key, raw_value = arg.split("=", 1)
+            path = set_config_value(key, raw_value)
+            action = "set" if raw_value.strip() else "unset"
+            sys.stdout.write(f"{prog}: {action} {key.strip()} in {path}\n")
+            return 0
+        value, _source = get_config_value(arg)
+    except ValueError as exc:
+        raise SystemExit(f"{prog}: {exc}") from None
+    if value is None:
+        sys.stderr.write(f"{prog}: {arg} is not set\n")
+        return 1
+    shown = redact_config_value(arg.split(".")[-1], value)
+    sys.stdout.write(f"{_format_config_value(shown)}\n")
+    return 0
+
+
 def _reject_prompt_for(command_label: str, usage: str) -> None:
     prog = prog_name()
     raise SystemExit(f"{prog}: -p/--prompt cannot be used with {command_label} (usage: {usage})")
@@ -249,7 +397,22 @@ def main(argv: list[str] | None = None) -> int:
                 has_bare_sandbox_flag = True
 
     args, prompt_args = _extract_prompt_args(raw_args)
+    args, profile_arg = _extract_profile_arg(args)
+    if profile_arg is not None:
+        if not _is_session_start_args(args, prompt_args):
+            raise SystemExit(
+                f"{prog}: -P/--profile is only supported when starting a session "
+                f"(usage: <command> | {prog} [--start] -P NAME)"
+            )
+        try:
+            resolve_profile(override=profile_arg)
+        except ValueError as exc:
+            raise SystemExit(f"{prog}: {exc}") from None
 
+    if args and args[0] == "--config":
+        if prompt_args:
+            _reject_prompt_for("--config", f"{prog} --config [KEY[=VALUE] | --edit | --path]")
+        return cmd_config(args[1:])
     if args and args[0] == "--plan":
         if prompt_args:
             _reject_prompt_for("--plan", f"{prog} --plan < script.sh")
@@ -333,9 +496,9 @@ def main(argv: list[str] | None = None) -> int:
     args = filtered
     if headless_flag:
         return _run_with_headless_env(
-            lambda: _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag)
+            lambda: _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag, profile=profile_arg)
         )
-    return _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag)
+    return _dispatch_cli(args, prompt_args, prog, auto_yes, sandbox_override, has_start_opt, has_bare_sandbox_flag, profile=profile_arg)
 
 
 def _run_with_headless_env(fn) -> int:
@@ -358,6 +521,7 @@ def _dispatch_cli(
     sandbox_override: str | None,
     has_start_opt: bool,
     has_bare_sandbox_flag: bool,
+    profile: str | None = None,
 ) -> int:
 
     if not args:
@@ -366,7 +530,7 @@ def _dispatch_cli(
                 if prompt_args:
                     _reject_prompt_for("--sandbox", f"{prog} --sandbox [off|strict|nonet] [session]")
                 return cmd_sandbox([sandbox_override])
-        return cmd_start([], sandbox_override=sandbox_override, prompt=prompt_args)
+        return cmd_start([], sandbox_override=sandbox_override, prompt=prompt_args, profile=profile)
 
     if sandbox_override is not None and len(args) == 1 and "/" not in args[0] and not args[0].startswith("-"):
         if prompt_args:
@@ -459,7 +623,7 @@ def _dispatch_cli(
         return cmd_uninstall(purge=purge)
 
     if args[0] in ("--start", "--bundle"):
-        return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args)
+        return cmd_start(args[1:], sandbox_override=sandbox_override, prompt=prompt_args, profile=profile)
 
     if args[0] in ("-r", "--run", "-c", "--clipboard") or args[0].startswith("--run="):
         run_usage = f"{prog} --run [-c] [-y] [session]"
@@ -502,12 +666,12 @@ def _dispatch_cli(
         )
 
     if args[0] in ("--session", "--force") or args[0].startswith("--session="):
-        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args)
+        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args, profile=profile)
 
     if prompt_args:
         if len(args) == 1 and "/" in args[0] and not args[0].startswith("-"):
             _reject_prompt_for(args[0], f"{prog} [-y] <session>/<step>")
-        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args)
+        return cmd_start(args, sandbox_override=sandbox_override, prompt=prompt_args, profile=profile)
 
     if len(args) != 1 or args[0].startswith("-"):
         raise SystemExit(

@@ -59,6 +59,7 @@ _TRACKED_ENV_KEYS = (
     "PSQL_PAGER",
     "DELTA_PAGER",
     "XDG_STATE_HOME",
+    "XDG_CONFIG_HOME",
     "NO_COLOR",
 )
 
@@ -99,10 +100,16 @@ class RunBlockTestCase(unittest.TestCase):
         os.environ.pop("RUN_BLOCK_PARENT_STEP", None)
         self.tmp = Path(tempfile.mkdtemp(prefix="rb_test_"))
         os.environ["XDG_STATE_HOME"] = str(self.tmp / ".xdg_state")
+        os.environ["XDG_CONFIG_HOME"] = str(self.tmp / ".xdg_config")
+        os.environ.pop("RUN_BLOCK_CONFIG", None)
         os.environ["RUN_BLOCK_DIR"] = str(self.tmp)
         self.mod = load_module()
         if hasattr(self.mod, "_STATE_WARNED_DIRS"):
             self.mod._STATE_WARNED_DIRS.clear()
+        for cache_name in ("_CONFIG_JSON_CACHE", "_PROJECT_ROOT_CACHE"):
+            cache = getattr(self.mod, cache_name, None)
+            if cache is not None:
+                cache.clear()
 
     def tearDown(self) -> None:
         if sys.argv:

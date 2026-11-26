@@ -984,19 +984,6 @@ def _prepare_progress_script(
         return None
 
 
-STEP_STDOUT_INO_ENV = "RUN_BLOCK_STEP_STDOUT_INO"
-
-
-def _export_step_stdout_ino(env: dict[str, str], fd: int) -> None:
-    """Record the device:inode identity of the step stdout descriptor in env."""
-    env.pop(STEP_STDOUT_INO_ENV, None)
-    try:
-        st = os.fstat(fd)
-    except OSError:
-        return
-    env[STEP_STDOUT_INO_ENV] = f"{st.st_dev}:{st.st_ino}"
-
-
 def _iter_child_output(fd):
     """Yield decoded chunks read from the single merged child stdout/stderr descriptor."""
     while True:
@@ -1294,7 +1281,6 @@ def run_script(
     try:
         if master_fd is not None and slave_fd is not None:
             try:
-                _export_step_stdout_ino(child_env, slave_fd)
                 proc = subprocess.Popen(
                     exec_cmd,
                     cwd=work_dir,
@@ -1319,7 +1305,6 @@ def run_script(
         else:
             out_r, out_w = os.pipe()
             try:
-                _export_step_stdout_ino(child_env, out_w)
                 proc = subprocess.Popen(
                     exec_cmd,
                     cwd=work_dir,

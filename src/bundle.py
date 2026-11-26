@@ -133,10 +133,11 @@ def cmd_start(
     stdin_text: str | None = None,
     sandbox_override: str | None = None,
     prompt: str | list[str] | tuple[str, ...] | None = None,
+    profile: str | None = None,
 ) -> int:
     prog = prog_name()
     start_usage = (
-        f"{prog}: usage: <command> | {prog} [--start] [-p TEXT] [--session NAME] [--sandbox [MODE]] [--force]"
+        f"{prog}: usage: <command> | {prog} [--start] [-p TEXT] [-P NAME] [--session NAME] [--sandbox [MODE]] [--force]"
     )
     force = False
     session_arg: str | None = None
@@ -219,6 +220,7 @@ def cmd_start(
         stdin_headers,
         bundle_plan=bundle_plan if isinstance(bundle_plan, dict) else None,
     )
+    persist_session_profile(sdir, profile)
     if in_run_block():
         record_parent_child_session(sdir)
         if append_deferred_card("start_session", session=session_name):
@@ -227,6 +229,23 @@ def cmd_start(
             return 0
     render_start_session_card(sdir)
     return 0
+
+
+def persist_session_profile(sdir: Path, override: str | None = None) -> str | None:
+    """Stores the resolved model profile name (CLI > env > role > default) in <session>/meta.json."""
+    role = parse_bundle_headers(sdir).get("role")
+    try:
+        resolved = resolve_profile(role, override=override)
+    except ValueError as exc:
+        if override is not None:
+            raise SystemExit(f"{prog_name()}: {exc}") from None
+        sys.stderr.write(f"{prog_name()}: warning: {exc}\n")
+        return None
+    if resolved is None:
+        return None
+    name = str(resolved["name"])
+    update_session_meta(sdir, profile=name)
+    return name
 
 
 def render_start_session_card(sdir: Path, *, offer_copy: bool = True) -> None:

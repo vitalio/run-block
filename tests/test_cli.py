@@ -28,7 +28,8 @@ class TestCli(RunBlockTestCase):
         self._assert_ok(r)
         self.assertIn("Usage:", r.stdout)
         self.assertIn("--plan", r.stdout)
-        self.assertNotIn("--config", r.stdout)
+        self.assertIn("--config", r.stdout)
+        self.assertIn("-P, --profile NAME", r.stdout)
         self.assertNotIn("--agents", r.stdout)
         self.assertIn("--start", r.stdout)
         self.assertNotIn("--init-start", r.stdout)
@@ -156,6 +157,122 @@ class TestCli(RunBlockTestCase):
                 rb = self._run([str(SCRIPT), *args], input="")
                 self.assertEqual(rb.returncode, exp_rc, msg=rb.stdout + rb.stderr)
                 self.assertIn(needle, rb.stderr)
+
+    def _config_env(self):
+        proj = self.tmp / "proj"
+        proj.mkdir(exist_ok=True)
+        os.environ["RUN_BLOCK_CWD"] = str(proj)
+        return self.tmp / ".xdg_config" / "run-block" / "config.json"
+
+    def test_config_cli_get_set_unset_and_overview(self):
+        cfg = self._config_env()
+        r_path = self._run(["--config", "--path"])
+        self._assert_ok(r_path)
+        self.assertEqual(r_path.stdout.strip(), str(cfg))
+        for assignment in (
+            "pager=less",
+            "max_fix_attempts=4",
+            "profiles.deep.provider=anthropic",
+            "profiles.deep.model=opus-x",
+            "profiles.deep.api_key_cmd=pass show llm/anthropic",
+            "default_profile=deep",
+            "roles.plan.max_steps=5",
+        ):
+            with self.subTest(assignment=assignment):
+                self._assert_ok(self._run(["--config", assignment]))
+        self.assertEqual(cfg.stat().st_mode & 0o777, 0o600)
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        self.assertEqual(data["max_fix_attempts"], 4)
+        self.assertEqual(data["roles"], {"plan": {"max_steps": 5}})
+        r_get = self._run(["--config", "pager"])
+        self._assert_ok(r_get)
+        self.assertEqual(r_get.stdout, "less\n")
+        r_secret = self._run(["--config", "profiles.deep.api_key_cmd"])
+        self._assert_ok(r_secret)
+        self.assertEqual(r_secret.stdout, "<redacted>\n")
+        r_all = self._run(["--config"])
+        self._assert_ok(r_all)
+        self.assertRegex(r_all.stdout, r"pager +less  \(config\)")
+        self.assertRegex(r_all.stdout, r"shell +bash  \(default\)")
+        self.assertIn("deep *  provider=anthropic", r_all.stdout)
+        self.assertIn("api_key_cmd=<redacted>", r_all.stdout)
+        self.assertNotIn("pass show", r_all.stdout)
+        self.assertIn("plan  max_steps=5 (config)", r_all.stdout)
+        self.assertIn("Active profile: deep (config)", r_all.stdout)
+        self._assert_ok(self._run(["--config", "pager="]))
+        self._assert_ok(self._run(["--config", "roles.plan.max_steps="]))
+        data = json.loads(cfg.read_text(encoding="utf-8"))
+        self.assertNotIn("pager", data)
+        self.assertNotIn("roles", data)
+        r_dp = self._run(["--config", "default_profile"])
+        self._assert_ok(r_dp)
+        self.assertEqual(r_dp.stdout, "deep\n")
+
+    def test_config_cli_rejects_invalid_and_nested_mutations(self):
+        self._config_env()
+        bad_cases = (
+            (["--config", "bogus=1"], 1, "unknown config key"),
+            (["--config", "profiles.x.colour=red"], 1, "unknown config key"),
+            (["--config", "roles.chef.profile=x"], 1, "unknown config key"),
+            (["--config", "max_fix_attempts=abc"], 1, "invalid value"),
+            (["--config", "a", "b"], 1, "usage:"),
+            (["--config", "--bogus"], 1, "usage:"),
+            (["--config", "-p", "x"], 1, "cannot be used"),
+            (["--config", "default_profile"], 1, "is not set"),
+        )
+        for args, exp_rc, needle in bad_cases:
+            with self.subTest(args=args):
+                r = self._run(args)
+                self.assertEqual(r.returncode, exp_rc, msg=r.stdout + r.stderr)
+                self.assertIn(needle, r.stderr)
+        os.environ["IN_RUN_BLOCK"] = "1"
+        for args in (["--config", "approve_cmd=true"], ["--config", "--edit"]):
+            with self.subTest(nested=args):
+                r = self._run(args)
+                self.assertEqual(r.returncode, 2, msg=r.stderr)
+                self.assertIn("from inside a running block", r.stderr)
+        self.assertEqual(self._run(["--config", "pager"]).returncode, 0)
+
+    def test_config_cli_edit_validates_json(self):
+        cfg = self._config_env()
+        writer = "import json, sys; json.dump({'pager': 'edited'}, open(sys.argv[1], 'w'))"
+        with unittest.mock.patch.object(self.mod, "resolve_editor_command", return_value=[sys.executable, "-c", writer]):
+            self._assert_ok(self._run(["--config", "--edit"]))
+        self.assertEqual(cfg.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self._run(["--config", "pager"]).stdout, "edited\n")
+        breaker = "import sys; open(sys.argv[1], 'w').write('{bad')"
+        with unittest.mock.patch.object(self.mod, "resolve_editor_command", return_value=[sys.executable, "-c", breaker]):
+            r_bad = self._run(["--config", "--edit"])
+        self.assertEqual(r_bad.returncode, 1)
+        self.assertIn("invalid config file", r_bad.stderr)
+
+    def test_profile_flag_persists_resolved_profile_in_session_meta(self):
+        cfg = self._config_env()
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps({
+            "profiles": {"deep": {"provider": "anthropic", "model": "o"}, "fast": {"provider": "openai", "model": "g"}},
+            "roles": {"plan": {"profile": "fast"}},
+        }), encoding="utf-8")
+        bundle = "Role: plan\n\nhello\n"
+        self._assert_ok(self._run(["-P", "deep", "--session", "s5"], input=bundle))
+        self.assertEqual(json.loads((self.tmp / "s5" / "meta.json").read_text(encoding="utf-8"))["profile"], "deep")
+        self._assert_ok(self._run(["--session", "s6"], input=bundle))
+        self.assertEqual(json.loads((self.tmp / "s6" / "meta.json").read_text(encoding="utf-8"))["profile"], "fast")
+        self._assert_ok(self._run(["--profile=anthropic:claude-x", "--start", "--session", "s7"], input=bundle))
+        self.assertEqual(
+            json.loads((self.tmp / "s7" / "meta.json").read_text(encoding="utf-8"))["profile"], "anthropic:claude-x"
+        )
+        bad_cases = (
+            (["-P", "missing", "--session", "s8"], "unknown model profile"),
+            (["-P", "deep", "--list"], "only supported when starting a session"),
+            (["--profile"], "requires an argument"),
+        )
+        for args, needle in bad_cases:
+            with self.subTest(args=args):
+                r = self._run(args, input=bundle)
+                self.assertEqual(r.returncode, 1, msg=r.stdout + r.stderr)
+                self.assertIn(needle, r.stderr)
+        self.assertFalse((self.tmp / "s8").exists())
 
     def test_done_cli_flags_and_help(self):
         r = self._run_subprocess([str(SCRIPT), "-h"])
