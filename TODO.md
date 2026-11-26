@@ -6,6 +6,14 @@
   - Evaluate removing in-step child-session handoff (`IN_RUN_BLOCK=1` piped bundle initialization / `start_session` in `deferred.json` and `spawned_sessions`) now that task dispatch belongs to external orchestration rather than worker sessions, and review whether session completion in API mode should stay `run --done` inside `script` or use an explicit tool completion parameter/signal.
   - Record agreed simplifications, flag/UX cleanups, and module boundaries for `F93` in `AGENTS.md` and `TODO.md`.
 
+- Redesign `START STEP` / `END STEP` cards, fullscreen `i(nfo)` section layout, and in-TUI session history navigation (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`):
+    - Separate session headers (inherited from `<session>/0` and `<session>/meta.json`: `Session`, `Date`, `Role`, `Task`, `Bundle-Command`, `Bundle`, `Profile`, `Sandbox`) from step headers (step-specific metadata: `Step`, `Workdir` / `cd`, total reply stats, `Outcome` / `Exit`, `Duration`, `Error`, `Fix`, `Script`, `Output`, `Meta`) both in cards and in `i(nfo)`.
+    - In `START STEP`, add an overall model reply statistics line above `Reasoning` (summing `Reasoning` + `Script`), rename `Operations` to `Script`, embed per-section statistics directly into the `Reasoning (<stats>):` and `Script (<stats>):` section headers (removing the standalone `Script:` line between them), and render each operation in `Script` as a compact single truncated line (`…`) rather than wrapping multi-line commands across the card.
+    - Simplify the `START STEP` confirmation prompt to `-> Execute this block? [Y/n] · i(nfo) h(eaders) r(easoning) s(cript):`, dropping top-level `e(dit)` / `s(cript)` duplication so `h`, `r`, and `s` open the corresponding fullscreen TUI section directly (`Headers`, `Reasoning`, or `Script`), while `e(dit)` opens `$EDITOR` from inside the fullscreen view.
+    - Structure fullscreen `i(nfo)` into three horizontal-rule-separated sections (`Headers`, `Reasoning`, `Script`, plus user `Prompt` on completed steps when present) where the overview mode caps each section to roughly one-third of the terminal height with single-line compact operation rows, `Tab` cycles section selection, and `Enter` or direct hotkeys `h`, `r`, `s` expand the chosen section to fullscreen.
+    - Add in-TUI session navigation: hotkey `b(undle)` to inspect the session bundle plan (`<session>/0`) from any step and `[` / `]` (plus `Left` / `Right`) to traverse session history.
+    - Resolve the step history & time-travel mental model (feeding into `D8`): evaluate unified step cards vs two-phase turn cards (`START`: model `Reasoning` + `Script` vs `END`: runner `Output` + human `Prompt`) given that `Reasoning(N)` causally responds to `Output + Prompt(N-1)` and branching/time-travel can occur either before execution (alternative model reply/script from `N-1`) or after execution (alternative human reply prompt or workspace revert from `N`).
+
 # 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
 
 - Depends on: F101, L3
@@ -58,6 +66,8 @@
 - Depends on: D5
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
 - Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
+
+- Align the parent-step DAG and time-travel model with the TUI step/turn structure from `D11`: account for both pre-execution branching (re-generating or patching a proposed `Reasoning` + `Script` reply against the post-`N-1` workspace state) and post-execution branching (forking from a completed step `N`'s `Output` with a different human `Prompt` or reverted workspace snapshot), and define how time-travel navigation (`[` / `]`) traverses branches in the TUI.
 
 # 🎯 [NEXT] F103: Add proposed step state machine, safe autopilot, and supervisor-session CLI (run --step)
 
