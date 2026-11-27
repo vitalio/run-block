@@ -22,6 +22,17 @@
   - Group `run -h` commands into thematic command sections (`Session & Execution Commands:`, `Inspection & History Commands:`, `Configuration & Maintenance Commands:`) and omit the repeated `{prog} ` prefix on flag/subcommand rows (keeping `{prog}` in `Usage:` templates and pipeline `<command> | {prog}` rows) with a shared description column within `<= 100` display columns.
 - Update `README.md`, `tests/test_cli.py`, `tests/test_bundle.py`, and `tests/test_runner.py`, rebuild `./run` via `python3 build.py`, and verify the test suite passes.
 
+# 🎯 [NEXT] F110: Remove legacy run_block, .agents_bundle, and models.json migration shims
+
+- Depends on: F108
+- Bump: `PATCH`
+- Remove post-ADR-0004 legacy migration shims and fallbacks across `src/`, `install.sh`, `README.md`, and `tests/` (retaining canonical `RUN_BLOCK_*` / `IN_RUN_BLOCK` environment variables and `in_run_block()` / `parent_run_block_ref()` helpers):
+  - `src/header.py`, `src/cli.py`, & `install.sh`: remove `LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"`, `REPO_MARKERS`, `_cleanup_legacy_binary_and_state()`, `dest.name == "run_block"` redirection in `cmd_update()`, and `run_block` binary / state directory cleanup in `cmd_uninstall()` and `install.sh` (change conflict fallback `ALT_NAME="run_block"` to `ALT_NAME="run_cli"` in `install.sh`).
+  - `src/config.py`: remove `_migrate_state_dir()` (`~/.local/state/run_block` -> `~/.local/state/run-block` rename/symlink migration), remove `LEGACY_CONFIG_FILE_NAME = "models.json"` fallback in `config_file_path()` (and `HELP_ENV`), and drop `".agents_bundle"` from `PROJECT_ROOT_MARKERS = (".context.bundle", "AGENTS.md")`.
+  - `src/bundle_parse.py` & `src/runner.py`: drop `.replace("{cmd:run_block}", prog)` and `blocks/bash` from `EMBEDDED_RULE_ID_RE` in `src/bundle_parse.py`; drop `(?:_block)?` from `SPLIT_HEADER_RE`, `REPLY_CMD_HEADER_RE`, and `PROSE_BULLET_HDR_RE` in `src/runner.py` (or `src/reply.py` if after `F93`) so block fences match canonical `run`.
+  - `README.md` & `tests/`: remove references to `.agents_bundle`, `models.json`, `run_block` binary, and `~/.local/state/run_block` migration from `README.md`; remove legacy migration tests in `tests/test_cli.py` and update legacy `agents_bundle`, `todo_md`, `vitalio/run_block:blocks/bash`, and `run_block s1/1` test fixtures across `tests/test_*.py`.
+- Rebuild `./run` via `python3 build.py` and verify the full test suite passes.
+
 # 🎯 [NEXT] F107: Extract session and step metadata persistence from src/config.py into src/session_meta.py
 
 - Depends on: F101, D11, F108
