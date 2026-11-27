@@ -3029,6 +3029,32 @@ class TestConfigSettings(RunBlockTestCase):
         self.assertIn("anthropic=unset", out)
         self.assertNotIn("parent-only", out)
 
+    def test_clean_out_text_linear_time_on_long_single_line_output(self):
+        import time
+
+        long_line = "x" * 600_000
+        cases = (
+            ("plain_no_cr", long_line + "\n", long_line + "\n"),
+            ("crlf_endings", f"head\r\n{long_line}\r\ntail\r\n", f"head\n{long_line}\ntail\n"),
+            (
+                "cr_progress_overwrite",
+                f"loading 10%\rloading 50%\r{long_line}\nnext_old\rnext_final\r\n",
+                f"{long_line}\nnext_final\n",
+            ),
+            (
+                "ansi_and_cr_on_long_line",
+                f"\x1b[32m{long_line}\x1b[0m\rfinal_replacement\n",
+                "final_replacement\n",
+            ),
+        )
+        for name, raw, expected in cases:
+            with self.subTest(case=name):
+                t0 = time.monotonic()
+                cleaned = self.mod._clean_out_text(raw)
+                elapsed_ms = (time.monotonic() - t0) * 1000.0
+                self.assertEqual(cleaned, expected)
+                self.assertLess(elapsed_ms, 50.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -667,7 +667,10 @@ def not_run_exit(
 
 
 def _clean_out_text(text: str) -> str:
-    return CR_LINE_RE.sub("", ANSI_RE.sub("", text)).replace("\r\n", "\n")
+    cleaned = ANSI_RE.sub("", text).replace("\r\n", "\n")
+    if "\r" in cleaned:
+        cleaned = CR_LINE_RE.sub("", cleaned)
+    return cleaned
 
 
 class _ProgressLineFilter:
@@ -1371,14 +1374,15 @@ def run_script(
         sys.stdout.write("\n")
     pre_child_count = 1 + (1 if renumbered_from else 0) + len(protocol_notes or []) + len(header_lines or []) + 1
     captured_child_text = _clean_out_text("".join(log_chunks[pre_child_count:]))
+    post_child_chunks: list[str] = []
     stdin_diag_lines: list[str] = []
     if rc != 0:
         stdin_diag_lines = _resolve_python_stdin_tracebacks(label, script_text, captured_child_text)
         for diag in stdin_diag_lines:
-            log_chunks.append(diag + "\n")
+            post_child_chunks.append(diag + "\n")
     pi_warn_line = _detect_output_prompt_injection_warning(label, captured_child_text)
     if pi_warn_line:
-        log_chunks.append(pi_warn_line)
+        post_child_chunks.append(pi_warn_line)
     dur_str = format_duration(duration_s)
     duration_ms = int(round(duration_s * 1000.0))
     failed_step = (
@@ -1390,8 +1394,8 @@ def run_script(
     end_line = f"\n[{label}] END ({end_detail})\n"
     if rc != 0 and footer_on_fail:
         end_line += footer_on_fail if footer_on_fail.endswith("\n") else footer_on_fail + "\n"
-    log_chunks.append(end_line)
-    full_output = _clean_out_text("".join(log_chunks))
+    post_child_chunks.append(end_line)
+    full_output = "".join(log_chunks[:pre_child_count]) + captured_child_text + "".join(post_child_chunks)
     op_timings = (
         progress_filter.operation_timings(total_chars=len(full_output))
         if progress_filter is not None

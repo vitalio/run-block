@@ -1,18 +1,3 @@
-# 🎯 [NEXT] B19: Fix quadratic regex backtracking in CR_LINE_RE and _clean_out_text on long single-line output
-
-- When a child command outputs very long lines without newlines (such as `grep` or `rg` matching ~740 KB minified single-line `.js` or `.json` files), `run` finishes the child process in milliseconds (`✓ [N/N]`), then hangs at 100% CPU for minutes inside `_clean_out_text()` before writing `<step>/meta.json`, `<step>/out`, or rendering `END STEP`.
-- Root cause:
-  - In `src/ui.py`, `CR_LINE_RE = re.compile(r"[^\n]*\r(?!\n)")` is unanchored, causing Python's `re` engine to retry `[^\n]*\r` from every character offset `0..L-1` on any line of length `L` without `\r` (`O(L^2)` quadratic time: ~3 s on 100 KB, ~195 s on 742 KB).
-  - In `src/runner.py`, `_clean_out_text()` runs `CR_LINE_RE.sub("", ...)` unconditionally before normalizing `\r\n`, and `run_script()` calls `_clean_out_text()` redundantly on both `captured_child_text` (`log_chunks[pre_child_count:]`) and `full_output` (`log_chunks`), plus per-operation in `_ProgressLineFilter.operation_timings()`.
-- Fix:
-  - In `src/ui.py`, anchor `CR_LINE_RE` to line start with `re.MULTILINE`: `CR_LINE_RE = re.compile(r"^[^\n]*\r(?!\n)", re.MULTILINE)`.
-  - In `src/runner.py`, update `_clean_out_text(text)` to strip `ANSI_RE` and replace `"\r\n"` with `"\n"` first, and only run `CR_LINE_RE.sub("", cleaned)` when `"\r" in cleaned`.
-  - In `run_script()` (`src/runner.py`), reuse the already-cleaned `captured_child_text` when assembling `full_output` (`"".join(log_chunks[:pre_child_count]) + captured_child_text + "".join(post_child_chunks)`) instead of running `_clean_out_text()` a second time over the child output.
-- Acceptance criteria:
-  - `CR_LINE_RE` and `_clean_out_text()` process 500 KB+ single-line strings (both without `\r` and with `\r` progress overwrites and `\r\n` line endings) in linear `O(L)` time (< 50 ms).
-  - Existing carriage-return progress overwrite and CRLF normalization behavior remains identical across `tests/test_runner.py` and `tests/test_ui.py`, with a dedicated regression test in `tests/test_runner.py` covering 500 KB single-line inputs.
-  - `./build.py --check` and the full test suite pass.
-
 # 🎯 [NEXT] D11: Audit run-block CLI commands, flags, settings, and TUI workflows for simplicity and user value
 
 - Conduct an interactive architectural and UX audit of `run-block` with the user before splitting `src/runner.py` (`F93`) and landing the API agent loop (`F101`–`F103`, `F88`):

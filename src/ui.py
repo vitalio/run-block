@@ -63,7 +63,7 @@ def stats_line(path: Path) -> str | None:
 
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-CR_LINE_RE = re.compile(r"[^\n]*\r(?!\n)")
+CR_LINE_RE = re.compile(r"^[^\n]*\r(?!\n)", re.MULTILINE)
 
 
 _KV_LINE_RE = re.compile(r"^([A-Za-z][A-Za-z0-9_-]*:)\s+(.*\S.*)$")
