@@ -1,19 +1,3 @@
-# 🎯 [NEXT] D11: Audit run-block CLI commands, flags, settings, and TUI workflows for simplicity and user value
-
-- Conduct an interactive architectural and UX audit of `run-block` with the user before splitting `src/runner.py` (`F93`) and landing the API agent loop (`F101`–`F103`, `F88`):
-  - Walk through all current CLI subcommands, flags (`src/cli.py`, `src/header.py`), environment variables (`RUN_BLOCK_*` in `src/config.py`), TUI cards/hotkeys (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`), and step/bundle execution mechanics (`src/runner.py`, `src/bundle*.py`).
-  - Classify features into daily core workflows, useful inspection/safety tools, and over-engineered or redundant options that can be simplified, consolidated, or removed.
-  - Evaluate removing in-step child-session handoff (`IN_RUN_BLOCK=1` piped bundle initialization / `start_session` in `deferred.json` and `spawned_sessions`) now that task dispatch belongs to external orchestration rather than worker sessions, and review whether session completion in API mode should stay `run --done` inside `script` or use an explicit tool completion parameter/signal.
-  - Record agreed simplifications, flag/UX cleanups, and module boundaries for `F93` in `AGENTS.md` and `TODO.md`.
-
-- Redesign `START STEP` / `END STEP` cards, fullscreen `i(nfo)` section layout, and in-TUI session history navigation (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`):
-    - Separate session headers (inherited from `<session>/0` and `<session>/meta.json`: `Session`, `Date`, `Role`, `Task`, `Bundle-Command`, `Bundle`, `Profile`, `Sandbox`) from step headers (step-specific metadata: `Step`, `Workdir` / `cd`, total reply stats, `Outcome` / `Exit`, `Duration`, `Error`, `Fix`, `Script`, `Output`, `Meta`) both in cards and in `i(nfo)`.
-    - In `START STEP`, add an overall model reply statistics line above `Reasoning` (summing `Reasoning` + `Script`), rename `Operations` to `Script`, embed per-section statistics directly into the `Reasoning (<stats>):` and `Script (<stats>):` section headers (removing the standalone `Script:` line between them), and render each operation in `Script` as a compact single truncated line (`…`) rather than wrapping multi-line commands across the card.
-    - Simplify the `START STEP` confirmation prompt to `-> Execute this block? [Y/n] · i(nfo) h(eaders) r(easoning) s(cript):`, dropping top-level `e(dit)` / `s(cript)` duplication so `h`, `r`, and `s` open the corresponding fullscreen TUI section directly (`Headers`, `Reasoning`, or `Script`), while `e(dit)` opens `$EDITOR` from inside the fullscreen view.
-    - Structure fullscreen `i(nfo)` into three horizontal-rule-separated sections (`Headers`, `Reasoning`, `Script`, plus user `Prompt` on completed steps when present) where the overview mode caps each section to roughly one-third of the terminal height with single-line compact operation rows, `Tab` cycles section selection, and `Enter` or direct hotkeys `h`, `r`, `s` expand the chosen section to fullscreen.
-    - Add in-TUI session navigation: hotkey `b(undle)` to inspect the session bundle plan (`<session>/0`) from any step and `[` / `]` (plus `Left` / `Right`) to traverse session history.
-    - Resolve the step history & time-travel mental model (feeding into `D8`): evaluate unified step cards vs two-phase turn cards (`START`: model `Reasoning` + `Script` vs `END`: runner `Output` + human `Prompt`) given that `Reasoning(N)` causally responds to `Output + Prompt(N-1)` and branching/time-travel can occur either before execution (alternative model reply/script from `N-1`) or after execution (alternative human reply prompt or workspace revert from `N`).
-
 # 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
 
 - Depends on: F101, L3
@@ -26,13 +10,48 @@
   - Persist append-only conversation turns, threshold context compaction (`RUN_BLOCK_COMPACT_TOKENS`), and exact provider usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`, `response_at`) in `<session>/chat.json`, `<session>/<step>/meta.json`, and `<session>/meta.json`.
   - Add offline unit tests in `tests/test_agent.py` using mocked HTTP/SSE streams to verify prefix splitting, one-time `EMBEDDED_RULE_API` replacement, multi-call guard, `cache_control` breakpoint placement, usage accounting, and threshold compaction.
 
-# 🎯 [NEXT] F108: Group run -h commands into thematic sections and drop redundant {prog} prefixes on command rows
+# 🎯 [NEXT] F108: Simplify CLI flags, remove in-step child-session handoff, and group run -h commands into thematic sections
 
 - Depends on: D11
-- Update `src/header.py` and `src/config.py` (`HELP_USAGE`, `HELP_COMMANDS` / command section tuples, `_help_section()`, `usage_text()`) to conform to the refined `agents/cli/help.md` layout contract after `D11`:
-  - Group the command entries in `run -h` into thematic command sections (`Session & Execution Commands:`, `Inspection & History Commands:`, `Configuration & Maintenance Commands:`) and omit the repeated `{prog} ` prefix on flag/subcommand rows (keeping `{prog}` in `Usage:` templates and pipeline `<command> | {prog}` rows).
-  - Keep the shared description column `col` aligned across all tabular sections (`*Commands:`, `Options:`, `Environment:`) within a compact left-column budget (`<= 100` total display columns).
-- Update `tests/test_cli.py` (`test_help_layout_width_and_alignment`) and `README.md` if needed, rebuild `./run` via `python3 build.py`, and run the test suite.
+- Bump: `MINOR`
+- Clean up redundant CLI commands, hidden flag aliases, and in-step child-session handoff in `src/cli.py`, `src/header.py`, `src/config.py`, `src/bundle.py`, `src/bundle_view.py`, and `src/runner.py` per `D11`:
+  - Remove hidden undocumented aliases `--bundle` (keep `--start`), `--rerun` (keep `--retry`), `--self-update` (keep `--update`), and `--no-sandbox` (keep `--sandbox off`).
+  - Consolidate `--info [session]` into `run --show [session[/step]] [--part N | --script | --out]` (removing the top-level `--info` flag) and remove `--part N` from `run --bundle-plan [session] [--json]` so part text extraction lives exclusively under `run --show [session] --part N`.
+  - Fold `--check-update` into `run --update [--check | --force]`, consolidate the two `--config` rows in `HELP_COMMANDS` into `--config [KEY[=VALUE] | --edit | --path]`, and trim low-frequency threshold variables (`RUN_BLOCK_BUNDLE_MAX_TOKENS`, `RUN_BLOCK_FRAGMENT_MAX_TOKENS`, `RUN_BLOCK_PROGRESS`) from `HELP_ENV` (keeping them inspectable via `run --config`).
+  - Remove in-step child-session handoff: reject `--start` / piped session initialization when `IN_RUN_BLOCK=1` with exit status `2` (`cannot start a new session from inside a running block`), and remove `start_session` deferred cards, `record_parent_child_session()`, and `"parent_session"` / `"parent_step"` / `"spawned_sessions"` from `_SESSION_STATE_KEYS` while keeping `end_session` deferred cards for `run --done`.
+  - Group `run -h` commands into thematic command sections (`Session & Execution Commands:`, `Inspection & History Commands:`, `Configuration & Maintenance Commands:`) and omit the repeated `{prog} ` prefix on flag/subcommand rows (keeping `{prog}` in `Usage:` templates and pipeline `<command> | {prog}` rows) with a shared description column within `<= 100` display columns.
+- Update `README.md`, `tests/test_cli.py`, `tests/test_bundle.py`, and `tests/test_runner.py`, rebuild `./run` via `python3 build.py`, and verify the test suite passes.
+
+# 🎯 [NEXT] F107: Extract session and step metadata persistence from src/config.py into src/session_meta.py
+
+- Depends on: F101, D11, F108
+- Extract session and step state/metadata persistence helpers (`_step_dir`, `_iter_session_steps`, `_iter_session_scripts`, `get_session_state()`, `<session>/meta.json` and `<session>/<step>/meta.json` read/write/stats helpers, `parse_stdin_preamble()`, `parse_bundle_header_items()`, `get_work_dir()`, `get_sandbox_mode()`, and `IN_RUN_BLOCK=1` `end_session` deferred card helpers) out of `src/config.py` into `src/session_meta.py` (~500 lines), keeping `src/config.py` (~600 lines) focused on `_SETTING_SPECS`, `get_setting()`, `config.json` / `.run-block.json` loading, model/role profile and API key resolution, and `usage_text()`.
+- Register `src/session_meta.py` in `build.py` `MODULE_ORDER`, update `AGENTS.md` if needed, rebuild `./run` via `python3 build.py`, and verify all unit tests pass.
+
+# 🎯 [NEXT] F93: Split src/runner.py into src/reply.py, src/fix.py, src/inspect_cmd.py, and src/runner.py
+
+- Depends on: F94, B15, B16, D11, F101, F104, F108, F107
+- Split `src/runner.py` (~4,100 lines) along the single-responsibility module boundaries decided in `D11`:
+  - `src/reply.py`: model reply block extraction and split-payload reassembly (`extract_reply_block()`, `_reassemble_split_payload_with_meta()`, `normalize_api_tool_script()`, `format_protocol_reminder_lines()`, `_detect_output_prompt_injection_warning()`, `cmd_run_reply()`).
+  - `src/fix.py`: Python `--fix` AST anchor inspection, repair hints, syntax context, consecutive failure tracking, and `cmd_fix()`.
+  - `src/inspect_cmd.py`: session and step inspection/lifecycle commands (`cmd_list()`, `cmd_show()`, `cmd_clean()`, `cmd_sandbox()`, `cmd_done()`, `render_end_session_card()`, `_step_status()`, `_warn_if_state_oversized()`).
+  - `src/runner.py`: core step execution engine (`_ProgressLineFilter`, `_prepare_progress_script()`, `_validate_step_script_syntax()`, `_resolve_python_stdin_tracebacks()`, `run_script()`, `not_run_exit()`, `cmd_normal()`, `cmd_retry()`).
+- Tighten `extract_reply_block()` edge cases during the `src/reply.py` split:
+  - When a `RUN_BLOCK`/`RUN_FIX` terminator is omitted and the block closes with a plain Markdown fence followed by trailing prose that itself contains another fenced code block, stop at the first closing fence outside inner heredocs rather than swallowing the trailing fenced example via `close_fence_before_next[-1]`.
+  - Track post-chosen duplicate block references alongside distinct trailing blocks so `ignored_trailing_refs` and `total_discarded_blocks` in `format_protocol_reminder_lines()` stay consistent when both a duplicate block and another trailing block appear after the chosen block (and exclude pre-chosen template duplicates when `chosen_idx > 0`).
+- Register `src/reply.py`, `src/fix.py`, and `src/inspect_cmd.py` in `build.py` `MODULE_ORDER`, rebuild `./run` via `python3 build.py`, and keep the offline test suite green.
+
+# 🎯 [NEXT] F109: Redesign START/END STEP cards, multi-section fullscreen info, editor prompts, and in-TUI history navigation
+
+- Depends on: F93
+- Bump: `MINOR`
+- Redesign `START STEP` / `END STEP` TUI cards, step conflict resolution, fullscreen `i(nfo)` section layout, `$EDITOR`-backed step prompts, and in-TUI session history navigation in `src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, and `src/runner.py` per `D11`:
+  - Cap normal-mode TUI cards (`START SESSION`, `START STEP`, `END STEP`, `END SESSION`, `CLEAN SESSIONS`, `SESSION COMPLETED`) at `min(term_cols, 100)` display columns (`MAX_CARD_COLS = 100`) with minimal unspaced headers (`Step`, `Workdir`, non-`off` `Sandbox`, plus `Exit`/`Error`/`Fix` on failure), a phase-level `Stats:` line (`Reasoning + Script` on `START STEP`; `Output + Prompt` plus duration on `END STEP`), and per-section `<Section> (<stats>):` previews (`Reasoning` preview lines + single-line `…`-truncated `Script` operation rows on `START STEP`; `Output` preview lines + optional user `Prompt` preview lines on `END STEP`).
+  - Simplify the `START STEP` prompt to `-> Execute this block? [Y/n] · i(nfo) h(eaders) r(easoning) s(cript):` (dropping top-level `e(dit)` so `e` opens `$EDITOR` inside fullscreen view) and fold step-number conflicts directly into `START STEP` using `a(ppend)` (renumber to the latest free step at the end of the session) and `o(verwrite)` (replace the existing step in place) instead of separate `STEP ALREADY EXISTS` / `MISSING PREVIOUS STEP` cards.
+  - Replace single-line `readline()` prompt appending on `END STEP` with `$EDITOR`-backed editing of `<session>/<step>/prompt.md` via `p(rompt)`: pressing `p` when no prompt exists opens `$EDITOR` and renders the saved `Prompt (<stats>):` section on the card; pressing `p` again reopens `$EDITOR` to edit the existing prompt and refreshes the card (and copies `<step>/out` + `<step>/prompt.md` together).
+  - Structure fullscreen `i(nfo)` (using full `term_cols`) into horizontal-rule-separated sections (`Headers`, `Reasoning`, `Script`, `Output`, `Prompt`): render `Headers` as a two-column vertical split (`Session Headers │ Step Headers`), cap each section in overview mode to ~1/3 terminal height with single-line operation rows, bind `Tab` to cycle sections, and bind `Enter` or direct hotkeys (`h`, `r`, `s`, `o`, `p`) to expand a section to fullscreen (`e(dit)` opens `$EDITOR`).
+  - Add in-TUI session history navigation across cards and `i(nfo)`: `b(undle)` to inspect `<session>/0`, `[`/`]` (`Left`/`Right`) to step backward/forward through `<session>/0 .. <session>/<latest>`, and `{`/`}` (`Home`/`End`) to jump to the start (`<session>/0`) or latest step of the session.
+- Add unit tests in `tests/test_ui.py` and `tests/test_runner.py` covering the 100-column card cap, symmetric `START STEP` / `END STEP` `Stats:` and section previews, inline `a(ppend)` / `o(verwrite)` conflict handling, `$EDITOR` prompt creation/re-editing, two-column `Headers` split, multi-section `i(nfo)` overview/fullscreen transitions, and `[`/`]`/`{`/`}`/`b` history navigation.
 
 # 🎯 [NEXT] D4: Design workspace state fingerprinting and drift detection across steps
 
@@ -63,11 +82,11 @@
 
 # 🎯 [NEXT] D8: Design explicit parent-step DAG lineage for session branches and retries
 
-- Depends on: D5
+- Depends on: D5, F109
 - Explore recording explicit `parent_step` / `parent_hash` metadata for every step, `--fix` patch (`s1/1_1`), and `--retry` run in `src/runner.py` so session history forms an unambiguous DAG rather than relying solely on lexical step names.
-- Define how branch lineage is inspected in `--list` / `--show` (`src/cli.py`, `src/ui.py`) and verified in `tests/test_runner.py` and `tests/test_cli.py`.
-
-- Align the parent-step DAG and time-travel model with the TUI step/turn structure from `D11`: account for both pre-execution branching (re-generating or patching a proposed `Reasoning` + `Script` reply against the post-`N-1` workspace state) and post-execution branching (forking from a completed step `N`'s `Output` with a different human `Prompt` or reverted workspace snapshot), and define how time-travel navigation (`[` / `]`) traverses branches in the TUI.
+- Align the parent-step DAG and time-travel model with the unified step node and five-section TUI structure (`Headers`, `Reasoning`, `Script`, `Output`, `Prompt`) from `D11`:
+  - Treat each step `sN/k` as a single navigation node for `[`/`]` (`Left`/`Right`) and `{`/`}` (`Home`/`End`), while supporting two distinct branching points: pre-execution branching from `parent_step = k - 1` (re-generating, editing, or patching a proposed `Reasoning` + `Script` reply against the post-`k-1` workspace state) and post-execution branching from `parent_step = k` (forking from a completed step `k`'s `Output` by editing/adding a user `Prompt` via `p(rompt)` in `$EDITOR` or reverting the workspace snapshot).
+  - Define how branch lineage is inspected in `--list` / `--show` and navigated via `[`/`]` in the TUI, and how it is verified in `tests/test_runner.py` and `tests/test_cli.py`.
 
 # 🎯 [NEXT] F103: Add proposed step state machine, safe autopilot, and supervisor-session CLI (run --step)
 
@@ -79,46 +98,30 @@
 - Implement the step proposal state machine (`outcome: "proposed"`), strict `awaiting_reply` handling, session continuation (`--continue`), safe autopilot, and supervisor-session CLI in `src/agent.py`, `src/runner.py`, and `src/cli.py` per `docs/adr/0001-built-in-api-agent-mode.md`:
   - Normalize tool-call `run(script, fix_target?)` (`reply_transport="api_tool"`) and plain-text fallback replies (`reply_transport="text"`) via `extract_reply_block()` (stripping accidental fence/heredoc wrappers, passing the transport mode to step execution so `api_tool` steps only emit the API wrapper reminder if `script` was wrapped in fences/heredocs while plain-text fallback uses the text-block reminder from `F104`, and converting misplaced shell scripts in `fix_target` to sequential steps). When the model returns plain prose without a `run` tool call or runnable block, record `outcome: "awaiting_reply"` rather than auto-closing the session via heuristics.
   - Persist all valid candidate steps under `<session>/<step>/` (`block.sh` or `fix.py`, `plan.md` reasoning, and `meta.json` with `"outcome": "proposed"`, keeping declined `aborted` / `not-run` steps materialized on disk so filesystem artifacts stay 1:1 synchronized with `tool_use` / `tool_result` turns in `<session>/chat.json`).
-  - Add `run --continue [session]` / `-c` to resume an open API session directly from `<session>/chat.json` (opening `START STEP` if a step is `proposed`, sending pending `<step>/out` `tool_result` if completed but unsent, or prompting on `awaiting_reply`).
-  - Add `run --step <target_session> --propose | --approve [--propose] | --reject "<reason>" [--propose] | --reply "<message>" [--propose] | --autopilot` (and `--profile <name>` / `-P`, `--autopilot` CLI flags) allowing a parent/supervisor session (`IN_RUN_BLOCK=1`, when `<target_session>` is not the current session or an ancestor) to inspect, approve, reject, reply to, or autopilot a worker session (surfacing `awaiting_reply` distinctly from `completed`).
+  - Add `run --continue [session]` (keeping `-c` exclusively for `--clipboard`) to resume an open API session directly from `<session>/chat.json` (opening `START STEP` if a step is `proposed`, sending pending `<step>/out` `tool_result` if completed but unsent, or prompting on `awaiting_reply`).
+  - Add `run --step <target_session> --propose | --approve [--propose] | --reject "<reason>" [--propose] | --reply "<message>" [--propose] | --autopilot` (and `--profile <name>` / `-P`, `--autopilot` CLI flags) allowing a supervisor session (`IN_RUN_BLOCK=1`, when `<target_session>` is a distinct worker session initialized outside `IN_RUN_BLOCK=1`) or external orchestrator to inspect, approve, reject, reply to, or autopilot a worker session (surfacing `awaiting_reply` distinctly from `completed`).
   - Implement safe autopilot pausing automatically whenever `src/safety.py` reports risk findings, `RUN_BLOCK_APPROVE_CMD` prompts/rejects, the model enters `awaiting_reply`, or `max_steps` / consecutive failure limits are reached.
-  - Add unit tests in `tests/test_agent.py` and `tests/test_runner.py` covering `proposed` and `awaiting_reply` lifecycle, 1:1 `chat.json` step materialization, `--continue`, supervisor `--step` commands, ancestor-recursion guards, and safe autopilot pause triggers.
+  - Add unit tests in `tests/test_agent.py` and `tests/test_runner.py` covering `proposed` and `awaiting_reply` lifecycle, 1:1 `chat.json` step materialization, `--continue`, supervisor `--step` commands, active-session guards, and safe autopilot pause triggers.
 
 # 🎯 [NEXT] F106: Add model-order (system/user) view mode and interactive toggle to --bundle-plan and START SESSION info
 
-- Depends on: F102
+- Depends on: F102, F108
 - Bump: `MINOR`
 - Add an explicit model-delivery order view mode alongside the existing source-chain tree in `src/bundle_view.py`, `src/ui_info.py`, `src/header.py`, and `README.md`:
-  - Support `--order` (and `--tree`, default `--tree`) on `run --bundle-plan [<session>] [--order | --tree] [--json] [--part N]`.
+  - Support `--order` (and `--tree`, default `--tree`) on `run --bundle-plan [<session>] [--order | --tree] [--json]`.
   - In `order` mode, render bundle parts strictly in their stitched prompt delivery order grouped under the two API message containers defined in `docs/adr/0001-built-in-api-agent-mode.md`: `[system]` (all `kind == "rule"` parts in exact `===== Rules =====` order plus root `AGENTS.md` `kind == "file"`) and `[user]` (`kind == "header"` session preamble followed by `cmd`, remaining `file`, and `prompt` parts in exact `line_start..line_end` order), displaying each part's canonical part index.
   - In the interactive `START SESSION` `i(nfo)` fullscreen viewer (`src/ui_info.py`), bind hotkey `o` (`o(rder): model/tree` in the footer bar) to toggle live between the source-chain tree and the model-delivery order table while keeping `Tab: parts` and `Enter: open part` navigation working seamlessly in both modes.
 - Add unit tests in `tests/test_bundle.py` and `tests/test_ui.py` covering `--bundle-plan --order`, `[system]`/`[user]` grouping metrics, and interactive `o` mode toggling in `START SESSION` info.
 
 # 🎯 [NEXT] F88: Integrate interactive TUI agent loop, model reply prompts, and provider cache stats in cards
 
-- Depends on: F103
+- Depends on: F103, F109
 - Bump: `MINOR`
-- Integrate the built-in API agent loop and token/cache telemetry into the interactive TUI (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`, `src/header.py`, `README.md`) per `docs/adr/0001-built-in-api-agent-mode.md`:
-  - When a model profile is active, set the default `Enter`/`y` action in `START SESSION` and `END STEP` to `Send to model (<profile>)? [Y/n/a(uto)/c(opy)/e(dit)/i(nfo)]` while preserving `c(opy)` for clipboard mode and `run -r` full-reply mode.
-  - Stream model reasoning and tool-call progress cleanly in the terminal, transition into `START STEP` (`BLOCK PLAN` showing `Reasoning:`, operation table, and safety warnings), and when the model replies with prose only (`outcome: "awaiting_reply"`), present `[r(eply)/d(one)/q(uit)/i(nfo)]` so the user can answer (`r`), manually confirm completion (`d`, promoting the model's summary to `completed_note`), or exit to shell (`q`/`n`).
+- Integrate the built-in API agent loop and token/cache telemetry into the interactive TUI (`src/ui.py`, `src/ui_info.py`, `src/ui_prompt.py`, `src/cli.py`, `src/header.py`, `README.md`) per `docs/adr/0001-built-in-api-agent-mode.md` and `D11`:
+  - When a model profile is active, set the default `Enter`/`y` action in `START SESSION` and `END STEP` to `Send to model (<profile>)? [Y/n/a(uto)/c(opy)] · i(nfo) ...` while preserving `c(opy)` for clipboard mode, `p(rompt)` for `$EDITOR` prompt editing, and `run -r` full-reply mode.
+  - Stream model reasoning and tool-call progress cleanly in the terminal, transition into `START STEP` (showing `Stats:`, `Reasoning (<stats>):`, single-line `Script (<stats>):`, and safety warnings), and when the model replies with prose only (`outcome: "awaiting_reply"`), present `[r(eply)/d(one)/q(uit)/i(nfo)]` so the user can answer (`r`), manually confirm completion (`d`, promoting the model's summary to `completed_note`), or exit to shell (`q`/`n`).
   - Display provider token usage, cache hit percentage, and remaining Anthropic cache TTL in `Stats:` across `END STEP` and `END SESSION` while keeping fast offline `count_tokens()` estimation for pre-flight cards.
-  - Document `--profile` / `-P`, `--continue` / `-c`, `--autopilot`, `--step`, `config.json` / `models.json`, and `RUN_BLOCK_MODEL*` / `RUN_BLOCK_CACHE` in `src/header.py` (`--help`), `agents/run.md`, and `README.md`, and add unit tests in `tests/test_ui.py` and `tests/test_cli.py`.
-
-# ⚪ [NEW] F107: Split settings and profile resolution out of src/config.py
-
-- Depends on: F101, D11
-- Extract session and step state/metadata persistence helpers (`<session>/meta.json`, `<session>/<step>/meta.json`, deferred session cards, session lifecycle state `get_session_state()`, and header parsing) out of `src/config.py` (~1,200 lines) into a dedicated module (or align boundaries decided in `D11`), keeping `src/config.py` focused on `_SETTING_SPECS`, `get_setting()`, `config.json` / `.run-block.json` loading, model/role profile resolution, and `usage_text()`.
-- Register the new module in `build.py` `MODULE_ORDER`, update `AGENTS.md`, and verify all existing unit tests pass.
-
-# ⚪ [NEW] F93: Split src/runner.py by responsibility
-
-- Depends on: F94, B15, B16, D11, F101, F104, F107
-- Split `src/runner.py` (~3,450 lines) along clean single-responsibility module boundaries agreed in `D11` (such as reply extraction/reassembly and `--fix` patching, session/step inspection `--list`/`--show`/`--clean`, and core step execution `run_script()` / `cmd_normal()`), keeping each module within roughly 300-800 lines.
-- Register new modules in `build.py` `MODULE_ORDER`, update `AGENTS.md`, and keep the offline test suite green.
-
-- Tighten `extract_reply_block()` edge cases during the reply-extraction split:
-  - When a `RUN_BLOCK`/`RUN_FIX` terminator is omitted and the block closes with a plain Markdown fence followed by trailing prose that itself contains another fenced code block, stop at the first closing fence outside inner heredocs rather than swallowing the trailing fenced example via `close_fence_before_next[-1]`.
-  - Track post-chosen duplicate block references alongside distinct trailing blocks so `ignored_trailing_refs` and `total_discarded_blocks` in `format_protocol_reminder_lines()` stay consistent when both a duplicate block and another trailing block appear after the chosen block (and exclude pre-chosen template duplicates when `chosen_idx > 0`).
+  - Document `--profile` / `-P`, `--continue`, `--autopilot`, `--step`, `config.json` / `models.json`, and `RUN_BLOCK_MODEL*` / `RUN_BLOCK_CACHE` in `src/header.py` (`--help`), `agents/run.md`, and `README.md`, and add unit tests in `tests/test_ui.py` and `tests/test_cli.py`.
 
 # ⏸️ [HOLD] D9: Design machine-readable runner contract (--json step output and plan/execute handshake) — *Defer external machine-readable runner contract until an external client is needed; built-in API agent mode (D10) runs in-process*
 

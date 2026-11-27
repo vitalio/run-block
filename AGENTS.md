@@ -8,17 +8,21 @@ rules are loaded via `.context.bundle`.
 - `src/header.py` — `--help` row tables (`HELP_*`), standard library imports,
   version constants, and the embedded block rule placeholder
   (`EMBEDDED_RULE_BASH`) populated by `build.py`.
-- `src/config.py` — settings resolution (`_SETTING_SPECS`, `get_setting()`
-  returning `(value, source)` with precedence env, project `.run-block.json`,
-  user `config.json`, default), config file loading and `0600` writes
-  (`config_file_path()`, `set_config_value()`), model profile and role
-  resolution (`resolve_profile()`), parent-only API key resolution
-  (`resolve_api_key()`), provider key names for child scrubbing
-  (`provider_secret_env_names()`), non-interactive child pager variable tuple
-  (`CHILD_PAGER_ENV_VARS` controlled by `RUN_BLOCK_PAGER`, default `cat`),
-  working directory resolution, and `usage_text()`, which renders `--help` from
-  the `HELP_*` tables (unified description column across all sections, lines
-  <= 100 display columns).
+- `src/config.py` (and `src/session_meta.py` split in `F107`) — settings
+  resolution (`_SETTING_SPECS`, `get_setting()` returning `(value, source)`
+  with precedence env, project `.run-block.json`, user `config.json`, default),
+  config file loading and `0600` writes (`config_file_path()`,
+  `set_config_value()`), model profile and role resolution
+  (`resolve_profile()`), parent-only API key resolution (`resolve_api_key()`),
+  provider key names for child scrubbing (`provider_secret_env_names()`),
+  non-interactive child pager variable tuple (`CHILD_PAGER_ENV_VARS`
+  controlled by `RUN_BLOCK_PAGER`, default `cat`), and `usage_text()`, which
+  renders `--help` from the `HELP_*` tables (thematic command sections, unified
+  description column across all sections, lines <= 100 display columns).
+  `src/session_meta.py` owns session/step metadata persistence
+  (`<session>/meta.json`, `<session>/<step>/meta.json`), session lifecycle
+  state (`get_session_state()`), bundle header parsing, `Workdir`/`Sandbox`
+  resolution, and `IN_RUN_BLOCK=1` deferred `end_session` card state.
 - Config invariants: add every new setting only to `_SETTING_SPECS`; project
   `.run-block.json` is filtered through `PROJECT_CONFIG_ALLOWLIST` and never
   supplies hooks, commands, safety switches, sandbox, paths, `update_url`, or
@@ -37,24 +41,46 @@ rules are loaded via `.context.bundle`.
   counting and stats formatting (`count_tokens()`, `format_stats()`), and thin
   open-right box-drawing (`╭─ TITLE ───`, `│ `, `╰───`, ASCII fallback) TUI card
   layout and rendering (`START STEP`, `START SESSION`, `END STEP`, `NOT RUN`,
-  `SYNTAX ERROR`).
-- `src/ui_info.py` — fullscreen `i(nfo)` inspector, pager navigation and frame
-  composition, bundle/operation breakdown tables, and `PART N/M`, `BUNDLE R/M`,
-  and step operation `PART k/N` subviews.
+  `SYNTAX ERROR`) capped at `min(term_cols, 100)` display columns (`MAX_CARD_COLS = 100`).
+  `START STEP` and `END STEP` cards follow a symmetric layout: minimal unspaced
+  step headers (`Step`, `Workdir`, non-`off` `Sandbox`, plus `Exit`/`Error`/`Fix`
+  on failure), a phase-level `Stats:` line (`Reasoning + Script` on `START STEP`;
+  `Output + Prompt` plus duration on `END STEP`), and per-section `<Section> (<stats>):`
+  previews (`Reasoning` + single-line `…`-truncated `Script` operations on
+  `START STEP`; `Output` preview lines + optional user `Prompt` on `END STEP`).
+- `src/ui_info.py` — fullscreen `i(nfo)` inspector (using full `term_cols`),
+  horizontal-rule-separated section layout (`Headers`, `Reasoning`, `Script`,
+  `Output`, `Prompt`) with an overview mode capping each section to ~1/3
+  terminal height, two-column vertical split (`Session Headers │ Step Headers`)
+  in the `Headers` section, `Tab` section cycling, `Enter` or direct hotkeys
+  (`h`, `r`, `s`, `o`, `p`) to expand a section to fullscreen, `e(dit)` to open
+  `$EDITOR` from fullscreen, and in-TUI session history navigation (`b` for
+  `<session>/0` bundle plan, `[`/`]` or `Left`/`Right` for prev/next step,
+  `{`/`}` or `Home`/`End` for session start `<session>/0` / latest step) treating
+  each step `sN/k` as a single navigation node with pre-execution (`parent = k-1`)
+  and post-execution (`parent = k`) branching points.
 - `src/ui_prompt.py` — `/dev/tty` lifecycle, `SIGWINCH` debounce watcher,
-  editor launch and `.orig` backups, clipboard command resolution, copying, and
-  reading (`clipboard_command()`, `clipboard_read_command()`,
+  editor launch and `.orig` backups, `$EDITOR`-backed step prompt creation and
+  re-editing (`<step>/prompt.md` via `p(rompt)`), clipboard command resolution,
+  copying, and reading (`clipboard_command()`, `clipboard_read_command()`,
   `read_clipboard_text()`), and interactive confirmation and clipboard prompts
-  (`confirm_execution()`, `prompt_yes_no_box()`, `offer_clipboard_copy()`).
-- `src/runner.py` — sequential session/step execution (`<session>/<step>`),
+  (`confirm_execution()` with `-> Execute this block? [Y/n] · i(nfo) h(eaders) r(easoning) s(cript):`
+  and inline `a(ppend)` / `o(verwrite)` conflict resolution when a step number
+  already exists or skips a previous step, `prompt_yes_no_box()`,
+  `offer_clipboard_copy()`).
+- `src/runner.py` (and `src/reply.py`, `src/fix.py`, `src/inspect_cmd.py` split
+  in `F93`) — sequential session/step execution (`<session>/<step>`,
+  `run_script()`, `cmd_normal()`, `cmd_retry()`), `-y`/`--yes` auto-confirm mode,
+  and `--headless` (`RUN_BLOCK_HEADLESS=1`) headless mode in `src/runner.py`;
   `-r`/`--run [-c|--clipboard] [session]` (`run -rc`) full-reply ingestion with
   pre-allocation reply validation (`extract_reply_block()`,
   `normalize_api_tool_script()`, `format_protocol_reminder_lines()`,
   `cmd_run_reply()`), glued `RUN_BLOCK`/`RUN_FIX`/fence recovery, transport-mode
   protocol reminders (`reply_transport: "text" | "api_tool"`), and output
-  prompt-injection / delimiter-spoofing warnings,
-  `--fix` patching, `--retry`, `--list`, `--show`,
-  `--clean`, `-y`/`--yes` auto-confirm mode, and `--headless` (`RUN_BLOCK_HEADLESS=1`) headless mode. Child `stdout` and `stderr` share one descriptor (the PTY
+  prompt-injection / delimiter-spoofing warnings in `src/reply.py`;
+  `--fix` Python AST anchor diagnosis and patching (`cmd_fix()`) in `src/fix.py`;
+  and session/step inspection and lifecycle commands (`--list`, `--show`,
+  `--clean`, `--sandbox`, `--done`) in `src/inspect_cmd.py`. Child `stdout` and `stderr` share one descriptor (the PTY
   slave or the capture pipe write end), so `out` keeps exact write order and
   the `END STEP` box takes its `Error:` line from the last meaningful line of
   `out`; there is no separate `err` artifact. Exports non-interactive
@@ -85,22 +111,21 @@ rules are loaded via `.context.bundle`.
   `Date`) and the prompt body.
 - Session completion state (`--done`) and nested `IN_RUN_BLOCK=1` contract:
   persist `"completed": true` and `"completed_at"` (UTC ISO timestamp),
-  optional `"completed_note"`, accumulated `"stats"` (updated by `run_script`
-  via `update_session_stats`), and parent/child session linkage
-  (`"parent_session"`, `"parent_step"`, `"spawned_sessions"`) in
-  `<session>/meta.json` without altering `<session>/0` headers. `run_script`
-  exports `IN_RUN_BLOCK=1`, `RUN_BLOCK_PARENT_SESSION`, and
-  `RUN_BLOCK_PARENT_STEP`; inside a running step, nested step execution
-  (`<session>/<step>`, `--fix`, `--retry`) and sandbox mutations exit `2`,
-  while `--done` and `--start` / piped bundle initialization log a single plain
-  line to `stdout` and queue `end_session` / `start_session` events in
+  optional `"completed_note"`, and accumulated `"stats"` (updated by
+  `run_script` via `update_session_stats`) in `<session>/meta.json` without
+  altering `<session>/0` headers. `run_script` exports `IN_RUN_BLOCK=1`,
+  `RUN_BLOCK_PARENT_SESSION`, and `RUN_BLOCK_PARENT_STEP`; inside a running
+  step, nested step execution (`<session>/<step>`, `--fix`, `--retry`),
+  session initialization (`--start` or piped bundle initialization — worker
+  sessions are started by external orchestration outside `IN_RUN_BLOCK=1`),
+  `--config` mutations, and `--sandbox` mutations exit `2`, while `--done`
+  logs a single plain line to `stdout` and queues an `end_session` event in
   `<parent_sdir>/<parent_step>/deferred.json` so `run_script` renders
-  `END STEP` -> `END SESSION` -> `START SESSION` in order after updating step
-  stats (suppressing the outer `END STEP` clipboard prompt when a child session
-  is spawned). Before running any block (`<session>/<step>`, `--fix`, or
-  `--retry`) on a completed session, warn and prompt for confirmation
-  (`SESSION COMPLETED`, default `No`), clearing the completed flag only when
-  confirmed (or when `-y`/`--yes` is explicitly passed).
+  `END STEP` -> `END SESSION` in order after updating step stats. Before
+  running any block (`<session>/<step>`, `--fix`, or `--retry`) on a completed
+  session, warn and prompt for confirmation (`SESSION COMPLETED`, default
+  `No`), clearing the completed flag only when confirmed (or when `-y`/`--yes`
+  is explicitly passed).
 - Session lifecycle states and step outcome labels (`src/config.py`,
   `src/runner.py`):
   - Session lifecycle state (`get_session_state(sdir)`): `done` when
@@ -135,9 +160,14 @@ rules are loaded via `.context.bundle`.
     `last: <ref> (<step_status>)`, and `next: <session>/<next_free_step>` for
     open sessions (`active` / `bundle-only`) or `[DONE]` without `next:` for
     completed sessions.
-- `src/cli.py` — CLI argument routing, `--config` (`cmd_config()`),
-  `-P`/`--profile` extraction (session start only), self-update (`--update`,
-  `--check-update`), and `--uninstall [--purge]`.
+- `src/cli.py` — CLI argument routing without hidden legacy flag aliases
+  (`--show [session[/step]] [--part N | --script | --out]` unifies session
+  overview, bundle/part, and step inspection without a separate `--info` flag
+  or `--bundle-plan --part N`; `-c` is exclusively `--clipboard`, while API
+  session continuation uses explicit `--continue`; `--sandbox off` replaces
+  `--no-sandbox`), `--config` (`cmd_config()`), `-P`/`--profile` extraction
+  (session start only), self-update (`--update [--check | --force]`), and
+  `--uninstall [--purge]`.
 - `tests/helpers.py` — shared `ROOT`, `SCRIPT`, `INSTALL_SH`, cached
   `load_module()`, and `RunBlockTestCase` with in-process CLI helpers (`_run`,
   `_run_in_process`, `_run_subprocess`, `_assert_ok`) and `RUN_BLOCK_*`
