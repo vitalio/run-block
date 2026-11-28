@@ -1,3 +1,13 @@
+# 🎯 [NEXT] B20: Fix buffered SSE streaming, OpenAI cached prompt token double-counting, and AI gateway/Vertex endpoint & header support
+
+- Depends on: F102
+- Bump: `PATCH`
+- Fix `F102` review findings and cloud/enterprise AI gateway compatibility in `src/agent.py` and `src/config.py`:
+  - **Incremental SSE streaming (`iter_sse_events`, `_open_sse_request`, `stream_anthropic_messages`, `stream_openai_chat`):** Yield `(event_name, data_str)` tuples incrementally as lines arrive from the HTTP response stream inside the `with` context instead of buffering the entire response into a `list` before returning from `_open_sse_request()`, so `on_text` callbacks fire live during streaming.
+  - **Accurate total input context tokens across Anthropic and OpenAI-compatible providers (`normalize_usage_dict`, `_accumulate_usage`, `_reported_prompt_tokens`, `append_assistant_turn`):** Account for provider semantics where Anthropic `input_tokens` excludes `cache_read_input_tokens + cache_creation_input_tokens` whereas OpenAI-compatible `prompt_tokens` already includes `cached_tokens` (copied to `cache_read_input_tokens`), avoiding double-counting cached tokens when checking `RUN_BLOCK_COMPACT_TOKENS` and recording `last_input_tokens`.
+  - **Cloud & enterprise AI gateway compatibility (`resolve_provider_endpoint`, profile `headers` / `auth_header`):** Recognize `/openapi` (e.g. GCP Vertex AI `.../endpoints/openapi`) alongside `/v1` and `/openai` in `resolve_provider_endpoint()` so it appends `/chat/completions` rather than `/v1/chat/completions`, and support optional profile `headers` (dict of custom HTTP headers) and `auth_header` (`"bearer"` or `"x-api-key"`) so Anthropic/OpenAI enterprise gateways (such as `claude-appgw`, LiteLLM, Cloudflare, Portkey, or Vertex proxies) can authenticate with either `x-api-key` or `Authorization: Bearer`.
+- Add unit tests in `tests/test_agent.py` verifying incremental `on_text` emission before stream completion, OpenAI vs Anthropic compaction threshold token accounting, `/endpoints/openapi` URL resolution, and custom gateway headers.
+
 # 🎯 [NEXT] F108: Simplify CLI flags, remove in-step child-session handoff, and group run -h commands into thematic sections
 
 - Depends on: D11
@@ -17,7 +27,7 @@
 - Remove post-ADR-0004 legacy migration shims and fallbacks across `src/`, `install.sh`, `README.md`, and `tests/` (retaining canonical `RUN_BLOCK_*` / `IN_RUN_BLOCK` environment variables and `in_run_block()` / `parent_run_block_ref()` helpers):
   - `src/header.py`, `src/cli.py`, & `install.sh`: remove `LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"`, `REPO_MARKERS`, `_cleanup_legacy_binary_and_state()`, `dest.name == "run_block"` redirection in `cmd_update()`, and `run_block` binary / state directory cleanup in `cmd_uninstall()` and `install.sh` (change conflict fallback `ALT_NAME="run_block"` to `ALT_NAME="run_cli"` in `install.sh`).
   - `src/config.py`: remove `_migrate_state_dir()` (`~/.local/state/run_block` -> `~/.local/state/run-block` rename/symlink migration), remove `LEGACY_CONFIG_FILE_NAME = "models.json"` fallback in `config_file_path()` (and `HELP_ENV`), and drop `".agents_bundle"` from `PROJECT_ROOT_MARKERS = (".context.bundle", "AGENTS.md")`.
-  - `src/bundle_parse.py` & `src/runner.py`: drop `.replace("{cmd:run_block}", prog)` and `blocks/bash` from `EMBEDDED_RULE_ID_RE` in `src/bundle_parse.py`; drop `(?:_block)?` from `SPLIT_HEADER_RE`, `REPLY_CMD_HEADER_RE`, and `PROSE_BULLET_HDR_RE` in `src/runner.py` (or `src/reply.py` if after `F93`) so block fences match canonical `run`.
+  - `src/bundle_parse.py`, `src/agent.py`, & `src/runner.py`: drop `.replace("{cmd:run_block}", prog)` in `src/bundle_parse.py` and `src/agent.py` (`get_embedded_api_rule()`), drop `".agents_bundle"` from `_ROOT_AGENTS_MD_CHAINS` in `src/agent.py`, and drop `blocks/bash` from `EMBEDDED_RULE_ID_RE` in `src/bundle_parse.py`; drop `(?:_block)?` from `SPLIT_HEADER_RE`, `REPLY_CMD_HEADER_RE`, and `PROSE_BULLET_HDR_RE` in `src/runner.py` (or `src/reply.py` if after `F93`) so block fences match canonical `run`.
   - `README.md` & `tests/`: remove references to `.agents_bundle`, `models.json`, `run_block` binary, and `~/.local/state/run_block` migration from `README.md`; remove legacy migration tests in `tests/test_cli.py` and update legacy `agents_bundle`, `todo_md`, `vitalio/run_block:blocks/bash`, and `run_block s1/1` test fixtures across `tests/test_*.py`.
 - Rebuild `./run` via `python3 build.py` and verify the full test suite passes.
 
@@ -90,7 +100,7 @@
 # 🎯 [NEXT] F103: Add proposed step state machine, safe autopilot, and supervisor-session CLI (run --step)
 
 - Depends on: F93
-- Depends on: F101 -> F102
+- Depends on: F101 -> F102 -> B20
 - Depends on: L1 -> F104
 - Depends on: B17
 - Bump: `MINOR`
