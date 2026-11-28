@@ -1,15 +1,3 @@
-# 🎯 [NEXT] F102: Add Bundle-Protocol v1 cache-prefix splitter, stdlib HTTP/SSE clients, and chat.json transcript
-
-- Depends on: F101, L3
-- Bump: `MINOR`
-- Create `src/agent.py` (registered in `build.py` `MODULE_ORDER`) and `agents/run-api.md` (`EMBEDDED_RULE_API` in `src/header.py`) implementing the API transport and prompt caching layer per `docs/adr/0001-built-in-api-agent-mode.md`:
-  - Keep `agents/run-api.md` free of host-only CLI flags (`-r`/`-rc`/`--bundle-plan`) and child-session handoff instructions (`<bundle_cmd> | {cmd:run}`), matching the cleaned-up contract in `L3`.
-  - Split `<session>/0` losslessly using `bundle_plan["parts"]` (`src/bundle_plan.py`) into an immutable cross-session `system` prefix (all `kind == "rule"` parts with the `vitalio/run-block:run` fragment swapped once to `EMBEDDED_RULE_API` at `chat.json` creation + root `AGENTS.md` `kind == "file"`, excluding per-session headers) and the initial `user[0]` message (`kind == "header"` with `Session:` and `Next-Block:` + dynamic `cmd`, remaining `file`, and `prompt` parts).
-  - Register the minimal single `run` tool schema (`script` required, nullable `fix_target` optional normalized from `null`/`""` to omitted; `disable_parallel_tool_use: true` / `parallel_tool_calls: false`) without separate `edits` or `done` JSON fields, and guard against OpenAI-compatible backends that emit multiple parallel `tool_calls` by accepting only `tool_calls[0]` and appending synthetic `tool_result` error responses for `tool_calls[1:]`.
-  - Implement stdlib `urllib.request` streaming SSE clients for Anthropic Messages (`/v1/messages` with `cache_control: {"type": "ephemeral"}` breakpoints on `>= 1024`-token blocks under `RUN_BLOCK_CACHE=auto|system|off`) and OpenAI-compatible Chat Completions (`/v1/chat/completions` with `stream_options: {"include_usage": true}` for OpenAI, Gemini, OpenRouter, DeepSeek, and local servers).
-  - Persist append-only conversation turns, threshold context compaction (`RUN_BLOCK_COMPACT_TOKENS`), and exact provider usage (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `cached_tokens`, `response_at`) in `<session>/chat.json`, `<session>/<step>/meta.json`, and `<session>/meta.json`.
-  - Add offline unit tests in `tests/test_agent.py` using mocked HTTP/SSE streams to verify prefix splitting, one-time `EMBEDDED_RULE_API` replacement, multi-call guard, `cache_control` breakpoint placement, usage accounting, and threshold compaction.
-
 # 🎯 [NEXT] F108: Simplify CLI flags, remove in-step child-session handoff, and group run -h commands into thematic sections
 
 - Depends on: D11

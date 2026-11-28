@@ -794,6 +794,7 @@ _SESSION_STATE_KEYS = (
     "completed_at",
     "completed_note",
     "stats",
+    "usage",
     "parent_session",
     "parent_step",
     "spawned_sessions",
@@ -947,6 +948,8 @@ def write_step_meta(
         data["protocol_violations"] = dict(protocol_violations)
     if prompt_injection_warning:
         data["prompt_injection_warning"] = True
+    if isinstance(prev.get("usage"), dict):
+        data["usage"] = dict(prev["usage"])
     payload = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     fd = os.open(meta_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:

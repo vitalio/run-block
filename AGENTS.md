@@ -6,8 +6,8 @@ rules are loaded via `.context.bundle`.
 ## Architecture & Module Boundaries
 
 - `src/header.py` — `--help` row tables (`HELP_*`), standard library imports,
-  version constants, and the embedded block rule placeholder
-  (`EMBEDDED_RULE_BASH`) populated by `build.py`.
+  version constants, and the embedded rule placeholders
+  (`EMBEDDED_RULE_BASH`, `EMBEDDED_RULE_API`) populated by `build.py`.
 - `src/config.py` (and `src/session_meta.py` split in `F107`) — settings
   resolution (`_SETTING_SPECS`, `get_setting()` returning `(value, source)`
   with precedence env, project `.run-block.json`, user `config.json`, default),
@@ -31,10 +31,11 @@ rules are loaded via `.context.bundle`.
   strips provider API key variables in every sandbox mode; the resolved
   profile name is persisted as `"profile"` in `<session>/meta.json`
   (`_SESSION_STATE_KEYS`).
-- `agents/run.md` — internal embedded terminal block execution rule
-  source injected by `build.py` into `src/header.py`. Update
-  `agents/run.md` in the same commit whenever CLI flags, step
-  numbering, `--fix` constraints, or session rules change.
+- `agents/run.md` and `agents/run-api.md` — internal embedded terminal
+  execution rule sources (`EMBEDDED_RULE_BASH` for text/clipboard mode and
+  `EMBEDDED_RULE_API` for built-in API tool-call mode) injected by `build.py`
+  into `src/header.py`. Update both rule files in the same commit whenever
+  step numbering, `--fix` constraints, or session rules change.
 - `src/safety.py` — AST/regex operation classifier, safety risk scanner,
   `run --plan` JSON output, and `RUN_BLOCK_APPROVE_CMD` validator hook.
 - `src/ui.py` — terminal/ANSI/UTF-8 and display-width primitives, token
@@ -101,6 +102,16 @@ rules are loaded via `.context.bundle`.
 - `src/bundle_view.py` — provenance tree construction, heavy-row classification,
   hierarchical table rendering, summary/parts/warning item formatters, and
   `--bundle-plan` text/CLI output (`cmd_bundle_plan()`).
+- `src/agent.py` — Bundle-Protocol v1 cache-prefix splitter
+  (`split_bundle_for_api()`, `classify_bundle_parts_for_api()`), single `run`
+  tool schema and multi-call guard (`build_run_tool_schema()`,
+  `normalize_run_tool_call()`, `process_assistant_tool_calls()`), stdlib
+  `urllib.request` streaming SSE clients for Anthropic Messages
+  (`/v1/messages` with `cache_control` ephemeral breakpoints under
+  `RUN_BLOCK_CACHE=auto|system|off`) and OpenAI-compatible Chat Completions
+  (`/v1/chat/completions` with `stream_options: {"include_usage": true}`),
+  and `<session>/chat.json` transcript, threshold compaction
+  (`RUN_BLOCK_COMPACT_TOKENS`), and provider usage persistence.
 - `src/bundle.py` — session initialization from TTY `stdin` (rule-only) or
   piped `stdin` (`run` / `<command> | run` -> `<session>/0` and
   `<session>/meta.json`), injecting embedded `bash` terminal block rules via
@@ -173,8 +184,8 @@ rules are loaded via `.context.bundle`.
   `_run_in_process`, `_run_subprocess`, `_assert_ok`) and `RUN_BLOCK_*`
   environment isolation.
 - `tests/test_cli.py`, `tests/test_safety.py`, `tests/test_ui.py`,
-  `tests/test_bundle.py`, `tests/test_runner.py` — modular offline unit test
-  suites mirroring `src/` boundaries.
+  `tests/test_bundle.py`, `tests/test_runner.py`, `tests/test_agent.py` —
+  modular offline unit test suites mirroring `src/` boundaries.
 
 ## Bundle Input Protocol
 

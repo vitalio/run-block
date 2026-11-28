@@ -28,6 +28,7 @@ MODULE_ORDER = [
     "bundle_plan.py",
     "bundle_view.py",
     "runner.py",
+    "agent.py",
     "bundle.py",
     "cli.py",
 ]
@@ -44,6 +45,7 @@ def _load_embedded_rule(rel_path: str) -> str:
 def assemble_source() -> str:
     ver = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     bash_rule = _load_embedded_rule("agents/run.md")
+    api_rule = _load_embedded_rule("agents/run-api.md")
     chunks: list[str] = []
     for item in MODULE_ORDER:
         mod_path = SRC_DIR / item
@@ -51,6 +53,7 @@ def assemble_source() -> str:
         if item == "header.py":
             txt = txt.replace('VERSION = "__VERSION__"', f'VERSION = "{ver}"')
             txt = txt.replace('EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"', f"EMBEDDED_RULE_BASH = {bash_rule!r}")
+            txt = txt.replace('EMBEDDED_RULE_API = "__EMBEDDED_RULE_API__"', f"EMBEDDED_RULE_API = {api_rule!r}")
         chunks.append(txt)
     source = "\n\n\n".join(chunks) + "\n"
     ast.parse(source)

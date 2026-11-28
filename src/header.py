@@ -42,6 +42,7 @@ LEGACY_REPO_MARKER = "run_block-repo: vitalio/run_block"
 REPO_MARKERS = (REPO_MARKER, LEGACY_REPO_MARKER)
 DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/vitalio/run-block/main/run"
 EMBEDDED_RULE_BASH = "__EMBEDDED_RULE_BASH__"
+EMBEDDED_RULE_API = "__EMBEDDED_RULE_API__"
 
 
 HELP_USAGE = (
